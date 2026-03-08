@@ -1,0 +1,8 @@
+{
+  "name": "@copper/sdk",
+  "version": "0.1.0",
+  "description": "Type definitions for Copper extensions",
+  "types": "api.d.ts",
+  "private": true,
+  "license": "MIT"
+}

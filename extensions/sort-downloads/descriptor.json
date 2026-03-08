@@ -1,0 +1,26 @@
+{
+  "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+  "id": "sort-downloads",
+  "name": "Sort Downloads",
+  "version": "1.0.0",
+  "trigger": "sort-dl",
+  "permissions": ["fs", "ui"],
+  "inputs": [
+    {
+      "id": "folder",
+      "type": "folder-picker",
+      "label": "Target folder",
+      "default": "~/Downloads"
+    }
+  ],
+  "actions": [
+    {
+      "id": "sort",
+      "label": "Sort by extension",
+      "script": "const files = await api.fs.list(String(inputs.folder ?? '~/Downloads')); await api.notify(`Found ${files.length} files`);"
+    }
+  ],
+  "ui": {
+    "type": "toast"
+  }
+}
