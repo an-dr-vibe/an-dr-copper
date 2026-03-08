@@ -21,6 +21,8 @@
 # in another terminal:
 ./scripts/daemon.ps1 -Action health
 ./scripts/daemon.ps1 -Action list
+# config UI is always available while daemon runs:
+# http://127.0.0.1:4766
 ./target/release/copperd.exe ui open --extension desktop-torrent-organizer
 ./scripts/daemon.ps1 -Action shutdown
 ```
@@ -36,7 +38,7 @@ Release output is written to `dist/release` and includes:
 
 - Full daemon bundle (`copper-<host-triple>/`)
 - Bundle archive (`copper-<host-triple>.zip`)
-- Shipped core extensions (`core-extensions/`)
+- Shipped core extensions (`extensions/`)
 - Published extension archives (`extensions-published/`)
 
 ## 5. Validate Extensions
@@ -47,8 +49,9 @@ cargo run -p copperd -- trigger session-counter --extensions-dir ./extensions
 cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents --extensions-dir ./extensions
 ```
 
-## 6. Generate main.ts from descriptor
+## 6. Generate main.ts from manifest
 
 ```powershell
-cargo run -p copperd -- generate-main ./extensions/sort-downloads/descriptor.json
+cargo run -p copperd -- generate-main ./extensions/sort-downloads/manifest.json
 ```
+

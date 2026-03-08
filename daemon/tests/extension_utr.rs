@@ -19,7 +19,7 @@ fn extension_dir(id: &str) -> PathBuf {
 }
 
 fn read_descriptor(extension_id: &str) -> Descriptor {
-    let path = extension_dir(extension_id).join("descriptor.json");
+    let path = extension_dir(extension_id).join("manifest.json");
     let raw = fs::read_to_string(&path).expect("read descriptor");
     parse_and_validate(&raw).expect("descriptor should be valid")
 }
@@ -43,11 +43,11 @@ fn extension_folders(root: &Path) -> Vec<PathBuf> {
 #[test]
 fn every_extension_has_valid_descriptor_and_main() {
     for ext in extension_folders(&extensions_root()) {
-        let descriptor_path = ext.join("descriptor.json");
+        let descriptor_path = ext.join("manifest.json");
         let main_path = ext.join("main.ts");
         assert!(
             descriptor_path.exists(),
-            "missing descriptor.json in {}",
+            "missing manifest.json in {}",
             ext.display()
         );
         assert!(main_path.exists(), "missing main.ts in {}", ext.display());
@@ -104,6 +104,20 @@ fn desktop_torrent_descriptor_matches_required_contract() {
         .find(|input| input.id == "torrentsFolder")
         .expect("torrentsFolder input");
     assert_eq!(torrents_input.default.as_str(), Some("~/Desktop/Torrents"));
+
+    let auto_run_input = descriptor
+        .inputs
+        .iter()
+        .find(|input| input.id == "autoRun")
+        .expect("autoRun input");
+    assert_eq!(auto_run_input.default.as_bool(), Some(true));
+
+    let poll_input = descriptor
+        .inputs
+        .iter()
+        .find(|input| input.id == "pollIntervalSeconds")
+        .expect("pollIntervalSeconds input");
+    assert_eq!(poll_input.default.as_u64(), Some(5));
 }
 
 #[test]

@@ -17,7 +17,7 @@ pub struct Extension {
 pub enum ExtensionError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("descriptor validation error: {0}")]
+    #[error("manifest validation error: {0}")]
     Validation(#[from] ValidationError),
     #[error("extension is missing required file: {0}")]
     MissingFile(String),
@@ -58,7 +58,7 @@ impl Registry {
                     continue;
                 }
                 let folder = entry.into_path();
-                let descriptor_path = folder.join("descriptor.json");
+                let descriptor_path = folder.join("manifest.json");
                 let main_ts_path = folder.join("main.ts");
                 if !descriptor_path.exists() {
                     continue;
@@ -133,11 +133,12 @@ pub fn load_runtime_registry(user_extensions_dir: &Path) -> Result<Registry, Ext
 
 fn core_extensions_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
     let candidates = [
-        exe_dir.join("core-extensions"),
         exe_dir.join("extensions"),
-        exe_dir.join("..").join("core-extensions"),
         exe_dir.join("..").join("extensions"),
         exe_dir.join("..").join("..").join("extensions"),
+        // Backward compatibility for older bundles:
+        exe_dir.join("core-extensions"),
+        exe_dir.join("..").join("core-extensions"),
     ];
 
     candidates.into_iter().find(|candidate| candidate.exists())
@@ -164,7 +165,7 @@ mod tests {
         let ext_dir = temp.path().join("sort-downloads");
         fs::create_dir_all(&ext_dir).expect("create extension dir");
         fs::write(
-            ext_dir.join("descriptor.json"),
+            ext_dir.join("manifest.json"),
             r#"{
                 "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
                 "id": "sort-downloads",
@@ -212,7 +213,7 @@ mod tests {
         let ext_dir = temp.path().join("broken-ext");
         fs::create_dir_all(&ext_dir).expect("create extension dir");
         fs::write(
-            ext_dir.join("descriptor.json"),
+            ext_dir.join("manifest.json"),
             r#"{
                 "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
                 "id": "broken-ext",
@@ -242,7 +243,7 @@ mod tests {
         fs::create_dir_all(user_root.join("same-id")).expect("user dir");
 
         fs::write(
-            core_root.join("same-id/descriptor.json"),
+            core_root.join("same-id/manifest.json"),
             r#"{
                 "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
                 "id": "same-id",
@@ -260,7 +261,7 @@ mod tests {
         .expect("core main");
 
         fs::write(
-            user_root.join("same-id/descriptor.json"),
+            user_root.join("same-id/manifest.json"),
             r#"{
                 "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
                 "id": "same-id",
@@ -294,8 +295,8 @@ mod tests {
     fn core_extensions_detects_candidate_path() {
         let temp = tempdir().expect("tempdir");
         let exe_dir = temp.path().join("bin");
-        fs::create_dir_all(exe_dir.join("core-extensions")).expect("core extensions dir");
+        fs::create_dir_all(exe_dir.join("extensions")).expect("extensions dir");
         let detected = core_extensions_dir_from_exe_dir(&exe_dir);
-        assert_eq!(detected, Some(exe_dir.join("core-extensions")));
+        assert_eq!(detected, Some(exe_dir.join("extensions")));
     }
 }

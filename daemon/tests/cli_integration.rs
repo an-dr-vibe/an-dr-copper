@@ -107,7 +107,7 @@ fn list_shows_sample_extension() {
 
 #[test]
 fn validate_accepts_sample_descriptor() {
-    let descriptor = repo_root().join("extensions/sort-downloads/descriptor.json");
+    let descriptor = repo_root().join("extensions/sort-downloads/manifest.json");
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("copperd"));
     cmd.args(["validate", descriptor.to_str().expect("utf-8 path")])
         .assert()
@@ -117,7 +117,7 @@ fn validate_accepts_sample_descriptor() {
 
 #[test]
 fn validate_accepts_desktop_torrent_descriptor() {
-    let descriptor = repo_root().join("extensions/desktop-torrent-organizer/descriptor.json");
+    let descriptor = repo_root().join("extensions/desktop-torrent-organizer/manifest.json");
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("copperd"));
     cmd.args(["validate", descriptor.to_str().expect("utf-8 path")])
         .assert()
@@ -163,9 +163,26 @@ fn trigger_torrent_extension_shows_expected_permissions() {
 }
 
 #[test]
+fn trigger_session_counter_prints_current_value() {
+    let extensions_dir = repo_root().join("extensions");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("copperd"));
+    cmd.args([
+        "trigger",
+        "session-counter",
+        "--action",
+        "increment",
+        "--extensions-dir",
+        extensions_dir.to_str().expect("utf-8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Session counter:"));
+}
+
+#[test]
 fn generate_main_writes_output_file() {
     let temp = tempdir().expect("tempdir");
-    let descriptor = temp.path().join("descriptor.json");
+    let descriptor = temp.path().join("manifest.json");
     let output = temp.path().join("generated-main.ts");
     fs::write(
         &descriptor,
@@ -203,7 +220,7 @@ fn verify_fails_for_extension_missing_main() {
     let ext = temp.path().join("broken-ext");
     fs::create_dir_all(&ext).expect("create extension dir");
     fs::write(
-        ext.join("descriptor.json"),
+        ext.join("manifest.json"),
         r#"{
             "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
             "id": "broken-ext",

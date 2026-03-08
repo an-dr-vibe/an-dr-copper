@@ -13,6 +13,9 @@ binary_path="${repo_root}/target/release/${binary_name}"
 
 cargo build --workspace --release
 
+rm -rf "${repo_root}/target/release/extensions"
+cp -R "${repo_root}/extensions" "${repo_root}/target/release/extensions"
+
 if [[ ! -f "$binary_path" ]]; then
   echo "Release binary not found: $binary_path" >&2
   exit 1
@@ -24,10 +27,10 @@ mkdir -p "$bundle_dir/extensions-published"
 cp "$binary_path" "${bundle_dir}/${binary_name}"
 cp "${repo_root}/README.md" "${bundle_dir}/README.md"
 cp "${repo_root}/docs/QUICKSTART.md" "${bundle_dir}/QUICKSTART.md"
-cp -R "${repo_root}/extensions" "${bundle_dir}/core-extensions"
+cp -R "${repo_root}/extensions" "${bundle_dir}/extensions"
 
 shopt -s nullglob
-for descriptor in "${repo_root}"/extensions/*/descriptor.json; do
+for descriptor in "${repo_root}"/extensions/*/manifest.json; do
   ext_dir="$(dirname "$descriptor")"
   ext_base="$(basename "$ext_dir")"
 
@@ -52,3 +55,4 @@ tar -czf "$archive_path" -C "$output_dir" "$bundle_name"
 echo "Release build complete."
 echo "Bundle directory: $bundle_dir"
 echo "Bundle archive:  $archive_path"
+

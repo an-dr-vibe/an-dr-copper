@@ -44,10 +44,10 @@ enum Commands {
         #[arg(long, value_name = "MS", default_value_t = 3_000)]
         reload_interval_ms: u64,
     },
-    /// Validate one descriptor file against the embedded JSON schema
+    /// Validate one manifest file against the embedded JSON schema
     Validate {
-        #[arg(value_name = "DESCRIPTOR")]
-        descriptor: PathBuf,
+        #[arg(value_name = "MANIFEST")]
+        manifest: PathBuf,
     },
     /// List all discovered extensions
     List {
@@ -68,10 +68,10 @@ enum Commands {
         #[arg(long, value_name = "DIR", default_value_os_t = default_extensions_dir())]
         extensions_dir: PathBuf,
     },
-    /// Generate a starter main.ts from a descriptor
+    /// Generate a starter main.ts from a manifest
     GenerateMain {
-        #[arg(value_name = "DESCRIPTOR")]
-        descriptor: PathBuf,
+        #[arg(value_name = "MANIFEST")]
+        manifest: PathBuf,
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
@@ -164,7 +164,7 @@ pub fn run() -> Result<(), CliError> {
             reload_interval: Duration::from_millis(reload_interval_ms),
         })
         .map_err(CliError::from),
-        Commands::Validate { descriptor } => cmd_validate(&descriptor),
+        Commands::Validate { manifest } => cmd_validate(&manifest),
         Commands::List { extensions_dir } => cmd_list(&extensions_dir),
         Commands::Verify { extensions_dir } => cmd_verify(&extensions_dir),
         Commands::Trigger {
@@ -172,7 +172,7 @@ pub fn run() -> Result<(), CliError> {
             action,
             extensions_dir,
         } => cmd_trigger(&extensions_dir, &id, action.as_deref()),
-        Commands::GenerateMain { descriptor, output } => cmd_generate_main(&descriptor, output),
+        Commands::GenerateMain { manifest, output } => cmd_generate_main(&manifest, output),
         Commands::Doctor => cmd_doctor(),
         Commands::Daemon { command } => cmd_daemon(command),
         Commands::Ui { command } => cmd_ui(command),
@@ -251,8 +251,9 @@ fn cmd_ui(command: UiCommands) -> Result<(), CliError> {
                 dirs::home_dir()
                     .unwrap_or_else(|| PathBuf::from("."))
                     .join(".Copper")
-                    .join("ui-config")
-                    .join(format!("{extension}.json"))
+                    .join("extensions")
+                    .join(&extension)
+                    .join("data.json")
                     .display()
             );
         }
@@ -345,6 +346,11 @@ fn cmd_trigger(dir: &Path, id: &str, action: Option<&str>) -> Result<(), CliErro
     );
     println!("Script:");
     println!("{}", selected_action.script);
+    if let Some(count) =
+        daemon_runtime::maybe_increment_session_counter(&ext.descriptor.id, &selected_action.id)?
+    {
+        println!("Session counter: {count}");
+    }
     Ok(())
 }
 

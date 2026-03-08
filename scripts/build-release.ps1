@@ -25,7 +25,7 @@ function Publish-ExtensionArchives {
 
   Get-ChildItem -Path $ExtensionsRoot -Directory | ForEach-Object {
     $extensionDir = $_.FullName
-    $descriptorPath = Join-Path $extensionDir "descriptor.json"
+    $descriptorPath = Join-Path $extensionDir "manifest.json"
     if (-not (Test-Path $descriptorPath)) {
       return
     }
@@ -49,6 +49,12 @@ cargo build --workspace --release
 if ($LASTEXITCODE -ne 0) {
   throw "Release build failed with exit code $LASTEXITCODE"
 }
+
+$releaseExtensionsDir = Join-Path $repoRoot "target/release/extensions"
+if (Test-Path $releaseExtensionsDir) {
+  Remove-Item $releaseExtensionsDir -Recurse -Force
+}
+Copy-Item -Path (Join-Path $repoRoot "extensions") -Destination $releaseExtensionsDir -Recurse -Force
 
 $hostTriple = (rustc -vV | Select-String "^host: ").ToString().Split(" ")[1].Trim()
 $exeName = if ($IsWindows) { "copperd.exe" } else { "copperd" }
@@ -75,8 +81,8 @@ Copy-Item -Path $binaryPath -Destination (Join-Path $bundlePath $exeName) -Force
 Copy-Item -Path (Join-Path $repoRoot "README.md") -Destination (Join-Path $bundlePath "README.md") -Force
 Copy-Item -Path (Join-Path $repoRoot "docs/QUICKSTART.md") -Destination (Join-Path $bundlePath "QUICKSTART.md") -Force
 
-$bundleCoreExtensions = Join-Path $bundlePath "core-extensions"
-Copy-Item -Path (Join-Path $repoRoot "extensions") -Destination $bundleCoreExtensions -Recurse -Force
+$bundleExtensions = Join-Path $bundlePath "extensions"
+Copy-Item -Path (Join-Path $repoRoot "extensions") -Destination $bundleExtensions -Recurse -Force
 
 $publishedExtensionsPath = Join-Path $bundlePath "extensions-published"
 Publish-ExtensionArchives -ExtensionsRoot (Join-Path $repoRoot "extensions") -PublishRoot $publishedExtensionsPath
@@ -90,3 +96,4 @@ Compress-Archive -Path $bundlePath -DestinationPath $releaseArchive -Force
 Write-Host "Release build complete."
 Write-Host "Bundle directory: $bundlePath"
 Write-Host "Bundle archive:  $releaseArchive"
+

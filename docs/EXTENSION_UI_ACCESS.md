@@ -11,7 +11,7 @@ Provide a stable, user-facing way to open an extension configuration UI without 
 2. Optional command parity:
    - `copperd ui open --extension <extension-id>`
 3. UI behavior:
-   - Host reads `descriptor.json` inputs and renders a form.
+   - Host reads `manifest.json` inputs and renders a form.
    - Submitting form triggers selected extension action with input payload.
    - Stored config is persisted under extension store namespace.
 
@@ -38,9 +38,13 @@ Recommended config actions in UI:
 
 ## Current State (2026-03-08)
 
-- Implemented command: `copperd ui open --extension <id>` (local browser UI + config persistence).
+- Daemon-hosted config UI is always on while daemon runs:
+  - `http://127.0.0.1:4766`
+- Implemented command: `copperd ui open --extension <id>` (standalone temporary UI server mode).
 - Tray shortcut implemented for `desktop-torrent-organizer`:
   - `Configure Desktop Torrent Organizer`
-- Config is stored at:
-  - `~/.Copper/ui-config/<extension-id>.json`
+- Extension config + runtime info are stored together at:
+  - `~/.Copper/extensions/<extension-id>/data.json`
+- UI now has a dedicated **Info** panel per section (`Copper` and each extension).
 - Runtime execution of `main.ts` from saved config remains future work.
+

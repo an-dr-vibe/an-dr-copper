@@ -7,7 +7,7 @@ Last updated: 2026-03-08
 
 Copper is a cross-platform desktop automation platform optimized for AI-authored TypeScript extensions.
 
-The core runtime is a long-running Rust daemon. Extensions are descriptor-first (`descriptor.json`) with a minimal API contract and schema validation.
+The core runtime is a long-running Rust daemon. Extensions are manifest-first (`manifest.json`) with a minimal API contract and schema validation.
 
 ## 2. Process Model
 
@@ -19,6 +19,7 @@ Two-process target model (same intent as original architecture):
 Current implementation status:
 
 - Implemented: always-on daemon, extension registry loading, periodic hot-reload, IPC control plane, descriptor validation, trigger preparation, skeleton generation, local config UI (`ui open`), tray menu shortcut for desktop torrent extension config.
+- Implemented: daemon-hosted always-on config UI (`http://127.0.0.1:4766`) with per-section settings/info panels.
 - Planned: embedded `deno_core` runtime execution, richer tray/hotkey integration, on-demand Tauri UI renderer.
 
 ## 3. Implemented Daemon Core
@@ -27,11 +28,12 @@ Daemon capabilities:
 
 - Binds to TCP IPC endpoint (default `127.0.0.1:4765`).
 - Loads extensions from merged roots:
-  - executable-adjacent `core-extensions/` (preferred, fallback `extensions/` for dev/legacy)
+  - executable-adjacent `extensions/` (preferred, fallback `core-extensions/` for legacy bundles)
   - user directory `~/.Copper/extensions`
   - user extensions override same-id core extensions
-- Validates descriptors against versioned schema.
+- Validates extension manifests against versioned schema.
 - Periodically reloads extension registry (hot-reload behavior).
+- Runs background polling tasks for core extensions (currently `desktop-torrent-organizer` file polling).
 - Handles IPC operations:
   - `health`
   - `list`
@@ -39,6 +41,7 @@ Daemon capabilities:
   - `reload`
   - `verify`
   - `shutdown`
+- Persists extension state per extension in `~/.Copper/extensions/<extension-id>/data.json`.
 
 This restores the daemon as the center of system lifecycle.
 
@@ -48,7 +51,7 @@ Extension folder:
 
 ```text
 <extension>/
-|- descriptor.json
+|- manifest.json
 `- main.ts
 ```
 
@@ -128,7 +131,7 @@ for ($i = 1; $i -le 3; $i++) {
 
 Release packaging:
 
-- `./scripts/build-release.ps1` builds `copperd`, creates `dist/release/copper-<host-triple>/` with `core-extensions/`, and publishes per-extension archives in `extensions-published/`.
+- `./scripts/build-release.ps1` builds `copperd`, creates `dist/release/copper-<host-triple>/` with `extensions/`, and publishes per-extension archives in `extensions-published/`.
 
 ## 9. Known Gaps vs Full Target Architecture
 
@@ -137,3 +140,4 @@ Release packaging:
 - Global hotkey behavior is not wired yet.
 
 These gaps are additive roadmap work and do not change the daemon-first core architecture.
+

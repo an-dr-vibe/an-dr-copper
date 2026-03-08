@@ -1,12 +1,9 @@
-use crate::config_ui::{open_extension_config, UiOpenOptions};
-use crate::extension::load_runtime_registry;
-use std::path::Path;
+use crate::config_ui::open_url_in_browser;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Duration;
 use thiserror::Error;
 use tray_item::{IconSource, TrayItem};
 
@@ -23,41 +20,19 @@ pub struct TrayController {
 impl TrayController {
     pub fn initialize(
         running: Arc<AtomicBool>,
-        extensions_dir: PathBuf,
+        _extensions_dir: PathBuf,
+        ui_url: String,
     ) -> Result<Self, TrayError> {
         let mut tray = TrayItem::new("Copperd (Running)", default_icon())
             .map_err(|e| TrayError::Init(e.to_string()))?;
         tray.add_label("Daemon is running")
             .map_err(|e| TrayError::Init(e.to_string()))?;
 
-        let ui_extensions_dir = extensions_dir;
+        let ui_url_for_menu = ui_url;
         tray.add_menu_item("Open Extension Config", move || {
-            let ui_dir = ui_extensions_dir.clone();
-            std::thread::spawn(move || {
-                let selected_extension = match select_extension_for_config(&ui_dir) {
-                    Ok(Some(id)) => id,
-                    Ok(None) => {
-                        eprintln!(
-                            "no extensions found in {} (add extension folders with descriptor.json + main.ts)",
-                            ui_dir.display()
-                        );
-                        return;
-                    }
-                    Err(err) => {
-                        eprintln!("failed to read extensions for config UI: {err}");
-                        return;
-                    }
-                };
-
-                let options = UiOpenOptions {
-                    bind_addr: "127.0.0.1:0".to_string(),
-                    open_browser: true,
-                    idle_timeout: Duration::from_secs(300),
-                };
-                if let Err(err) = open_extension_config(&ui_dir, &selected_extension, options) {
-                    eprintln!("failed to open config UI: {err}");
-                }
-            });
+            if let Err(err) = open_url_in_browser(&ui_url_for_menu) {
+                eprintln!("failed to open config UI in browser: {err}");
+            }
         })
         .map_err(|e| TrayError::Init(e.to_string()))?;
 
@@ -69,22 +44,6 @@ impl TrayController {
 
         Ok(Self { _inner: tray })
     }
-}
-
-fn select_extension_for_config(extensions_dir: &Path) -> Result<Option<String>, TrayError> {
-    let registry = load_runtime_registry(extensions_dir).map_err(|err| {
-        TrayError::Init(format!(
-            "failed loading runtime extension registry from {}: {err}",
-            extensions_dir.display()
-        ))
-    })?;
-
-    if registry.get("desktop-torrent-organizer").is_some() {
-        return Ok(Some("desktop-torrent-organizer".to_string()));
-    }
-
-    let first = registry.list().next().map(|ext| ext.descriptor.id.clone());
-    Ok(first)
 }
 
 #[cfg(target_os = "windows")]
@@ -116,57 +75,10 @@ fn solid_green_icon_rgba(width: usize, height: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::select_extension_for_config;
-    use std::fs;
-    use tempfile::tempdir;
-
-    fn write_extension(root: &std::path::Path, id: &str) {
-        let ext_dir = root.join(id);
-        fs::create_dir_all(&ext_dir).expect("create extension dir");
-        fs::write(
-            ext_dir.join("descriptor.json"),
-            format!(
-                r#"{{
-                "$schema":"https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
-                "id":"{id}",
-                "name":"{id}",
-                "version":"1.0.0",
-                "trigger":"test",
-                "actions":[{{"id":"run","label":"Run","script":"return;"}}]
-            }}"#
-            ),
-        )
-        .expect("write descriptor");
-        fs::write(
-            ext_dir.join("main.ts"),
-            "export default function(){ return {}; }",
-        )
-        .expect("write main.ts");
-    }
+    use super::default_icon;
 
     #[test]
-    fn chooses_desktop_torrent_organizer_when_available() {
-        let temp = tempdir().expect("tempdir");
-        write_extension(temp.path(), "alpha");
-        write_extension(temp.path(), "desktop-torrent-organizer");
-
-        let selected = select_extension_for_config(temp.path()).expect("selection");
-        assert_eq!(selected.as_deref(), Some("desktop-torrent-organizer"));
-    }
-
-    #[test]
-    fn chooses_first_available_extension_when_desktop_extension_missing() {
-        let temp = tempdir().expect("tempdir");
-        write_extension(temp.path(), "alpha");
-        write_extension(temp.path(), "zeta");
-
-        let selected = select_extension_for_config(temp.path()).expect("selection");
-        assert!(
-            matches!(
-                selected.as_deref(),
-                Some("alpha") | Some("desktop-torrent-organizer")
-            ),
-            "unexpected extension selection: {selected:?}"
-        );
+    fn default_icon_is_constructible() {
+        let _ = default_icon();
     }
 }

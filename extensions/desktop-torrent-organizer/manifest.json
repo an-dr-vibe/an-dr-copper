@@ -19,6 +19,18 @@
       "default": "~/Desktop/Torrents"
     },
     {
+      "id": "autoRun",
+      "type": "boolean",
+      "label": "Auto run monitor",
+      "default": true
+    },
+    {
+      "id": "pollIntervalSeconds",
+      "type": "number",
+      "label": "Poll interval (seconds)",
+      "default": 5
+    },
+    {
       "id": "extensionPackage",
       "type": "file-picker",
       "label": "Extension package (.zip or .tar.gz)"

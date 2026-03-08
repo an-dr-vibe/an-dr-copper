@@ -1,5 +1,5 @@
 use crate::descriptor::Descriptor;
-use crate::extension::load_runtime_registry;
+use crate::extension::{core_extensions_dir, load_runtime_registry, runtime_extension_roots};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -7,10 +7,16 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
 const DEFAULT_UI_BIND: &str = "127.0.0.1:0";
+pub const DEFAULT_DAEMON_UI_BIND: &str = "127.0.0.1:4766";
 
 #[derive(Debug, Clone)]
 pub struct UiOpenOptions {
@@ -116,14 +122,69 @@ struct UiServerState {
     selected_extension_id: String,
     descriptors: Vec<Descriptor>,
     extension_ids: HashSet<String>,
-    ui_config_dir: PathBuf,
+    user_extensions_dir: PathBuf,
+    core_extensions_dir: Option<PathBuf>,
+    runtime_extension_roots: Vec<PathBuf>,
+    data_root: PathBuf,
+    allow_close: bool,
 }
 
-pub fn open_extension_config(
+pub struct PersistentUiServer {
+    pub url: String,
+    _thread: JoinHandle<()>,
+}
+
+pub fn start_daemon_ui_server(
+    extensions_dir: PathBuf,
+    bind_addr: String,
+    running: Arc<AtomicBool>,
+) -> Result<PersistentUiServer, UiConfigError> {
+    let listener = TcpListener::bind(&bind_addr)?;
+    listener.set_nonblocking(true)?;
+    let local_addr = listener.local_addr()?;
+    let url = format!("http://{}", local_addr);
+
+    let thread_url = url.clone();
+    let thread = std::thread::spawn(move || {
+        while running.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let state = match build_ui_state(&extensions_dir, None, false) {
+                        Ok(state) => state,
+                        Err(err) => {
+                            eprintln!("failed to refresh UI state: {err}");
+                            continue;
+                        }
+                    };
+                    if let Err(err) = handle_connection(stream, &state) {
+                        eprintln!("config UI request error: {err}");
+                    }
+                }
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::WouldBlock
+                        || err.raw_os_error() == Some(10035) =>
+                {
+                    std::thread::sleep(Duration::from_millis(30));
+                }
+                Err(err) => {
+                    eprintln!("config UI server socket error on {thread_url}: {err}");
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+    });
+
+    Ok(PersistentUiServer {
+        url,
+        _thread: thread,
+    })
+}
+
+fn build_ui_state(
     extensions_dir: &Path,
-    extension_id: &str,
-    options: UiOpenOptions,
-) -> Result<String, UiConfigError> {
+    selected_extension_id: Option<&str>,
+    allow_close: bool,
+) -> Result<UiServerState, UiConfigError> {
     let registry = load_runtime_registry(extensions_dir)?;
     let mut descriptors = registry
         .list()
@@ -136,19 +197,41 @@ pub fn open_extension_config(
         .map(|descriptor| descriptor.id.clone())
         .collect::<HashSet<_>>();
 
-    if !extension_ids.contains(extension_id) {
-        return Err(UiConfigError::ExtensionNotFound(extension_id.to_string()));
-    }
+    let selected_extension_id = if let Some(selected) = selected_extension_id {
+        if !extension_ids.contains(selected) {
+            return Err(UiConfigError::ExtensionNotFound(selected.to_string()));
+        }
+        selected.to_string()
+    } else if extension_ids.contains("desktop-torrent-organizer") {
+        "desktop-torrent-organizer".to_string()
+    } else {
+        descriptors
+            .first()
+            .map(|descriptor| descriptor.id.clone())
+            .unwrap_or_default()
+    };
 
-    let ui_config_dir = ui_config_dir()?;
-    fs::create_dir_all(&ui_config_dir)?;
+    let data_root = copper_data_root()?;
+    fs::create_dir_all(&data_root)?;
 
-    let state = UiServerState {
-        selected_extension_id: extension_id.to_string(),
+    Ok(UiServerState {
+        selected_extension_id,
         descriptors,
         extension_ids,
-        ui_config_dir,
-    };
+        user_extensions_dir: extensions_dir.to_path_buf(),
+        core_extensions_dir: core_extensions_dir(),
+        runtime_extension_roots: runtime_extension_roots(extensions_dir),
+        data_root,
+        allow_close,
+    })
+}
+
+pub fn open_extension_config(
+    extensions_dir: &Path,
+    extension_id: &str,
+    options: UiOpenOptions,
+) -> Result<String, UiConfigError> {
+    let state = build_ui_state(extensions_dir, Some(extension_id), true)?;
 
     let listener = TcpListener::bind(&options.bind_addr)?;
     listener.set_nonblocking(true)?;
@@ -198,23 +281,36 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
             "descriptors": state.descriptors,
         }))?
     } else if request.method == HttpMethod::Get && request.path == "/config/core" {
-        HttpResponse::ok_json(&load_config(&core_config_path(&state.ui_config_dir))?)?
+        HttpResponse::ok_json(&load_config(&core_data_path_for(&state.data_root))?)?
     } else if request.method == HttpMethod::Post && request.path == "/config/core" {
         match parse_json_object(&request.body) {
             Ok(value) => {
-                store_config(&core_config_path(&state.ui_config_dir), &value)?;
+                store_config(&core_data_path_for(&state.data_root), &value)?;
                 HttpResponse::ok_json(&serde_json::json!({ "ok": true }))?
             }
             Err(err) => HttpResponse::bad_request(err.to_string()),
         }
     } else if request.method == HttpMethod::Post && request.path == "/close" {
-        stop_after = true;
-        HttpResponse::no_content()
+        if state.allow_close {
+            stop_after = true;
+            HttpResponse::no_content()
+        } else {
+            HttpResponse::bad_request("close is disabled for daemon-hosted UI")
+        }
+    } else if request.method == HttpMethod::Get && request.path == "/info/core" {
+        HttpResponse::ok_json(&build_core_info(state))?
+    } else if let Some(extension_id) = request.path.strip_prefix("/info/extension/") {
+        if !state.extension_ids.contains(extension_id) {
+            HttpResponse::not_found()
+        } else {
+            let path = extension_data_path_for(&state.data_root, extension_id);
+            HttpResponse::ok_json(&load_config(&path)?)?
+        }
     } else if let Some(extension_id) = request.path.strip_prefix("/config/extension/") {
         if !state.extension_ids.contains(extension_id) {
             HttpResponse::not_found()
         } else {
-            let path = extension_config_path_for(&state.ui_config_dir, extension_id);
+            let path = extension_data_path_for(&state.data_root, extension_id);
             match request.method {
                 HttpMethod::Get => HttpResponse::ok_json(&load_config(&path)?)?,
                 HttpMethod::Post => match parse_json_object(&request.body) {
@@ -374,19 +470,19 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) -> Result<(), 
     Ok(())
 }
 
-fn ui_config_dir() -> Result<PathBuf, UiConfigError> {
+fn copper_data_root() -> Result<PathBuf, UiConfigError> {
     let home = dirs::home_dir().ok_or_else(|| {
-        UiConfigError::Request("cannot resolve home directory for config storage".to_string())
+        UiConfigError::Request("cannot resolve home directory for extension storage".to_string())
     })?;
-    Ok(home.join(".Copper").join("ui-config"))
+    Ok(home.join(".Copper").join("extensions"))
 }
 
-fn core_config_path(ui_config_dir: &Path) -> PathBuf {
-    ui_config_dir.join("copper-core.json")
+fn core_data_path_for(data_root: &Path) -> PathBuf {
+    extension_data_path_for(data_root, "copper-core")
 }
 
-fn extension_config_path_for(ui_config_dir: &Path, extension_id: &str) -> PathBuf {
-    ui_config_dir.join(format!("{extension_id}.json"))
+fn extension_data_path_for(data_root: &Path, extension_id: &str) -> PathBuf {
+    data_root.join(extension_id).join("data.json")
 }
 
 fn load_config(path: &Path) -> Result<Value, UiConfigError> {
@@ -394,15 +490,63 @@ fn load_config(path: &Path) -> Result<Value, UiConfigError> {
         return Ok(serde_json::json!({}));
     }
     let raw = fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&raw)?)
+    let parsed: Value = serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    Ok(if parsed.is_object() {
+        parsed
+    } else {
+        serde_json::json!({})
+    })
 }
 
 fn store_config(path: &Path, value: &Value) -> Result<(), UiConfigError> {
+    let mut merged = load_config(path)?;
+    if let (Some(target), Some(source)) = (merged.as_object_mut(), value.as_object()) {
+        let mut remove_keys = Vec::new();
+        if let Some(remove) = source.get("__remove").and_then(|v| v.as_array()) {
+            for item in remove {
+                if let Some(key) = item.as_str() {
+                    remove_keys.push(key.to_string());
+                }
+            }
+        }
+
+        for (key, item) in source {
+            if key == "__remove" {
+                continue;
+            }
+            target.insert(key.clone(), item.clone());
+        }
+        for key in remove_keys {
+            target.remove(&key);
+        }
+    } else {
+        merged = value.clone();
+    }
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, serde_json::to_string_pretty(value)?)?;
+    fs::write(path, serde_json::to_string_pretty(&merged)?)?;
     Ok(())
+}
+
+fn build_core_info(state: &UiServerState) -> Value {
+    serde_json::json!({
+        "selectedExtensionId": state.selected_extension_id,
+        "extensionsLoaded": state.descriptors.len(),
+        "userExtensionsDir": state.user_extensions_dir.display().to_string(),
+        "coreExtensionsDir": state
+            .core_extensions_dir
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "runtimeExtensionRoots": state
+            .runtime_extension_roots
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>(),
+        "dataRoot": state.data_root.display().to_string(),
+        "coreDataPath": core_data_path_for(&state.data_root).display().to_string()
+    })
 }
 
 fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
@@ -433,10 +577,15 @@ fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
     Ok(())
 }
 
+pub fn open_url_in_browser(url: &str) -> Result<(), UiConfigError> {
+    open_in_browser(url)
+}
+
 fn render_html(state: &UiServerState) -> String {
     let model = serde_json::json!({
         "selectedExtensionId": state.selected_extension_id,
         "descriptors": state.descriptors,
+        "allowClose": state.allow_close,
     });
     let model_inline = serde_json::to_string(&model).unwrap_or_else(|_| "{}".to_string());
 
@@ -478,6 +627,18 @@ fn render_html(state: &UiServerState) -> String {
     }}
     button.primary {{ background:var(--accent); border-color:transparent; color:#0b1020; font-weight:700; }}
     .status {{ color:var(--muted); margin-top:8px; min-height:20px; }}
+    pre.info {{
+      margin:8px 0 0;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#111319;
+      color:var(--text);
+      padding:10px;
+      max-height:280px;
+      overflow:auto;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }}
   </style>
 </head>
 <body>
@@ -501,6 +662,10 @@ fn render_html(state: &UiServerState) -> String {
         <strong>Actions</strong>
         <div class="actions" id="actions"></div>
       </div>
+      <div class="card">
+        <strong>Info</strong>
+        <pre class="info" id="info">Loading...</pre>
+      </div>
     </main>
   </div>
 
@@ -513,9 +678,15 @@ fn render_html(state: &UiServerState) -> String {
     const navEl = document.getElementById('nav');
     const formEl = document.getElementById('form');
     const actionsEl = document.getElementById('actions');
+    const infoEl = document.getElementById('info');
     const statusEl = document.getElementById('status');
+    const closeBtn = document.getElementById('closeBtn');
     const sectionTitleEl = document.getElementById('sectionTitle');
     const sectionSubEl = document.getElementById('sectionSub');
+
+    if (!model.allowClose && closeBtn) {{
+      closeBtn.style.display = 'none';
+    }}
 
     function setStatus(msg) {{ statusEl.textContent = msg; }}
 
@@ -577,21 +748,33 @@ fn render_html(state: &UiServerState) -> String {
       return await res.json();
     }}
 
+    async function renderInfo() {{
+      const target = currentSection === 'core'
+        ? '/info/core'
+        : '/info/extension/' + encodeURIComponent(currentSection.slice(4));
+      const info = await loadJson(target);
+      infoEl.textContent = JSON.stringify(info, null, 2);
+    }}
+
     async function renderSection() {{
       formEl.innerHTML = '';
       actionsEl.innerHTML = '';
       setStatus('');
+
+      function coreFieldDefs() {{
+        return [
+          {{ id: 'userExtensionsDir', label: 'User extensions directory', type: 'text', default: '~/.Copper/extensions' }},
+          {{ id: 'uiTheme', label: 'UI Theme', type: 'text', default: 'obsidian' }},
+          {{ id: 'startupExtension', label: 'Startup extension id', type: 'text', default: model.selectedExtensionId || '' }}
+        ];
+      }}
 
       if (currentSection === 'core') {{
         sectionTitleEl.textContent = 'Copper';
         sectionSubEl.textContent = 'Core Copper configuration (separate from extension settings)';
         const config = await loadJson('/config/core');
 
-        const fields = [
-          {{ id: 'userExtensionsDir', label: 'User extensions directory', type: 'text', default: '~/.Copper/extensions' }},
-          {{ id: 'uiTheme', label: 'UI Theme', type: 'text', default: 'obsidian' }},
-          {{ id: 'startupExtension', label: 'Startup extension id', type: 'text', default: model.selectedExtensionId || '' }}
-        ];
+        const fields = coreFieldDefs();
 
         fields.forEach(field => {{
           const row = createInput(field, config[field.id]);
@@ -602,6 +785,7 @@ fn render_html(state: &UiServerState) -> String {
         chip.className = 'chip';
         chip.textContent = 'Core settings are stored in a dedicated section';
         actionsEl.appendChild(chip);
+        await renderInfo();
         return;
       }}
 
@@ -640,27 +824,76 @@ fn render_html(state: &UiServerState) -> String {
         chip.textContent = action.id + ': ' + action.label;
         actionsEl.appendChild(chip);
       }});
+      await renderInfo();
     }}
 
     function collectCurrentPayload() {{
       const payload = {{}};
+      const remove = [];
+      const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const addKey = (id, value, defaultValue) => {{
+        const isEmpty = value === '' || value === null || value === undefined;
+        if (sameValue(value, defaultValue) || (defaultValue === undefined && isEmpty)) {{
+          remove.push(id);
+        }} else {{
+          payload[id] = value;
+        }}
+      }};
+
       if (currentSection.startsWith('ext:')) {{
+        const extensionId = currentSection.slice(4);
+        const descriptor = byId[extensionId];
         const actionSelect = document.getElementById('actionSelect');
-        if (actionSelect) payload.action = actionSelect.value;
+        const defaultAction =
+          (descriptor && descriptor.actions && descriptor.actions[0] && descriptor.actions[0].id) || '';
+        if (actionSelect) {{
+          addKey('action', actionSelect.value, defaultAction);
+        }}
+      }} else {{
+        const coreDefaults = {{
+          userExtensionsDir: '~/.Copper/extensions',
+          uiTheme: 'obsidian',
+          startupExtension: model.selectedExtensionId || ''
+        }};
+        const controls = formEl.querySelectorAll('[data-input-id]');
+        controls.forEach(ctrl => {{
+          const id = ctrl.dataset.inputId;
+          const type = ctrl.dataset.inputType;
+          let value;
+          if (type === 'boolean') {{
+            value = ctrl.value === 'true';
+          }} else if (type === 'number') {{
+            value = ctrl.value === '' ? null : Number(ctrl.value);
+          }} else {{
+            value = ctrl.value;
+          }}
+          addKey(id, value, coreDefaults[id]);
+        }});
+        if (remove.length > 0) payload.__remove = remove;
+        return payload;
       }}
 
       const controls = formEl.querySelectorAll('[data-input-id]');
+      const extensionId = currentSection.slice(4);
+      const descriptor = byId[extensionId];
+      const inputDefaults = {{}};
+      (descriptor && descriptor.inputs ? descriptor.inputs : []).forEach(input => {{
+        inputDefaults[input.id] = input.default;
+      }});
       controls.forEach(ctrl => {{
         const id = ctrl.dataset.inputId;
         const type = ctrl.dataset.inputType;
+        let value;
         if (type === 'boolean') {{
-          payload[id] = ctrl.value === 'true';
+          value = ctrl.value === 'true';
         }} else if (type === 'number') {{
-          payload[id] = ctrl.value === '' ? null : Number(ctrl.value);
+          value = ctrl.value === '' ? null : Number(ctrl.value);
         }} else {{
-          payload[id] = ctrl.value;
+          value = ctrl.value;
         }}
+        addKey(id, value, inputDefaults[id]);
       }});
+      if (remove.length > 0) payload.__remove = remove;
       return payload;
     }}
 
@@ -684,14 +917,16 @@ fn render_html(state: &UiServerState) -> String {
       }}
     }});
 
-    document.getElementById('closeBtn').addEventListener('click', async () => {{
-      try {{
-        await fetch('/close', {{ method: 'POST' }});
-        setStatus('UI server closed. You can close this tab.');
-      }} catch (err) {{
-        setStatus('Close failed: ' + err);
-      }}
-    }});
+    if (closeBtn) {{
+      closeBtn.addEventListener('click', async () => {{
+        try {{
+          await fetch('/close', {{ method: 'POST' }});
+          setStatus('UI server closed. You can close this tab.');
+        }} catch (err) {{
+          setStatus('Close failed: ' + err);
+        }}
+      }});
+    }}
 
     renderNav();
     renderSection().catch(err => setStatus('Load failed: ' + err));
@@ -704,11 +939,16 @@ fn render_html(state: &UiServerState) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{core_config_path, extension_config_path_for, read_chunked_body, render_html};
+    use super::{
+        build_core_info, core_data_path_for, extension_data_path_for, load_config,
+        read_chunked_body, render_html, store_config,
+    };
     use crate::descriptor::{Action, Descriptor, InputField, InputType, UiDescriptor};
     use std::collections::HashSet;
+    use std::fs;
     use std::io::{BufReader, Cursor};
     use std::path::PathBuf;
+    use tempfile::tempdir;
 
     fn sample_descriptor() -> Descriptor {
         Descriptor {
@@ -746,7 +986,14 @@ mod tests {
             selected_extension_id: descriptor.id.clone(),
             extension_ids: [descriptor.id.clone()].into_iter().collect::<HashSet<_>>(),
             descriptors: vec![descriptor],
-            ui_config_dir: PathBuf::from("C:/tmp/copper-ui"),
+            user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
+            core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
+            runtime_extension_roots: vec![
+                PathBuf::from("C:/tmp/copper-core"),
+                PathBuf::from("C:/tmp/copper-user"),
+            ],
+            data_root: PathBuf::from("C:/tmp/copper-user"),
+            allow_close: true,
         }
     }
 
@@ -757,16 +1004,43 @@ mod tests {
         assert!(html.contains("Copper"));
         assert!(html.contains("Desktop Torrent Organizer"));
         assert!(html.contains("Save Section"));
+        assert!(html.contains("Info"));
     }
 
     #[test]
     fn config_paths_are_sectioned() {
-        let root = PathBuf::from("C:/tmp/copper-ui");
-        assert_eq!(core_config_path(&root), root.join("copper-core.json"));
+        let root = PathBuf::from("C:/tmp/copper-user");
         assert_eq!(
-            extension_config_path_for(&root, "desktop-torrent-organizer"),
-            root.join("desktop-torrent-organizer.json")
+            core_data_path_for(&root),
+            root.join("copper-core").join("data.json")
         );
+        assert_eq!(
+            extension_data_path_for(&root, "desktop-torrent-organizer"),
+            root.join("desktop-torrent-organizer").join("data.json")
+        );
+    }
+
+    #[test]
+    fn core_info_includes_runtime_roots() {
+        let state = sample_state();
+        let info = build_core_info(&state);
+        let roots = info
+            .get("runtimeExtensionRoots")
+            .and_then(|v| v.as_array())
+            .expect("roots array");
+        assert_eq!(roots.len(), 2);
+        assert!(
+            info.get("dataRoot").is_some(),
+            "core info should include extension data root"
+        );
+    }
+
+    #[test]
+    fn render_html_hides_close_button_when_close_disabled() {
+        let mut state = sample_state();
+        state.allow_close = false;
+        let html = render_html(&state);
+        assert!(html.contains("if (!model.allowClose && closeBtn)"));
     }
 
     #[test]
@@ -783,5 +1057,38 @@ mod tests {
         let mut reader = BufReader::new(Cursor::new(raw.as_slice()));
         let err = read_chunked_body(&mut reader).expect_err("invalid chunk size");
         assert!(err.to_string().contains("invalid chunk size"));
+    }
+
+    #[test]
+    fn store_config_merges_and_removes_keys() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp
+            .path()
+            .join("desktop-torrent-organizer")
+            .join("data.json");
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+        fs::write(
+            &path,
+            r#"{
+              "desktopFolder":"~/Desktop",
+              "action":"move-torrents",
+              "lastScanUnix":1
+            }"#,
+        )
+        .expect("seed data");
+
+        let update = serde_json::json!({
+            "desktopFolder": "D:/Desktop",
+            "__remove": ["action"]
+        });
+        store_config(&path, &update).expect("store config");
+
+        let stored = load_config(&path).expect("load");
+        assert_eq!(
+            stored.get("desktopFolder").and_then(|v| v.as_str()),
+            Some("D:/Desktop")
+        );
+        assert!(stored.get("action").is_none());
+        assert_eq!(stored.get("lastScanUnix").and_then(|v| v.as_u64()), Some(1));
     }
 }

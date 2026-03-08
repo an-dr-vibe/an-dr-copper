@@ -144,4 +144,29 @@ mod tests {
             .to_string()
             .contains("descriptor schema validation failed"));
     }
+
+    #[test]
+    fn rejects_invalid_semver_version() {
+        let raw = format!(
+            r#"{{
+                "$schema": "{SUPPORTED_SCHEMA_URL}",
+                "id": "sort-downloads",
+                "name": "Sort Downloads",
+                "version": "01.0.0",
+                "trigger": "sort-dl",
+                "actions": [
+                    {{
+                        "id": "sort",
+                        "label": "Sort by extension",
+                        "script": "return;"
+                    }}
+                ]
+            }}"#
+        );
+
+        let error = parse_and_validate(&raw).expect_err("invalid semver should fail");
+        assert!(error
+            .to_string()
+            .contains("version field is not valid semver"));
+    }
 }
