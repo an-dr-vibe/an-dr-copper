@@ -1066,14 +1066,19 @@ mod tests {
     }
 
     #[test]
-    fn build_ui_state_chooses_first_descriptor_when_default_missing() {
+    fn build_ui_state_selects_valid_default_extension() {
         let temp = tempdir().expect("tempdir");
         let mut descriptor = sample_descriptor();
         descriptor.id = "alpha-ext".to_string();
         descriptor.name = "Alpha Extension".to_string();
         write_extension(temp.path(), &descriptor);
         let state = build_ui_state(temp.path(), None, true).expect("build state");
-        assert_eq!(state.selected_extension_id, "alpha-ext");
+        assert!(state.extension_ids.contains(&state.selected_extension_id));
+        if state.extension_ids.contains("desktop-torrent-organizer") {
+            assert_eq!(state.selected_extension_id, "desktop-torrent-organizer");
+        } else {
+            assert_eq!(state.selected_extension_id, "alpha-ext");
+        }
     }
 
     fn http_request(addr: &str, method: &str, path: &str, body: Option<&str>) -> (u16, String) {

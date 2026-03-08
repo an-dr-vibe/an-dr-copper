@@ -1,5 +1,14 @@
 # Quickstart
 
+## 0. Install Release (Optional)
+
+```powershell
+# one command: install + run daemon
+pwsh -NoProfile -Command "$s=Invoke-RestMethod 'https://raw.githubusercontent.com/an-dr-vibe/an-dr-copper/main/scripts/install.ps1'; & ([ScriptBlock]::Create($s)) -Force; $dir=if($IsWindows){Join-Path $env:LOCALAPPDATA 'Copper'}else{Join-Path ([Environment]::GetFolderPath('UserProfile')) '.local/share/copper'}; $exe=if($IsWindows){'copperd.exe'}else{'copperd'}; & (Join-Path $dir $exe)"
+
+./scripts/install.ps1
+```
+
 ## 1. Bootstrap (PowerShell 7+)
 
 ```powershell
@@ -18,6 +27,9 @@
 
 ```powershell
 ./scripts/daemon.ps1 -Action run
+# or directly:
+# ./target/release/copperd
+# .\target\release\copperd.exe
 # in another terminal:
 ./scripts/daemon.ps1 -Action health
 ./scripts/daemon.ps1 -Action list

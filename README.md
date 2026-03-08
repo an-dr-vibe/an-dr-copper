@@ -28,22 +28,29 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/build-release.ps1
 ```
 
-## Alternative Bash Flow
+## Install Released Build (Cross-Platform PowerShell)
 
-```bash
-./scripts/bootstrap.sh
-./scripts/daemon.sh run
-./scripts/daemon.sh health
-./scripts/daemon.sh ui-open 127.0.0.1:4765 ./extensions 3000 desktop-torrent-organizer
-./scripts/daemon.sh shutdown
-./scripts/verify-loop.sh 3
-./scripts/build-debug.sh
-./scripts/build-release.sh
+```powershell
+# copy/paste one command (install + run):
+pwsh -NoProfile -Command "$s=Invoke-RestMethod 'https://raw.githubusercontent.com/an-dr-vibe/an-dr-copper/main/scripts/install.ps1'; & ([ScriptBlock]::Create($s)) -Force; $dir=if($IsWindows){Join-Path $env:LOCALAPPDATA 'Copper'}else{Join-Path ([Environment]::GetFolderPath('UserProfile')) '.local/share/copper'}; $exe=if($IsWindows){'copperd.exe'}else{'copperd'}; & (Join-Path $dir $exe)"
+
+# from cloned repo:
+./scripts/install.ps1
+
+# install a specific release tag:
+./scripts/install.ps1 -Version v0.1.0
+
+# overwrite existing install:
+./scripts/install.ps1 -Force
 ```
+
+Installer behavior:
+- Uses GitHub release asset `copper-<target-triple>.zip` when available.
+- Falls back to source download + local release build when no release asset exists (requires `cargo`).
 
 ## CLI
 
-```bash
+```powershell
 cargo run -p copperd -- doctor
 cargo run -p copperd -- validate extensions/sort-downloads/manifest.json
 cargo run -p copperd -- list --extensions-dir ./extensions
