@@ -12,3 +12,16 @@ pub fn run(_cmd: &str, _args: &[String]) -> ShellResult {
         stderr: String::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+
+    #[test]
+    fn run_returns_stubbed_success_result() {
+        let result = run("echo", &["ok".to_string()]);
+        assert_eq!(result.code, 0);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.is_empty());
+    }
+}

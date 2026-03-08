@@ -169,4 +169,10 @@ mod tests {
             .to_string()
             .contains("version field is not valid semver"));
     }
+
+    #[test]
+    fn rejects_invalid_json_payload() {
+        let error = parse_and_validate("{not-json").expect_err("invalid json should fail");
+        assert!(error.to_string().contains("invalid JSON"));
+    }
 }

@@ -1,5 +1,7 @@
 use crate::config_ui::{self, UiOpenOptions};
-use crate::daemon::{self as daemon_runtime, DaemonConfig, IpcRequest, DEFAULT_BIND_ADDR};
+use crate::daemon::{
+    self as daemon_runtime, DaemonConfig, IpcRequest, DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS,
+};
 use crate::descriptor::{Descriptor, Permission};
 use crate::extension::{default_extensions_dir, load_runtime_registry};
 use crate::schema::parse_and_validate;
@@ -30,7 +32,7 @@ pub enum CliError {
 #[command(name = "copperd", version, about = "Copper extension host MVP")]
 pub struct Args {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -153,7 +155,20 @@ enum UiCommands {
 
 pub fn run() -> Result<(), CliError> {
     let args = Args::parse();
-    match args.command {
+    let command = args.command.unwrap_or_else(default_run_command);
+    run_command(command)
+}
+
+fn default_run_command() -> Commands {
+    Commands::Run {
+        extensions_dir: default_extensions_dir(),
+        bind_addr: DEFAULT_BIND_ADDR.to_string(),
+        reload_interval_ms: DEFAULT_RELOAD_INTERVAL_MS,
+    }
+}
+
+fn run_command(command: Commands) -> Result<(), CliError> {
+    match command {
         Commands::Run {
             extensions_dir,
             bind_addr,
@@ -371,9 +386,16 @@ fn cmd_generate_main(descriptor_path: &Path, output: Option<PathBuf>) -> Result<
 }
 
 fn cmd_doctor() -> Result<(), CliError> {
-    let rustc = binary_available("rustc");
-    let cargo = binary_available("cargo");
-    let deno = binary_available("deno");
+    cmd_doctor_with(binary_available)
+}
+
+fn cmd_doctor_with<F>(is_available: F) -> Result<(), CliError>
+where
+    F: Fn(&str) -> bool,
+{
+    let rustc = is_available("rustc");
+    let cargo = is_available("cargo");
+    let deno = is_available("deno");
 
     println!(
         "required: rustc={} cargo={}",
@@ -473,8 +495,83 @@ fn indent_script(script: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_permissions, render_main_ts};
+    use super::{
+        binary_available, cmd_daemon, cmd_doctor_with, cmd_generate_main, cmd_list, cmd_trigger,
+        default_run_command, format_permissions, print_ipc_response, render_main_ts, run_command,
+        Args, Commands, DaemonCommands,
+    };
+    use crate::daemon::IpcResponse;
     use crate::descriptor::{Action, Descriptor, Permission};
+    use clap::Parser;
+    use std::fs;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    fn write_extension(root: &std::path::Path, id: &str) {
+        let ext = root.join(id);
+        fs::create_dir_all(&ext).expect("create extension dir");
+        fs::write(
+            ext.join("manifest.json"),
+            format!(
+                r#"{{
+                    "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                    "id": "{id}",
+                    "name": "Test Extension",
+                    "version": "1.0.0",
+                    "trigger": "test",
+                    "actions": [
+                        {{ "id": "run", "label": "Run", "script": "return;" }}
+                    ]
+                }}"#
+            ),
+        )
+        .expect("write manifest");
+        fs::write(ext.join("main.ts"), "export default function(){}").expect("write main.ts");
+    }
+
+    fn write_manifest(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "tmp-ext",
+                "name": "Tmp Extension",
+                "version": "1.0.0",
+                "trigger": "tmp",
+                "actions": [{ "id": "run", "label": "Run", "script": "const value = 42;" }]
+            }"#,
+        )
+        .expect("write manifest");
+    }
+
+    fn spawn_ipc_server(expected_op: &'static str) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr").to_string();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = String::new();
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            reader.read_line(&mut request).expect("read request");
+            assert!(request.contains(&format!("\"op\":\"{expected_op}\"")));
+            stream
+                .write_all(br#"{"ok":true,"message":"ok"}"#)
+                .expect("write response");
+            stream.write_all(b"\n").expect("write newline");
+            stream.flush().expect("flush");
+        });
+        (addr, handle)
+    }
+
+    fn assert_daemon_command_ipc(
+        expected_op: &'static str,
+        make_command: impl FnOnce(String) -> DaemonCommands,
+    ) {
+        let (addr, handle) = spawn_ipc_server(expected_op);
+        cmd_daemon(make_command(addr)).expect("daemon command should succeed");
+        handle.join().expect("join");
+    }
 
     #[test]
     fn generate_main_contains_notify_call() {
@@ -528,5 +625,197 @@ mod tests {
         let generated = render_main_ts(&descriptor);
         assert!(generated.contains("      const first = 1;"));
         assert!(generated.contains("      const second = 2;"));
+    }
+
+    #[test]
+    fn generate_main_sanitizes_single_quotes_in_name() {
+        let descriptor = Descriptor {
+            schema: None,
+            id: "test-ext".to_string(),
+            name: "Bob's Tool".to_string(),
+            version: "1.0.0".to_string(),
+            trigger: "test".to_string(),
+            permissions: vec![],
+            inputs: vec![],
+            actions: vec![Action {
+                id: "run".to_string(),
+                label: "Run".to_string(),
+                script: "return;".to_string(),
+            }],
+            ui: None,
+        };
+
+        let generated = render_main_ts(&descriptor);
+        assert!(generated.contains("Bobs Tool"));
+        assert!(!generated.contains("Bob's Tool"));
+    }
+
+    #[test]
+    fn binary_available_returns_false_for_missing_command() {
+        assert!(!binary_available("definitely-not-a-real-binary-name-12345"));
+    }
+
+    #[test]
+    fn print_ipc_response_returns_error_when_response_not_ok() {
+        let err = print_ipc_response(IpcResponse::err("request failed")).expect_err("must error");
+        assert!(err.to_string().contains("request failed"));
+    }
+
+    #[test]
+    fn print_ipc_response_ok_with_data_formats_pretty_json() {
+        let response = IpcResponse::ok("ok", Some(serde_json::json!({ "k": 1 })));
+        print_ipc_response(response).expect("ok response should print");
+    }
+
+    #[test]
+    fn render_main_handles_descriptor_without_actions() {
+        let descriptor = Descriptor {
+            schema: None,
+            id: "test-ext".to_string(),
+            name: "No Actions".to_string(),
+            version: "1.0.0".to_string(),
+            trigger: "test".to_string(),
+            permissions: vec![],
+            inputs: vec![],
+            actions: vec![],
+            ui: None,
+        };
+
+        let generated = render_main_ts(&descriptor);
+        assert!(generated.contains("onTrigger"));
+        assert!(generated.contains("No Actions"));
+    }
+
+    #[test]
+    fn format_permissions_covers_all_variants() {
+        let formatted = format_permissions(&[
+            Permission::Fs,
+            Permission::Shell,
+            Permission::Network,
+            Permission::Store,
+            Permission::Ui,
+        ]);
+        assert_eq!(formatted, "fs,shell,network,store,ui");
+    }
+
+    #[test]
+    fn cmd_list_reports_empty_directory() {
+        let temp = tempdir().expect("tempdir");
+        cmd_list(temp.path()).expect("empty list should succeed");
+    }
+
+    #[test]
+    fn cmd_generate_main_uses_default_output_path() {
+        let temp = tempdir().expect("tempdir");
+        let manifest = temp.path().join("manifest.json");
+        write_manifest(&manifest);
+        cmd_generate_main(&manifest, None).expect("generate main");
+        assert!(temp.path().join("main.ts").exists());
+    }
+
+    #[test]
+    fn cmd_trigger_errors_for_unknown_action() {
+        let temp = tempdir().expect("tempdir");
+        write_extension(temp.path(), "alpha-ext");
+        let err = cmd_trigger(temp.path(), "alpha-ext", Some("missing")).expect_err("must fail");
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn cmd_trigger_without_action_uses_first_action() {
+        let temp = tempdir().expect("tempdir");
+        write_extension(temp.path(), "alpha-ext");
+        cmd_trigger(temp.path(), "alpha-ext", None).expect("trigger should select default action");
+    }
+
+    #[test]
+    fn cmd_daemon_health_sends_expected_ipc_request() {
+        assert_daemon_command_ipc("health", |bind_addr| DaemonCommands::Health { bind_addr });
+    }
+
+    #[test]
+    fn cmd_daemon_list_sends_expected_ipc_request() {
+        assert_daemon_command_ipc("list", |bind_addr| DaemonCommands::List { bind_addr });
+    }
+
+    #[test]
+    fn cmd_daemon_trigger_sends_expected_ipc_request() {
+        assert_daemon_command_ipc("trigger", |bind_addr| DaemonCommands::Trigger {
+            id: "alpha-ext".to_string(),
+            action: Some("run".to_string()),
+            bind_addr,
+        });
+    }
+
+    #[test]
+    fn cmd_daemon_reload_sends_expected_ipc_request() {
+        assert_daemon_command_ipc("reload", |bind_addr| DaemonCommands::Reload { bind_addr });
+    }
+
+    #[test]
+    fn cmd_daemon_verify_sends_expected_ipc_request() {
+        assert_daemon_command_ipc("verify", |bind_addr| DaemonCommands::Verify { bind_addr });
+    }
+
+    #[test]
+    fn cmd_daemon_shutdown_sends_expected_ipc_request() {
+        assert_daemon_command_ipc("shutdown", |bind_addr| DaemonCommands::Shutdown {
+            bind_addr,
+        });
+    }
+
+    #[test]
+    fn cmd_daemon_run_returns_error_for_invalid_bind() {
+        let err = cmd_daemon(DaemonCommands::Run {
+            extensions_dir: PathBuf::from("."),
+            bind_addr: "not-an-addr".to_string(),
+            reload_interval_ms: 1,
+        })
+        .expect_err("invalid bind should fail");
+        assert!(err.to_string().contains("address"));
+    }
+
+    #[test]
+    fn run_command_run_returns_error_for_invalid_bind() {
+        let err = run_command(Commands::Run {
+            extensions_dir: PathBuf::from("."),
+            bind_addr: "not-an-addr".to_string(),
+            reload_interval_ms: 1,
+        })
+        .expect_err("invalid bind should fail");
+        assert!(err.to_string().contains("address"));
+    }
+
+    #[test]
+    fn doctor_with_reports_missing_required_toolchain() {
+        let err = cmd_doctor_with(|name| name == "deno").expect_err("must fail");
+        assert!(err
+            .to_string()
+            .contains("missing required Rust toolchain components"));
+    }
+
+    #[test]
+    fn args_parse_without_subcommand_defaults_to_none() {
+        let args = Args::try_parse_from(["copperd"]).expect("parse args");
+        assert!(args.command.is_none());
+    }
+
+    #[test]
+    fn default_run_command_matches_expected_defaults() {
+        match default_run_command() {
+            Commands::Run {
+                bind_addr,
+                reload_interval_ms,
+                extensions_dir,
+            } => {
+                assert_eq!(bind_addr, crate::daemon::DEFAULT_BIND_ADDR);
+                assert_eq!(
+                    reload_interval_ms,
+                    crate::daemon::DEFAULT_RELOAD_INTERVAL_MS
+                );
+                assert!(!extensions_dir.as_os_str().is_empty());
+            }
+            _ => panic!("default command should be run"),
+        }
     }
 }

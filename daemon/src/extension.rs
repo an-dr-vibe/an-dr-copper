@@ -299,4 +299,22 @@ mod tests {
         let detected = core_extensions_dir_from_exe_dir(&exe_dir);
         assert_eq!(detected, Some(exe_dir.join("extensions")));
     }
+
+    #[test]
+    fn core_extensions_detects_parent_extensions_candidate() {
+        let temp = tempdir().expect("tempdir");
+        let exe_dir = temp.path().join("bin").join("target");
+        fs::create_dir_all(temp.path().join("bin").join("extensions")).expect("extensions dir");
+        let detected = core_extensions_dir_from_exe_dir(&exe_dir);
+        assert_eq!(detected, Some(exe_dir.join("..").join("extensions")));
+    }
+
+    #[test]
+    fn core_extensions_detects_legacy_core_extensions_candidate() {
+        let temp = tempdir().expect("tempdir");
+        let exe_dir = temp.path().join("bin");
+        fs::create_dir_all(exe_dir.join("core-extensions")).expect("core-extensions dir");
+        let detected = core_extensions_dir_from_exe_dir(&exe_dir);
+        assert_eq!(detected, Some(exe_dir.join("core-extensions")));
+    }
 }

@@ -940,14 +940,22 @@ fn render_html(state: &UiServerState) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_core_info, core_data_path_for, extension_data_path_for, load_config,
-        read_chunked_body, render_html, store_config,
+        build_core_info, build_ui_state, core_data_path_for, extension_data_path_for, load_config,
+        parse_json_object, parse_request, read_chunked_body, render_html, start_daemon_ui_server,
+        store_config, write_response, HttpMethod, HttpResponse, UiConfigError, UiOpenOptions,
     };
     use crate::descriptor::{Action, Descriptor, InputField, InputType, UiDescriptor};
     use std::collections::HashSet;
     use std::fs;
-    use std::io::{BufReader, Cursor};
+    use std::io::{BufReader, Cursor, Read};
+    use std::net::{TcpListener, TcpStream};
     use std::path::PathBuf;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::thread;
+    use std::time::Duration;
     use tempfile::tempdir;
 
     fn sample_descriptor() -> Descriptor {
@@ -995,6 +1003,101 @@ mod tests {
             data_root: PathBuf::from("C:/tmp/copper-user"),
             allow_close: true,
         }
+    }
+
+    #[test]
+    fn ui_open_options_default_values_are_stable() {
+        let options = UiOpenOptions::default();
+        assert_eq!(options.bind_addr, "127.0.0.1:0");
+        assert!(options.open_browser);
+        assert_eq!(options.idle_timeout, Duration::from_secs(300));
+    }
+
+    fn write_extension(root: &std::path::Path, descriptor: &Descriptor) {
+        let ext = root.join(&descriptor.id);
+        fs::create_dir_all(&ext).expect("create extension dir");
+        let manifest = serde_json::json!({
+            "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+            "id": descriptor.id,
+            "name": descriptor.name,
+            "version": descriptor.version,
+            "trigger": descriptor.trigger,
+            "permissions": [],
+            "inputs": [{
+                "id": "desktopFolder",
+                "type": "folder-picker",
+                "label": "Desktop folder",
+                "default": "~/Desktop"
+            }],
+            "actions": [{
+                "id": "move-torrents",
+                "label": "Move .torrent files",
+                "script": "return;"
+            }],
+            "ui": { "type": "form" }
+        });
+        fs::write(
+            ext.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).expect("descriptor json"),
+        )
+        .expect("write manifest");
+        fs::write(
+            ext.join("main.ts"),
+            "export default function(){ return { onTrigger(){ return {}; } }; }",
+        )
+        .expect("write main.ts");
+    }
+
+    fn parse_http_url(url: &str) -> String {
+        url.strip_prefix("http://").expect("http url").to_string()
+    }
+
+    #[test]
+    fn build_ui_state_rejects_unknown_selected_extension() {
+        let temp = tempdir().expect("tempdir");
+        let descriptor = sample_descriptor();
+        write_extension(temp.path(), &descriptor);
+        let err =
+            build_ui_state(temp.path(), Some("missing-extension"), true).expect_err("must fail");
+        match err {
+            UiConfigError::ExtensionNotFound(id) => assert_eq!(id, "missing-extension"),
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn build_ui_state_chooses_first_descriptor_when_default_missing() {
+        let temp = tempdir().expect("tempdir");
+        let mut descriptor = sample_descriptor();
+        descriptor.id = "alpha-ext".to_string();
+        descriptor.name = "Alpha Extension".to_string();
+        write_extension(temp.path(), &descriptor);
+        let state = build_ui_state(temp.path(), None, true).expect("build state");
+        assert_eq!(state.selected_extension_id, "alpha-ext");
+    }
+
+    fn http_request(addr: &str, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+        let payload = body.unwrap_or("");
+        let mut stream = TcpStream::connect(addr).expect("connect");
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            payload.len(),
+            payload
+        );
+        std::io::Write::write_all(&mut stream, request.as_bytes()).expect("send request");
+        std::io::Write::flush(&mut stream).expect("flush request");
+
+        let mut raw = String::new();
+        stream.read_to_string(&mut raw).expect("read response");
+        let mut lines = raw.lines();
+        let status_line = lines.next().unwrap_or_default().to_string();
+        let status = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|v| v.parse::<u16>().ok())
+            .expect("status code");
+        let body = raw.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
+        (status, body)
     }
 
     #[test]
@@ -1090,5 +1193,329 @@ mod tests {
         );
         assert!(stored.get("action").is_none());
         assert_eq!(stored.get("lastScanUnix").and_then(|v| v.as_u64()), Some(1));
+    }
+
+    fn parse_over_loopback(raw_request: &'static str) -> super::HttpRequest {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let sender = thread::spawn(move || {
+            let mut client = TcpStream::connect(addr).expect("connect");
+            std::io::Write::write_all(&mut client, raw_request.as_bytes()).expect("write request");
+        });
+
+        let (stream, _) = listener.accept().expect("accept");
+        let parsed = parse_request(stream).expect("parse request");
+        sender.join().expect("join sender");
+        parsed
+    }
+
+    #[test]
+    fn parse_json_object_validates_top_level_type() {
+        let err = parse_json_object(br#"["not","object"]"#).expect_err("must reject non-object");
+        assert!(err.to_string().contains("JSON object"));
+
+        let ok = parse_json_object(br#"{"enabled":true}"#).expect("object");
+        assert_eq!(ok.get("enabled").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn parse_request_reads_content_length_body() {
+        let request = parse_over_loopback(
+            "POST /config/core HTTP/1.1\r\nHost: localhost\r\nContent-Length: 12\r\n\r\n{\"k\":\"v123\"}",
+        );
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.path, "/config/core");
+        assert_eq!(request.body, br#"{"k":"v123"}"#);
+    }
+
+    #[test]
+    fn parse_request_reads_chunked_payload() {
+        let request = parse_over_loopback(
+            "POST /config/core HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n",
+        );
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.path, "/config/core");
+        assert_eq!(request.body, b"Wikipedia");
+    }
+
+    #[test]
+    fn parse_request_rejects_unsupported_method() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let sender = thread::spawn(move || {
+            let mut client = TcpStream::connect(addr).expect("connect");
+            std::io::Write::write_all(
+                &mut client,
+                b"PUT /config/core HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            )
+            .expect("write");
+        });
+
+        let (stream, _) = listener.accept().expect("accept");
+        let err = parse_request(stream).expect_err("unsupported method");
+        sender.join().expect("join sender");
+        assert!(err.to_string().contains("unsupported method"));
+    }
+
+    #[test]
+    fn parse_request_rejects_empty_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let sender = thread::spawn(move || {
+            let stream = TcpStream::connect(addr).expect("connect");
+            drop(stream);
+        });
+
+        let (stream, _) = listener.accept().expect("accept");
+        let err = parse_request(stream).expect_err("empty request");
+        sender.join().expect("join sender");
+        assert!(err.to_string().contains("empty request"));
+    }
+
+    #[test]
+    fn parse_request_rejects_missing_path() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let sender = thread::spawn(move || {
+            let mut client = TcpStream::connect(addr).expect("connect");
+            std::io::Write::write_all(&mut client, b"GET\r\n\r\n").expect("write");
+        });
+
+        let (stream, _) = listener.accept().expect("accept");
+        let err = parse_request(stream).expect_err("missing path");
+        sender.join().expect("join sender");
+        assert!(err.to_string().contains("missing path"));
+    }
+
+    #[test]
+    fn parse_request_rejects_missing_method() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let sender = thread::spawn(move || {
+            let mut client = TcpStream::connect(addr).expect("connect");
+            std::io::Write::write_all(&mut client, b"\r\n\r\n").expect("write");
+        });
+
+        let (stream, _) = listener.accept().expect("accept");
+        let err = parse_request(stream).expect_err("missing method");
+        sender.join().expect("join sender");
+        assert!(err.to_string().contains("missing method"));
+    }
+
+    #[test]
+    fn read_chunked_body_rejects_unexpected_eof() {
+        let raw = b"";
+        let mut reader = BufReader::new(Cursor::new(raw.as_slice()));
+        let err = read_chunked_body(&mut reader).expect_err("unexpected eof");
+        assert!(err.to_string().contains("unexpected EOF"));
+    }
+
+    #[test]
+    fn read_chunked_body_rejects_invalid_chunk_terminator() {
+        let raw = b"1\r\naZZ0\r\n\r\n";
+        let mut reader = BufReader::new(Cursor::new(raw.as_slice()));
+        let err = read_chunked_body(&mut reader).expect_err("invalid chunk terminator");
+        assert!(err.to_string().contains("invalid chunk terminator"));
+    }
+
+    #[test]
+    fn read_chunked_body_skips_trailers() {
+        let raw = b"1\r\na\r\n0\r\nX-Test: 1\r\n\r\n";
+        let mut reader = BufReader::new(Cursor::new(raw.as_slice()));
+        let body = read_chunked_body(&mut reader).expect("chunked with trailer");
+        assert_eq!(body, b"a");
+    }
+
+    #[test]
+    fn load_config_sanitizes_invalid_and_non_object_payloads() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("bad.json");
+
+        fs::write(&path, "[]").expect("write non-object");
+        let non_object = load_config(&path).expect("read non-object");
+        assert_eq!(non_object, serde_json::json!({}));
+
+        fs::write(&path, "{this-is-not-json").expect("write invalid");
+        let invalid = load_config(&path).expect("read invalid");
+        assert_eq!(invalid, serde_json::json!({}));
+    }
+
+    #[test]
+    fn load_config_returns_empty_for_missing_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("missing.json");
+        let value = load_config(&path).expect("load missing");
+        assert_eq!(value, serde_json::json!({}));
+    }
+
+    #[test]
+    fn store_config_replaces_with_non_object_payload_and_creates_parent() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("nested").join("data.json");
+        store_config(&path, &serde_json::json!("raw-string")).expect("store non-object");
+        let raw = fs::read_to_string(&path).expect("read file");
+        assert!(raw.contains("raw-string"));
+    }
+
+    #[test]
+    fn write_response_uses_ok_text_for_unknown_status_code() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let client = thread::spawn(move || {
+            let mut stream = TcpStream::connect(addr).expect("connect");
+            let mut raw = String::new();
+            stream.read_to_string(&mut raw).expect("read");
+            raw
+        });
+
+        let (mut stream, _) = listener.accept().expect("accept");
+        write_response(
+            &mut stream,
+            HttpResponse {
+                status: 500,
+                content_type: "text/plain; charset=utf-8",
+                body: b"boom".to_vec(),
+            },
+        )
+        .expect("write response");
+        drop(stream);
+
+        let raw = client.join().expect("join");
+        assert!(raw.starts_with("HTTP/1.1 500 OK"));
+    }
+
+    #[test]
+    fn daemon_ui_server_handles_core_and_extension_routes() {
+        let temp = tempdir().expect("tempdir");
+        let descriptor = sample_descriptor();
+        write_extension(temp.path(), &descriptor);
+
+        let running = Arc::new(AtomicBool::new(true));
+        let server = start_daemon_ui_server(
+            temp.path().to_path_buf(),
+            "127.0.0.1:0".to_string(),
+            Arc::clone(&running),
+        )
+        .expect("start daemon ui");
+        let addr = parse_http_url(&server.url);
+
+        let (status_root, body_root) = http_request(&addr, "GET", "/", None);
+        assert_eq!(status_root, 200);
+        assert!(body_root.contains("Copper Settings"));
+
+        let (status_descriptor, body_descriptor) = http_request(&addr, "GET", "/descriptor", None);
+        assert_eq!(status_descriptor, 200);
+        assert!(body_descriptor.contains("desktop-torrent-organizer"));
+
+        let (status_core_get, body_core_get) = http_request(&addr, "GET", "/config/core", None);
+        assert_eq!(status_core_get, 200);
+        assert!(body_core_get.contains("{"));
+
+        let (status_core_post, body_core_post) = http_request(
+            &addr,
+            "POST",
+            "/config/core",
+            Some(r#"{"uiTheme":"obsidian"}"#),
+        );
+        assert_eq!(status_core_post, 200);
+        assert!(body_core_post.contains("\"ok\": true"));
+
+        let (status_core_bad, body_core_bad) =
+            http_request(&addr, "POST", "/config/core", Some(r#"["not-object"]"#));
+        assert_eq!(status_core_bad, 400);
+        assert!(body_core_bad.contains("JSON object"));
+
+        let (status_info_core, body_info_core) = http_request(&addr, "GET", "/info/core", None);
+        assert_eq!(status_info_core, 200);
+        assert!(body_info_core.contains("runtimeExtensionRoots"));
+
+        let ext_path = "/config/extension/desktop-torrent-organizer";
+        let (status_ext_get, _) = http_request(&addr, "GET", ext_path, None);
+        assert_eq!(status_ext_get, 200);
+
+        let (status_ext_post, body_ext_post) = http_request(
+            &addr,
+            "POST",
+            ext_path,
+            Some(r#"{"action":"move-torrents"}"#),
+        );
+        assert_eq!(status_ext_post, 200);
+        assert!(body_ext_post.contains("\"ok\": true"));
+
+        let (status_info_ext, body_info_ext) = http_request(
+            &addr,
+            "GET",
+            "/info/extension/desktop-torrent-organizer",
+            None,
+        );
+        assert_eq!(status_info_ext, 200);
+        assert!(body_info_ext.contains("move-torrents"));
+
+        let (status_missing_ext_get, _) =
+            http_request(&addr, "GET", "/config/extension/missing", None);
+        assert_eq!(status_missing_ext_get, 404);
+
+        let (status_missing_ext_post, _) = http_request(
+            &addr,
+            "POST",
+            "/config/extension/missing",
+            Some(r#"{"x":1}"#),
+        );
+        assert_eq!(status_missing_ext_post, 404);
+
+        let (status_close, body_close) = http_request(&addr, "POST", "/close", Some("{}"));
+        assert_eq!(status_close, 400);
+        assert!(body_close.contains("close is disabled"));
+
+        let (status_not_found, _) = http_request(&addr, "GET", "/does-not-exist", None);
+        assert_eq!(status_not_found, 404);
+
+        running.store(false, Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(80));
+    }
+
+    #[test]
+    fn open_extension_config_closes_on_close_route() {
+        let temp = tempdir().expect("tempdir");
+        let descriptor = sample_descriptor();
+        write_extension(temp.path(), &descriptor);
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind free port");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+        let bind = format!("127.0.0.1:{}", addr.port());
+
+        let extensions_dir = temp.path().to_path_buf();
+        let bind_for_thread = bind.clone();
+        let handle = thread::spawn(move || {
+            super::open_extension_config(
+                &extensions_dir,
+                "desktop-torrent-organizer",
+                UiOpenOptions {
+                    bind_addr: bind_for_thread,
+                    open_browser: false,
+                    idle_timeout: Duration::from_secs(2),
+                },
+            )
+        });
+
+        let mut up = false;
+        for _ in 0..20 {
+            if TcpStream::connect(&bind).is_ok() {
+                up = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(up, "config UI should accept connections");
+
+        let (status_close, _) = http_request(&bind, "POST", "/close", Some("{}"));
+        assert_eq!(status_close, 204);
+
+        let url = handle
+            .join()
+            .expect("join")
+            .expect("open extension config should succeed");
+        assert!(url.starts_with("http://127.0.0.1:"));
     }
 }
