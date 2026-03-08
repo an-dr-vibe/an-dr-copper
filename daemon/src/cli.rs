@@ -1,3 +1,4 @@
+use crate::daemon::{self as daemon_runtime, DaemonConfig, IpcRequest, DEFAULT_BIND_ADDR};
 use crate::descriptor::{Descriptor, Permission};
 use crate::extension::{default_extensions_dir, Registry};
 use crate::schema::parse_and_validate;
@@ -5,6 +6,7 @@ use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -17,6 +19,8 @@ pub enum CliError {
     Validation(#[from] crate::schema::ValidationError),
     #[error(transparent)]
     Extension(#[from] crate::extension::ExtensionError),
+    #[error(transparent)]
+    Daemon(#[from] crate::daemon::DaemonError),
 }
 
 #[derive(Parser, Debug)]
@@ -28,6 +32,15 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Run the long-lived daemon with default settings
+    Run {
+        #[arg(long, value_name = "DIR", default_value_os_t = default_extensions_dir())]
+        extensions_dir: PathBuf,
+        #[arg(long, value_name = "ADDR", default_value = DEFAULT_BIND_ADDR)]
+        bind_addr: String,
+        #[arg(long, value_name = "MS", default_value_t = 3_000)]
+        reload_interval_ms: u64,
+    },
     /// Validate one descriptor file against the embedded JSON schema
     Validate {
         #[arg(value_name = "DESCRIPTOR")]
@@ -61,11 +74,73 @@ enum Commands {
     },
     /// Print environment readiness (required and optional tools)
     Doctor,
+    /// Run or control the always-on daemon process
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DaemonCommands {
+    /// Start the long-running daemon process
+    Run {
+        #[arg(long, value_name = "DIR", default_value_os_t = default_extensions_dir())]
+        extensions_dir: PathBuf,
+        #[arg(long, value_name = "ADDR", default_value = DEFAULT_BIND_ADDR)]
+        bind_addr: String,
+        #[arg(long, value_name = "MS", default_value_t = 3_000)]
+        reload_interval_ms: u64,
+    },
+    /// Check daemon health
+    Health {
+        #[arg(long, value_name = "ADDR", default_value = DEFAULT_BIND_ADDR)]
+        bind_addr: String,
+    },
+    /// List extensions known by the running daemon
+    List {
+        #[arg(long, value_name = "ADDR", default_value = DEFAULT_BIND_ADDR)]
+        bind_addr: String,
+    },
+    /// Trigger an extension through daemon IPC
+    Trigger {
+        #[arg(value_name = "EXTENSION_ID")]
+        id: String,
+        #[arg(long, value_name = "ACTION_ID")]
+        action: Option<String>,
+        #[arg(long, value_name = "ADDR", default_value = DEFAULT_BIND_ADDR)]
+        bind_addr: String,
+    },
+    /// Force daemon registry reload
+    Reload {
+        #[arg(long, value_name = "ADDR", default_value = DEFAULT_BIND_ADDR)]
+        bind_addr: String,
+    },
+    /// Verify extensions through daemon state
+    Verify {
+        #[arg(long, value_name = "ADDR", default_value = DEFAULT_BIND_ADDR)]
+        bind_addr: String,
+    },
+    /// Ask daemon to exit gracefully
+    Shutdown {
+        #[arg(long, value_name = "ADDR", default_value = DEFAULT_BIND_ADDR)]
+        bind_addr: String,
+    },
 }
 
 pub fn run() -> Result<(), CliError> {
     let args = Args::parse();
     match args.command {
+        Commands::Run {
+            extensions_dir,
+            bind_addr,
+            reload_interval_ms,
+        } => daemon_runtime::run_daemon(DaemonConfig {
+            extensions_dir,
+            bind_addr,
+            reload_interval: Duration::from_millis(reload_interval_ms),
+        })
+        .map_err(CliError::from),
         Commands::Validate { descriptor } => cmd_validate(&descriptor),
         Commands::List { extensions_dir } => cmd_list(&extensions_dir),
         Commands::Verify { extensions_dir } => cmd_verify(&extensions_dir),
@@ -76,7 +151,60 @@ pub fn run() -> Result<(), CliError> {
         } => cmd_trigger(&extensions_dir, &id, action.as_deref()),
         Commands::GenerateMain { descriptor, output } => cmd_generate_main(&descriptor, output),
         Commands::Doctor => cmd_doctor(),
+        Commands::Daemon { command } => cmd_daemon(command),
     }
+}
+
+fn cmd_daemon(command: DaemonCommands) -> Result<(), CliError> {
+    match command {
+        DaemonCommands::Run {
+            extensions_dir,
+            bind_addr,
+            reload_interval_ms,
+        } => daemon_runtime::run_daemon(DaemonConfig {
+            extensions_dir,
+            bind_addr,
+            reload_interval: Duration::from_millis(reload_interval_ms),
+        })?,
+        DaemonCommands::Health { bind_addr } => {
+            print_ipc_response(daemon_runtime::send_request(
+                &bind_addr,
+                &IpcRequest::Health,
+            )?)?;
+        }
+        DaemonCommands::List { bind_addr } => {
+            print_ipc_response(daemon_runtime::send_request(&bind_addr, &IpcRequest::List)?)?;
+        }
+        DaemonCommands::Trigger {
+            id,
+            action,
+            bind_addr,
+        } => {
+            print_ipc_response(daemon_runtime::send_request(
+                &bind_addr,
+                &IpcRequest::Trigger { id, action },
+            )?)?;
+        }
+        DaemonCommands::Reload { bind_addr } => {
+            print_ipc_response(daemon_runtime::send_request(
+                &bind_addr,
+                &IpcRequest::Reload,
+            )?)?;
+        }
+        DaemonCommands::Verify { bind_addr } => {
+            print_ipc_response(daemon_runtime::send_request(
+                &bind_addr,
+                &IpcRequest::Verify,
+            )?)?;
+        }
+        DaemonCommands::Shutdown { bind_addr } => {
+            print_ipc_response(daemon_runtime::send_request(
+                &bind_addr,
+                &IpcRequest::Shutdown,
+            )?)?;
+        }
+    }
+    Ok(())
 }
 
 fn cmd_validate(path: &Path) -> Result<(), CliError> {
@@ -202,6 +330,19 @@ fn cmd_doctor() -> Result<(), CliError> {
         return Err(CliError::Message(
             "missing required Rust toolchain components".to_string(),
         ));
+    }
+    Ok(())
+}
+
+fn print_ipc_response(response: daemon_runtime::IpcResponse) -> Result<(), CliError> {
+    if !response.ok {
+        return Err(CliError::Message(response.message));
+    }
+    println!("{}", response.message);
+    if let Some(data) = response.data {
+        let pretty = serde_json::to_string_pretty(&data)
+            .map_err(|err| CliError::Message(format!("failed to format daemon response: {err}")))?;
+        println!("{pretty}");
     }
     Ok(())
 }

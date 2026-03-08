@@ -1,0 +1,53 @@
+{
+  "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+  "id": "desktop-torrent-organizer",
+  "name": "Desktop Torrent Organizer",
+  "version": "1.0.0",
+  "trigger": "desktop-torrents",
+  "permissions": ["fs", "shell", "store", "ui"],
+  "inputs": [
+    {
+      "id": "desktopFolder",
+      "type": "folder-picker",
+      "label": "Desktop folder",
+      "default": "~/Desktop"
+    },
+    {
+      "id": "torrentsFolder",
+      "type": "folder-picker",
+      "label": "Torrents folder",
+      "default": "~/Desktop/Torrents"
+    },
+    {
+      "id": "extensionPackage",
+      "type": "file-picker",
+      "label": "Extension package (.zip or .tar.gz)"
+    },
+    {
+      "id": "extensionsInstallDir",
+      "type": "folder-picker",
+      "label": "Extensions install directory",
+      "default": "~/.Copper/extensions"
+    }
+  ],
+  "actions": [
+    {
+      "id": "move-torrents",
+      "label": "Move .torrent files from Desktop to Torrents",
+      "script": "Move .torrent files from desktopFolder to torrentsFolder and report summary."
+    },
+    {
+      "id": "add-extension",
+      "label": "Add extension package via UI input",
+      "script": "Install extensionPackage into extensionsInstallDir and persist install metadata."
+    },
+    {
+      "id": "show-config",
+      "label": "Show extension configuration summary",
+      "script": "Read persisted configuration and show it in UI detail view."
+    }
+  ],
+  "ui": {
+    "type": "form"
+  }
+}

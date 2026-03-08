@@ -1,117 +1,135 @@
-# Copper Architecture (Implemented MVP)
+# Copper Architecture
 
-Version: 0.1.0  
+Version: 0.2.0  
 Last updated: 2026-03-08
 
-## 1. Scope
+## 1. Overview
 
-This document is derived from the original architecture draft and updated to match what is implemented in this repository.
+Copper is a cross-platform desktop automation platform optimized for AI-authored TypeScript extensions.
 
-Copper is a cross-platform extension host focused on AI-authored automations. The current implementation is intentionally descriptor-first and verification-first.
+The core runtime is a long-running Rust daemon. Extensions are descriptor-first (`descriptor.json`) with a minimal API contract and schema validation.
 
-## 2. Key Changes vs Original Draft
+## 2. Process Model
 
-The original draft assumed embedded `deno_core` + on-demand Tauri UI. For MVP, I changed this to:
+Two-process target model (same intent as original architecture):
 
-1. Rust-first host and verifier (implemented now).
-2. TypeScript runtime execution is optional and external (Deno CLI), not embedded.
-3. UI is represented in descriptor/types but not rendered by a native window yet.
+1. Rust daemon (`copperd run`) - always-on background process.
+2. UI window (planned) - spawned on demand for extension UI rendering.
 
-Why this change:
+Current implementation status:
 
-- Keeps build and tests reliable on Windows/macOS/Linux without heavy native GUI dependencies.
-- Makes verification loops fast and deterministic.
-- Preserves the extension contract so runtime/UI can be upgraded later without breaking descriptors.
+- Implemented: always-on daemon, extension registry loading, periodic hot-reload, IPC control plane, descriptor validation, trigger preparation, skeleton generation.
+- Planned: embedded `deno_core` runtime execution, tray/hotkey integration, on-demand Tauri UI renderer.
 
-## 3. Current Process Model
+## 3. Implemented Daemon Core
 
-Single process in v0.1:
+Daemon capabilities:
 
-- `copperd` (Rust binary)
-  - validates descriptors against JSON schema
-  - discovers extension folders
-  - provides dry-run trigger introspection
-  - generates `main.ts` skeletons from descriptors
+- Binds to TCP IPC endpoint (default `127.0.0.1:4765`).
+- Loads extensions from directory (`~/.Copper/extensions` by default).
+- Validates descriptors against versioned schema.
+- Periodically reloads extension registry (hot-reload behavior).
+- Handles IPC operations:
+  - `health`
+  - `list`
+  - `trigger`
+  - `reload`
+  - `verify`
+  - `shutdown`
 
-Planned next step (compatible with current model):
+This restores the daemon as the center of system lifecycle.
 
-- add runtime adapter that executes `main.ts` with Deno when present.
+## 4. Extension Contract
 
-## 4. Repository Layout
+Extension folder:
+
+```text
+<extension>/
+|- descriptor.json
+`- main.ts
+```
+
+Schema source:
+
+- `schemas/extension/1.0.0/descriptor.schema.json`
+
+Type contract for AI generation:
+
+- `sdk/api.d.ts`
+
+## 5. Repository Layout
 
 ```text
 .
-|- daemon/                 # Rust crate (CLI host)
-|- docs/                   # architecture + usage docs
-|- extensions/             # sample extension(s)
-|- schemas/                # JSON schema contracts
-|- sdk/                    # TypeScript API types
-|- scripts/                # bootstrap/build/verify scripts
-|- AGENTS.md               # AI collaboration guide for this repo
-`- Cargo.toml              # workspace root
+|- daemon/
+|  |- src/
+|  |  |- api/        # host-side API module stubs (fs/shell/ui/notify/store)
+|  |  |- runtime/    # runtime adapter abstraction
+|  |  |- tray.rs     # tray controller placeholder
+|  |  |- daemon.rs   # long-running daemon + IPC
+|  |  |- cli.rs      # CLI and daemon control commands
+|  |  `- ...
+|- schemas/
+|- sdk/
+|- extensions/
+|- scripts/
+`- docs/
 ```
-
-## 5. Descriptor Contract
-
-The source of truth remains `descriptor.json` and schema validation:
-
-- Schema file: `schemas/extension/1.0.0/descriptor.schema.json`
-- Supported `$schema` URL:
-  `https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json`
-
-### Intentional tightening
-
-I made `actions` required in schema (not optional) so every extension is executable by default. This reduces ambiguous AI output and improves verification quality.
 
 ## 6. CLI Surface
 
-`copperd` commands:
+Local utility commands:
 
-- `doctor` - checks required/optional tooling availability
-- `validate <descriptor>` - validates one descriptor
-- `list --extensions-dir <dir>` - discovers extensions
-- `verify --extensions-dir <dir>` - verification pass for extension pack
-- `trigger <id> [--action <id>]` - dry-run action inspection
-- `generate-main <descriptor>` - generate TypeScript skeleton
+- `validate`
+- `list`
+- `verify`
+- `trigger`
+- `generate-main`
+- `doctor`
+- `run`
+
+Daemon control commands:
+
+- `daemon run`
+- `daemon health`
+- `daemon list`
+- `daemon trigger`
+- `daemon reload`
+- `daemon verify`
+- `daemon shutdown`
 
 ## 7. Cross-Platform Strategy
 
-- Core logic implemented in stable Rust.
-- No OS-specific APIs required for build/test path.
-- Scripts provided in both Bash and PowerShell.
-- Optional Deno usage is feature-adjacent, not mandatory for core verification.
+- Rust host binaries for Windows/macOS/Linux.
+- PowerShell scripts as the default cross-platform scripting path (`pwsh`).
+- Bash variants retained for shell-native environments.
 
-## 8. Testing and Verification Loops
+## 8. Verification
 
-Test strategy:
+Primary checks:
 
-- Unit tests for schema validation behavior.
-- Unit tests for extension discovery and permission checks.
-- Unit tests for `main.ts` generation.
+1. `./scripts/run-tests.ps1`
+2. `./scripts/coverage.ps1`
+3. `./scripts/build-release.ps1`
 
-Loop strategy:
+Loop:
 
-- `scripts/verify-loop.sh [n]`
-- `scripts/verify-loop.ps1 -Iterations n`
+```powershell
+for ($i = 1; $i -le 3; $i++) {
+  ./scripts/run-tests.ps1
+  ./scripts/coverage.ps1
+  ./scripts/build-release.ps1
+}
+```
 
-Each iteration runs:
+Release packaging:
 
-1. `cargo fmt --all --check`
-2. `cargo test --workspace`
-3. `cargo build --workspace --release`
+- `./scripts/build-release.ps1` builds `copperd`, creates `dist/release/copper-<host-triple>/`, and publishes per-extension archives in `extensions-published/`.
 
-## 9. Evolution Plan
+## 9. Known Gaps vs Full Target Architecture
 
-1. Add runtime adapter trait with implementations:
-   - `DryRunRuntime` (existing behavior)
-   - `DenoRuntime` (optional)
-2. Add permission enforcement at runtime boundary.
-3. Add on-demand UI renderer process with the existing `ui` contract.
-4. Keep schema backward compatibility by versioned URLs.
+- `deno_core` is not embedded yet (dry-run/runtime adapter layer is in place).
+- On-demand Tauri renderer is not wired yet.
+- Tray and global hotkey behavior are scaffolded but not functional.
 
-## 10. Non-Goals (Current)
-
-- Extension marketplace
-- Cloud sync
-- Full daemonized tray lifecycle
-- Embedded JS runtime in v0.1
+These gaps are additive roadmap work and do not change the daemon-first core architecture.

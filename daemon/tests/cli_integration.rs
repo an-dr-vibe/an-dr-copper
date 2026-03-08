@@ -31,7 +31,8 @@ fn verify_command_succeeds_for_sample_extensions() {
     ])
     .assert()
     .success()
-    .stdout(contains("Verified 1 extension(s)"));
+    .stdout(contains("Verified "))
+    .stdout(contains(" extension(s)"));
 }
 
 #[test]
@@ -60,7 +61,8 @@ fn list_shows_sample_extension() {
     ])
     .assert()
     .success()
-    .stdout(contains("sort-downloads"));
+    .stdout(contains("sort-downloads"))
+    .stdout(contains("desktop-torrent-organizer"));
 }
 
 #[test]
@@ -71,6 +73,16 @@ fn validate_accepts_sample_descriptor() {
         .assert()
         .success()
         .stdout(contains("OK: Sort Downloads"));
+}
+
+#[test]
+fn validate_accepts_desktop_torrent_descriptor() {
+    let descriptor = repo_root().join("extensions/desktop-torrent-organizer/descriptor.json");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("copperd"));
+    cmd.args(["validate", descriptor.to_str().expect("utf-8 path")])
+        .assert()
+        .success()
+        .stdout(contains("OK: Desktop Torrent Organizer"));
 }
 
 #[test]
@@ -89,6 +101,25 @@ fn trigger_shows_selected_action_details() {
     .success()
     .stdout(contains("Trigger dry-run"))
     .stdout(contains("Permissions: fs,ui"));
+}
+
+#[test]
+fn trigger_torrent_extension_shows_expected_permissions() {
+    let extensions_dir = repo_root().join("extensions");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("copperd"));
+    cmd.args([
+        "trigger",
+        "desktop-torrent-organizer",
+        "--action",
+        "move-torrents",
+        "--extensions-dir",
+        extensions_dir.to_str().expect("utf-8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Trigger dry-run"))
+    .stdout(contains("Permissions: fs,shell,store,ui"))
+    .stdout(contains("Move .torrent files"));
 }
 
 #[test]

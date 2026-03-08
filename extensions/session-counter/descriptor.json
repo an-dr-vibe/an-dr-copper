@@ -1,0 +1,18 @@
+{
+  "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+  "id": "session-counter",
+  "name": "Session Counter",
+  "version": "1.0.0",
+  "trigger": "session-count",
+  "permissions": ["store", "ui"],
+  "actions": [
+    {
+      "id": "increment",
+      "label": "Increment session counter",
+      "script": "const key = 'session-counter/runs'; const current = Number((await api.store.get(key)) ?? 0); const next = current + 1; await api.store.set(key, next); await api.ui.show({ type: 'toast', message: `Session count: ${next}` });"
+    }
+  ],
+  "ui": {
+    "type": "toast"
+  }
+}

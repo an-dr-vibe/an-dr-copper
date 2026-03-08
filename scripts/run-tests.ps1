@@ -20,6 +20,7 @@ Invoke-Step { cargo fmt --all --check } "cargo fmt"
 if (-not $SkipClippy) {
   Invoke-Step { cargo clippy --workspace --all-targets -- -D warnings } "cargo clippy"
 }
+Invoke-Step { cargo test -p copperd --test extension_utr } "extension UTR"
 Invoke-Step { cargo test --workspace } "cargo test"
 Invoke-Step { cargo run -p copperd -- verify --extensions-dir $ExtensionsDir } "copperd verify"
 

@@ -14,20 +14,38 @@
 ./scripts/coverage.ps1
 ```
 
-## 3. Build
+## 3. Run Daemon
+
+```powershell
+./scripts/daemon.ps1 -Action run
+# in another terminal:
+./scripts/daemon.ps1 -Action health
+./scripts/daemon.ps1 -Action list
+./scripts/daemon.ps1 -Action shutdown
+```
+
+## 4. Build
 
 ```powershell
 ./scripts/build-debug.ps1
 ./scripts/build-release.ps1
 ```
 
-## 4. Validate Extensions
+Release output is written to `dist/release` and includes:
+
+- Full daemon bundle (`copper-<host-triple>/`)
+- Bundle archive (`copper-<host-triple>.zip`)
+- Published extension archives (`extensions-published/`)
+
+## 5. Validate Extensions
 
 ```powershell
 cargo run -p copperd -- verify --extensions-dir ./extensions
+cargo run -p copperd -- trigger session-counter --extensions-dir ./extensions
+cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents --extensions-dir ./extensions
 ```
 
-## 5. Generate main.ts from descriptor
+## 6. Generate main.ts from descriptor
 
 ```powershell
 cargo run -p copperd -- generate-main ./extensions/sort-downloads/descriptor.json
