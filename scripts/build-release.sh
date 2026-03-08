@@ -24,7 +24,7 @@ mkdir -p "$bundle_dir/extensions-published"
 cp "$binary_path" "${bundle_dir}/${binary_name}"
 cp "${repo_root}/README.md" "${bundle_dir}/README.md"
 cp "${repo_root}/docs/QUICKSTART.md" "${bundle_dir}/QUICKSTART.md"
-cp -R "${repo_root}/extensions" "${bundle_dir}/extensions"
+cp -R "${repo_root}/extensions" "${bundle_dir}/core-extensions"
 
 shopt -s nullglob
 for descriptor in "${repo_root}"/extensions/*/descriptor.json; do

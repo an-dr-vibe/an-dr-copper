@@ -1,5 +1,7 @@
 use crate::descriptor::Permission;
-use crate::extension::{default_extensions_dir, Registry};
+use crate::extension::{
+    core_extensions_dir, default_extensions_dir, load_runtime_registry, Registry,
+};
 use crate::tray::TrayController;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
@@ -87,21 +89,24 @@ impl IpcResponse {
 
 #[derive(Debug)]
 struct DaemonState {
-    extensions_dir: PathBuf,
+    user_extensions_dir: PathBuf,
+    core_extensions_dir: Option<PathBuf>,
     registry: Registry,
 }
 
 impl DaemonState {
-    fn load(extensions_dir: &Path) -> Result<Self, DaemonError> {
-        let registry = Registry::load_from_dir(extensions_dir)?;
+    fn load(user_extensions_dir: &Path) -> Result<Self, DaemonError> {
+        let registry = load_runtime_registry(user_extensions_dir)?;
         Ok(Self {
-            extensions_dir: extensions_dir.to_path_buf(),
+            user_extensions_dir: user_extensions_dir.to_path_buf(),
+            core_extensions_dir: core_extensions_dir(),
             registry,
         })
     }
 
     fn reload(&mut self) -> Result<usize, DaemonError> {
-        self.registry = Registry::load_from_dir(&self.extensions_dir)?;
+        self.registry = load_runtime_registry(&self.user_extensions_dir)?;
+        self.core_extensions_dir = core_extensions_dir();
         Ok(self.registry.list().count())
     }
 
@@ -134,13 +139,18 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     .map_err(|e| DaemonError::SignalHandler(e.to_string()))?;
 
     let mut state = DaemonState::load(&config.extensions_dir)?;
-    let _tray = TrayController::initialize(Arc::clone(&running))
+    let _tray = TrayController::initialize(Arc::clone(&running), config.extensions_dir.clone())
         .map_err(|err| DaemonError::Tray(err.to_string()))?;
 
     println!(
-        "Daemon started on {} (extensions: {})",
+        "Daemon started on {} (user extensions: {}, core extensions: {})",
         config.bind_addr,
-        config.extensions_dir.display()
+        config.extensions_dir.display(),
+        state
+            .core_extensions_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<not found>".to_string())
     );
 
     let mut last_reload = Instant::now();
@@ -244,7 +254,11 @@ fn handle_request(
         IpcRequest::Health => IpcResponse::ok(
             "daemon alive",
             Some(serde_json::json!({
-                "extensionsDir": state.extensions_dir.display().to_string(),
+                "userExtensionsDir": state.user_extensions_dir.display().to_string(),
+                "coreExtensionsDir": state
+                    .core_extensions_dir
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
                 "extensionsLoaded": state.registry.list().count()
             })),
         ),

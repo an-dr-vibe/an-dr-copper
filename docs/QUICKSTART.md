@@ -21,6 +21,7 @@
 # in another terminal:
 ./scripts/daemon.ps1 -Action health
 ./scripts/daemon.ps1 -Action list
+./target/release/copperd.exe ui open --extension desktop-torrent-organizer
 ./scripts/daemon.ps1 -Action shutdown
 ```
 
@@ -35,6 +36,7 @@ Release output is written to `dist/release` and includes:
 
 - Full daemon bundle (`copper-<host-triple>/`)
 - Bundle archive (`copper-<host-triple>.zip`)
+- Shipped core extensions (`core-extensions/`)
 - Published extension archives (`extensions-published/`)
 
 ## 5. Validate Extensions

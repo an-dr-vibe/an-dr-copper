@@ -7,6 +7,7 @@ extensions_dir="${3:-./extensions}"
 reload_interval_ms="${4:-3000}"
 extension_id="${5:-}"
 action_id="${6:-}"
+ui_idle_timeout_ms="${7:-300000}"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
@@ -40,6 +41,13 @@ case "$action" in
     ;;
   shutdown)
     cargo run -p copperd -- daemon shutdown --bind-addr "$bind_addr"
+    ;;
+  ui-open)
+    if [[ -z "$extension_id" ]]; then
+      echo "extension_id is required for ui-open" >&2
+      exit 1
+    fi
+    cargo run -p copperd -- ui open --extension "$extension_id" --extensions-dir "$extensions_dir" --idle-timeout-ms "$ui_idle_timeout_ms"
     ;;
   *)
     echo "unknown action: $action" >&2

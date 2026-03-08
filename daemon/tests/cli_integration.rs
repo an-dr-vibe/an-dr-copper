@@ -21,6 +21,46 @@ fn doctor_command_succeeds() {
 }
 
 #[test]
+fn ui_open_returns_url_for_known_extension() {
+    let extensions_dir = repo_root().join("extensions");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("copperd"));
+    cmd.args([
+        "ui",
+        "open",
+        "--extension",
+        "desktop-torrent-organizer",
+        "--extensions-dir",
+        extensions_dir.to_str().expect("utf-8 path"),
+        "--idle-timeout-ms",
+        "20",
+        "--no-browser",
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Config UI available at http://127.0.0.1:"));
+}
+
+#[test]
+fn ui_open_fails_for_unknown_extension() {
+    let extensions_dir = repo_root().join("extensions");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("copperd"));
+    cmd.args([
+        "ui",
+        "open",
+        "--extension",
+        "missing-ext",
+        "--extensions-dir",
+        extensions_dir.to_str().expect("utf-8 path"),
+        "--idle-timeout-ms",
+        "20",
+        "--no-browser",
+    ])
+    .assert()
+    .failure()
+    .stderr(contains("extension 'missing-ext' not found"));
+}
+
+#[test]
 fn verify_command_succeeds_for_sample_extensions() {
     let extensions_dir = repo_root().join("extensions");
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("copperd"));

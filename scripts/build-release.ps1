@@ -75,8 +75,8 @@ Copy-Item -Path $binaryPath -Destination (Join-Path $bundlePath $exeName) -Force
 Copy-Item -Path (Join-Path $repoRoot "README.md") -Destination (Join-Path $bundlePath "README.md") -Force
 Copy-Item -Path (Join-Path $repoRoot "docs/QUICKSTART.md") -Destination (Join-Path $bundlePath "QUICKSTART.md") -Force
 
-$bundleExtensions = Join-Path $bundlePath "extensions"
-Copy-Item -Path (Join-Path $repoRoot "extensions") -Destination $bundleExtensions -Recurse -Force
+$bundleCoreExtensions = Join-Path $bundlePath "core-extensions"
+Copy-Item -Path (Join-Path $repoRoot "extensions") -Destination $bundleCoreExtensions -Recurse -Force
 
 $publishedExtensionsPath = Join-Path $bundlePath "extensions-published"
 Publish-ExtensionArchives -ExtensionsRoot (Join-Path $repoRoot "extensions") -PublishRoot $publishedExtensionsPath

@@ -1,6 +1,7 @@
+use crate::config_ui::{self, UiOpenOptions};
 use crate::daemon::{self as daemon_runtime, DaemonConfig, IpcRequest, DEFAULT_BIND_ADDR};
 use crate::descriptor::{Descriptor, Permission};
-use crate::extension::{default_extensions_dir, Registry};
+use crate::extension::{default_extensions_dir, load_runtime_registry};
 use crate::schema::parse_and_validate;
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -21,6 +22,8 @@ pub enum CliError {
     Extension(#[from] crate::extension::ExtensionError),
     #[error(transparent)]
     Daemon(#[from] crate::daemon::DaemonError),
+    #[error(transparent)]
+    UiConfig(#[from] crate::config_ui::UiConfigError),
 }
 
 #[derive(Parser, Debug)]
@@ -79,6 +82,11 @@ enum Commands {
         #[command(subcommand)]
         command: DaemonCommands,
     },
+    /// Open extension configuration UI
+    Ui {
+        #[command(subcommand)]
+        command: UiCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -128,6 +136,21 @@ enum DaemonCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum UiCommands {
+    /// Open local web UI for extension config
+    Open {
+        #[arg(long, value_name = "EXTENSION_ID")]
+        extension: String,
+        #[arg(long, value_name = "DIR", default_value_os_t = default_extensions_dir())]
+        extensions_dir: PathBuf,
+        #[arg(long, value_name = "MS", default_value_t = 300_000)]
+        idle_timeout_ms: u64,
+        #[arg(long)]
+        no_browser: bool,
+    },
+}
+
 pub fn run() -> Result<(), CliError> {
     let args = Args::parse();
     match args.command {
@@ -152,6 +175,7 @@ pub fn run() -> Result<(), CliError> {
         Commands::GenerateMain { descriptor, output } => cmd_generate_main(&descriptor, output),
         Commands::Doctor => cmd_doctor(),
         Commands::Daemon { command } => cmd_daemon(command),
+        Commands::Ui { command } => cmd_ui(command),
     }
 }
 
@@ -207,6 +231,35 @@ fn cmd_daemon(command: DaemonCommands) -> Result<(), CliError> {
     Ok(())
 }
 
+fn cmd_ui(command: UiCommands) -> Result<(), CliError> {
+    match command {
+        UiCommands::Open {
+            extension,
+            extensions_dir,
+            idle_timeout_ms,
+            no_browser,
+        } => {
+            let options = UiOpenOptions {
+                bind_addr: "127.0.0.1:0".to_string(),
+                open_browser: !no_browser,
+                idle_timeout: Duration::from_millis(idle_timeout_ms),
+            };
+            let url = config_ui::open_extension_config(&extensions_dir, &extension, options)?;
+            println!("Config UI available at {url}");
+            println!(
+                "Config file: {}",
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".Copper")
+                    .join("ui-config")
+                    .join(format!("{extension}.json"))
+                    .display()
+            );
+        }
+    }
+    Ok(())
+}
+
 fn cmd_validate(path: &Path) -> Result<(), CliError> {
     let raw = fs::read_to_string(path)?;
     let descriptor = parse_and_validate(&raw)?;
@@ -221,7 +274,7 @@ fn cmd_validate(path: &Path) -> Result<(), CliError> {
 }
 
 fn cmd_list(dir: &Path) -> Result<(), CliError> {
-    let registry = Registry::load_from_dir(dir)?;
+    let registry = load_runtime_registry(dir)?;
     if registry.list().count() == 0 {
         println!("No extensions discovered in {}", dir.display());
         return Ok(());
@@ -239,7 +292,7 @@ fn cmd_list(dir: &Path) -> Result<(), CliError> {
 }
 
 fn cmd_verify(dir: &Path) -> Result<(), CliError> {
-    let registry = Registry::load_from_dir(dir)?;
+    let registry = load_runtime_registry(dir)?;
     let mut found = 0usize;
     for ext in registry.list() {
         found += 1;
@@ -261,7 +314,7 @@ fn cmd_verify(dir: &Path) -> Result<(), CliError> {
 }
 
 fn cmd_trigger(dir: &Path, id: &str, action: Option<&str>) -> Result<(), CliError> {
-    let registry = Registry::load_from_dir(dir)?;
+    let registry = load_runtime_registry(dir)?;
     let ext = registry
         .get(id)
         .ok_or_else(|| CliError::Message(format!("extension '{}' not found", id)))?;

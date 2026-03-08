@@ -18,7 +18,9 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/daemon.ps1 -Action run
 ./scripts/daemon.ps1 -Action health
 ./scripts/daemon.ps1 -Action list
+./scripts/daemon.ps1 -Action ui-open -ExtensionId desktop-torrent-organizer
 ./scripts/daemon.ps1 -Action shutdown
+.\target\release\copperd.exe ui open --extension desktop-torrent-organizer
 ./scripts/run-tests.ps1
 ./scripts/coverage.ps1
 ./scripts/build-debug.ps1
@@ -31,6 +33,7 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/bootstrap.sh
 ./scripts/daemon.sh run
 ./scripts/daemon.sh health
+./scripts/daemon.sh ui-open 127.0.0.1:4765 ./extensions 3000 desktop-torrent-organizer
 ./scripts/daemon.sh shutdown
 ./scripts/verify-loop.sh 3
 ./scripts/build-debug.sh
@@ -47,6 +50,7 @@ cargo run -p copperd -- verify --extensions-dir ./extensions
 cargo run -p copperd -- trigger sort-downloads --extensions-dir ./extensions
 cargo run -p copperd -- trigger session-counter --extensions-dir ./extensions
 cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents --extensions-dir ./extensions
+cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
 cargo run -p copperd -- generate-main extensions/sort-downloads/descriptor.json
 cargo run -p copperd -- run
 cargo run -p copperd -- daemon health --bind-addr 127.0.0.1:4765
@@ -66,9 +70,14 @@ cargo run -p copperd -- daemon shutdown --bind-addr 127.0.0.1:4765
 
 `./scripts/build-release.ps1` produces a publishable bundle in `dist/release`:
 
-- `dist/release/copper-<host-triple>/` with `copperd`, docs, and `extensions/`
+- `dist/release/copper-<host-triple>/` with `copperd`, docs, and `core-extensions/`
 - `dist/release/copper-<host-triple>.zip` full release archive
 - `dist/release/copper-<host-triple>/extensions-published/*` per-extension archives ready to publish
+
+Runtime extension roots:
+
+- Core extensions: executable-adjacent `core-extensions/` (shipped with release)
+- User extensions: `~/.Copper/extensions` (user-installed/custom)
 
 ## Documentation
 

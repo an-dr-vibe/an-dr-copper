@@ -38,6 +38,9 @@ Recommended config actions in UI:
 
 ## Current State (2026-03-08)
 
-- Descriptor + extension actions are implemented.
-- Daemon/UI bridge command (`ui open`) is not yet implemented.
-- Until UI open is wired, extension actions can be inspected/triggered through CLI/daemon commands.
+- Implemented command: `copperd ui open --extension <id>` (local browser UI + config persistence).
+- Tray shortcut implemented for `desktop-torrent-organizer`:
+  - `Configure Desktop Torrent Organizer`
+- Config is stored at:
+  - `~/.Copper/ui-config/<extension-id>.json`
+- Runtime execution of `main.ts` from saved config remains future work.

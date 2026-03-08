@@ -30,46 +30,56 @@ pub struct Registry {
 
 impl Registry {
     pub fn load_from_dir(root: &Path) -> Result<Self, ExtensionError> {
-        let mut entries = BTreeMap::new();
-        if !root.exists() {
-            return Ok(Self { entries });
-        }
+        Self::load_from_dirs([root])
+    }
 
-        for entry in WalkDir::new(root).min_depth(1).max_depth(1) {
-            let entry = match entry {
-                Ok(v) => v,
-                Err(err) => {
-                    return Err(ExtensionError::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        err.to_string(),
+    pub fn load_from_dirs<'a, I>(roots: I) -> Result<Self, ExtensionError>
+    where
+        I: IntoIterator<Item = &'a Path>,
+    {
+        let mut entries = BTreeMap::new();
+
+        for root in roots {
+            if !root.exists() {
+                continue;
+            }
+
+            for entry in WalkDir::new(root).min_depth(1).max_depth(1) {
+                let entry = match entry {
+                    Ok(v) => v,
+                    Err(err) => {
+                        return Err(ExtensionError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            err.to_string(),
+                        )));
+                    }
+                };
+                if !entry.file_type().is_dir() {
+                    continue;
+                }
+                let folder = entry.into_path();
+                let descriptor_path = folder.join("descriptor.json");
+                let main_ts_path = folder.join("main.ts");
+                if !descriptor_path.exists() {
+                    continue;
+                }
+                if !main_ts_path.exists() {
+                    return Err(ExtensionError::MissingFile(format!(
+                        "{} does not contain main.ts",
+                        folder.display()
                     )));
                 }
-            };
-            if !entry.file_type().is_dir() {
-                continue;
+                let descriptor_raw = fs::read_to_string(&descriptor_path)?;
+                let descriptor = parse_and_validate(&descriptor_raw)?;
+                entries.insert(
+                    descriptor.id.clone(),
+                    Extension {
+                        root: folder,
+                        descriptor,
+                        main_ts_path,
+                    },
+                );
             }
-            let folder = entry.into_path();
-            let descriptor_path = folder.join("descriptor.json");
-            let main_ts_path = folder.join("main.ts");
-            if !descriptor_path.exists() {
-                continue;
-            }
-            if !main_ts_path.exists() {
-                return Err(ExtensionError::MissingFile(format!(
-                    "{} does not contain main.ts",
-                    folder.display()
-                )));
-            }
-            let descriptor_raw = fs::read_to_string(&descriptor_path)?;
-            let descriptor = parse_and_validate(&descriptor_raw)?;
-            entries.insert(
-                descriptor.id.clone(),
-                Extension {
-                    root: folder,
-                    descriptor,
-                    main_ts_path,
-                },
-            );
         }
         Ok(Self { entries })
     }
@@ -90,15 +100,62 @@ pub fn default_extensions_dir() -> PathBuf {
     PathBuf::from(".").join("extensions")
 }
 
+pub fn core_extensions_dir() -> Option<PathBuf> {
+    let exe_path = std::env::current_exe().ok()?;
+    let exe_dir = exe_path.parent()?;
+    core_extensions_dir_from_exe_dir(exe_dir)
+}
+
+pub fn runtime_extension_roots(user_extensions_dir: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(core) = core_extensions_dir() {
+        roots.push(core);
+    }
+    roots.push(user_extensions_dir.to_path_buf());
+
+    let mut deduped = Vec::new();
+    for root in roots {
+        let normalized = fs::canonicalize(&root).unwrap_or(root);
+        if !deduped
+            .iter()
+            .any(|existing: &PathBuf| existing == &normalized)
+        {
+            deduped.push(normalized);
+        }
+    }
+    deduped
+}
+
+pub fn load_runtime_registry(user_extensions_dir: &Path) -> Result<Registry, ExtensionError> {
+    let roots = runtime_extension_roots(user_extensions_dir);
+    Registry::load_from_dirs(roots.iter().map(PathBuf::as_path))
+}
+
+fn core_extensions_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
+    let candidates = [
+        exe_dir.join("core-extensions"),
+        exe_dir.join("extensions"),
+        exe_dir.join("..").join("core-extensions"),
+        exe_dir.join("..").join("extensions"),
+        exe_dir.join("..").join("..").join("extensions"),
+    ];
+
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
 pub fn check_permission(ext: &Extension, permission: Permission) -> bool {
     ext.descriptor.permissions.contains(&permission)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{check_permission, ExtensionError, Registry};
+    use super::{
+        check_permission, core_extensions_dir_from_exe_dir, runtime_extension_roots,
+        ExtensionError, Registry,
+    };
     use crate::descriptor::Permission;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[test]
@@ -174,5 +231,71 @@ mod tests {
             ExtensionError::MissingFile(message) => assert!(message.contains("main.ts")),
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn load_from_dirs_allows_later_root_to_override_extension_id() {
+        let temp = tempdir().expect("tempdir");
+        let core_root = temp.path().join("core");
+        let user_root = temp.path().join("user");
+        fs::create_dir_all(core_root.join("same-id")).expect("core dir");
+        fs::create_dir_all(user_root.join("same-id")).expect("user dir");
+
+        fs::write(
+            core_root.join("same-id/descriptor.json"),
+            r#"{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "same-id",
+                "name": "Core Extension",
+                "version": "1.0.0",
+                "trigger": "core",
+                "actions": [{ "id": "run", "label": "Run", "script": "return;" }]
+            }"#,
+        )
+        .expect("core descriptor");
+        fs::write(
+            core_root.join("same-id/main.ts"),
+            "export default function(){}",
+        )
+        .expect("core main");
+
+        fs::write(
+            user_root.join("same-id/descriptor.json"),
+            r#"{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "same-id",
+                "name": "User Extension",
+                "version": "1.0.0",
+                "trigger": "user",
+                "actions": [{ "id": "run", "label": "Run", "script": "return;" }]
+            }"#,
+        )
+        .expect("user descriptor");
+        fs::write(
+            user_root.join("same-id/main.ts"),
+            "export default function(){}",
+        )
+        .expect("user main");
+
+        let registry =
+            Registry::load_from_dirs([core_root.as_path(), user_root.as_path()]).expect("registry");
+        let ext = registry.get("same-id").expect("extension");
+        assert_eq!(ext.descriptor.name, "User Extension");
+    }
+
+    #[test]
+    fn runtime_roots_deduplicate_identical_paths() {
+        let user = PathBuf::from("C:/tmp/extensions");
+        let roots = runtime_extension_roots(&user);
+        assert!(!roots.is_empty());
+    }
+
+    #[test]
+    fn core_extensions_detects_candidate_path() {
+        let temp = tempdir().expect("tempdir");
+        let exe_dir = temp.path().join("bin");
+        fs::create_dir_all(exe_dir.join("core-extensions")).expect("core extensions dir");
+        let detected = core_extensions_dir_from_exe_dir(&exe_dir);
+        assert_eq!(detected, Some(exe_dir.join("core-extensions")));
     }
 }

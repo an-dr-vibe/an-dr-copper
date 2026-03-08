@@ -1,12 +1,13 @@
 #!/usr/bin/env pwsh
 param(
-  [ValidateSet("run", "health", "list", "trigger", "reload", "verify", "shutdown")]
+  [ValidateSet("run", "health", "list", "trigger", "reload", "verify", "shutdown", "ui-open")]
   [string]$Action = "run",
   [string]$BindAddr = "127.0.0.1:4765",
   [string]$ExtensionsDir = "./extensions",
   [int]$ReloadIntervalMs = 3000,
   [string]$ExtensionId = "",
-  [string]$ActionId = ""
+  [string]$ActionId = "",
+  [int]$UiIdleTimeoutMs = 300000
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,5 +52,13 @@ switch ($Action) {
   }
   "shutdown" {
     Invoke-Step { cargo run -p copperd -- daemon shutdown --bind-addr $BindAddr } "daemon shutdown"
+  }
+  "ui-open" {
+    if ([string]::IsNullOrWhiteSpace($ExtensionId)) {
+      throw "ExtensionId is required for ui-open"
+    }
+    Invoke-Step {
+      cargo run -p copperd -- ui open --extension $ExtensionId --extensions-dir $ExtensionsDir --idle-timeout-ms $UiIdleTimeoutMs
+    } "ui open"
   }
 }
