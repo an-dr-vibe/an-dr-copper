@@ -92,6 +92,29 @@ fn daemon_process_handles_lifecycle_commands() {
         .success()
         .stdout(contains("trigger prepared"));
 
+    let mut windows_trigger_cmd = Command::new(bin);
+    let windows_assert = windows_trigger_cmd.args([
+        "daemon",
+        "trigger",
+        "windows-display-manager",
+        "--action",
+        "status",
+        "--bind-addr",
+        &bind_addr,
+    ]);
+    if cfg!(target_os = "windows") {
+        windows_assert
+            .assert()
+            .success()
+            .stdout(contains("trigger prepared"))
+            .stdout(contains("hostExecution"));
+    } else {
+        windows_assert
+            .assert()
+            .failure()
+            .stderr(contains("only supported on Windows"));
+    }
+
     let mut reload_cmd = Command::new(bin);
     reload_cmd
         .args(["daemon", "reload", "--bind-addr", &bind_addr])

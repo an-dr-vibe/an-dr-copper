@@ -3,6 +3,7 @@ use crate::descriptor::Permission;
 use crate::extension::{
     core_extensions_dir, default_extensions_dir, load_runtime_registry, Registry,
 };
+use crate::tray_extension::AdditionalTrayController;
 use crate::tray::TrayController;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -22,6 +23,7 @@ pub const DEFAULT_RELOAD_INTERVAL_MS: u64 = 3_000;
 const DESKTOP_TORRENT_ORGANIZER_ID: &str = "desktop-torrent-organizer";
 const SESSION_COUNTER_ID: &str = "session-counter";
 const SESSION_COUNTER_INCREMENT_ACTION: &str = "increment";
+const WINDOWS_DISPLAY_MANAGER_ID: &str = "windows-display-manager";
 
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
@@ -204,6 +206,19 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
                 Arc::clone(&running),
                 config.extensions_dir.clone(),
                 daemon_ui.url.clone(),
+            )
+            .map_err(|err| DaemonError::Tray(err.to_string()))?,
+        )
+    };
+    let _additional_trays = if disable_tray {
+        None
+    } else {
+        let windows_display_enabled = state.registry.get(WINDOWS_DISPLAY_MANAGER_ID).is_some();
+        Some(
+            AdditionalTrayController::initialize(
+                Arc::clone(&running),
+                daemon_ui.url.clone(),
+                windows_display_enabled,
             )
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
         )
@@ -415,6 +430,13 @@ fn trigger_payload(
         payload["sessionCount"] = serde_json::json!(count);
     }
 
+    if let Some(execution) =
+        maybe_execute_windows_display_action(&ext.descriptor.id, &selected_action.id)
+            .map_err(|err| format!("failed to execute windows display action: {err}"))?
+    {
+        payload["hostExecution"] = execution;
+    }
+
     Ok(payload)
 }
 
@@ -459,6 +481,76 @@ fn maybe_increment_session_counter_in(
     status["lastActionId"] = serde_json::json!(SESSION_COUNTER_INCREMENT_ACTION);
     write_json_object(&path, &status)?;
     Ok(Some(next))
+}
+
+fn maybe_execute_windows_display_action(
+    extension_id: &str,
+    action_id: &str,
+) -> Result<Option<serde_json::Value>, std::io::Error> {
+    if extension_id != WINDOWS_DISPLAY_MANAGER_ID {
+        return Ok(None);
+    }
+
+    let data_root = copper_data_root()?;
+    maybe_execute_windows_display_action_in(&data_root, action_id)
+}
+
+fn maybe_execute_windows_display_action_in(
+    data_root: &Path,
+    action_id: &str,
+) -> Result<Option<serde_json::Value>, std::io::Error> {
+    fs::create_dir_all(data_root)?;
+    let path = extension_data_path_in(data_root, WINDOWS_DISPLAY_MANAGER_ID);
+    let mut state = read_json_object(&path)?;
+    let execution = match crate::api::windows_display::execute_action(action_id, &state) {
+        Ok(value) => value,
+        Err(err) => {
+            let message = err.clone();
+            if let Some(map) = state.as_object_mut() {
+                map.insert("lastActionId".to_string(), serde_json::json!(action_id));
+                map.insert(
+                    "lastActionUnix".to_string(),
+                    serde_json::json!(unix_now_secs()),
+                );
+                map.insert("lastActionOk".to_string(), serde_json::json!(false));
+                map.insert("lastError".to_string(), serde_json::json!(err));
+            }
+            write_json_object(&path, &state)?;
+            return Err(std::io::Error::other(message));
+        }
+    };
+
+    if let Some(map) = state.as_object_mut() {
+        map.insert("lastActionId".to_string(), serde_json::json!(action_id));
+        map.insert(
+            "lastActionUnix".to_string(),
+            serde_json::json!(unix_now_secs()),
+        );
+        map.insert("lastActionOk".to_string(), serde_json::json!(true));
+        map.remove("lastError");
+        map.insert("lastResult".to_string(), execution.clone());
+
+        if let Some(taskbar_auto_hide) = execution.get("taskbarAutoHide") {
+            map.insert("taskbarAutoHide".to_string(), taskbar_auto_hide.clone());
+        }
+        if let Some(scale_current) = execution.get("scale").and_then(|v| v.get("currentPercent")) {
+            map.insert("scalePercent".to_string(), scale_current.clone());
+        }
+        if let Some(resolution) = execution.get("resolution") {
+            if let Some(width) = resolution.get("width") {
+                map.insert("resolutionWidth".to_string(), width.clone());
+            }
+            if let Some(height) = resolution.get("height") {
+                map.insert("resolutionHeight".to_string(), height.clone());
+            }
+            if let Some(refresh_rate) = resolution.get("refreshRate") {
+                map.insert("refreshRate".to_string(), refresh_rate.clone());
+            }
+        }
+    }
+
+    write_json_object(&path, &state)?;
+    Ok(Some(execution))
 }
 
 fn load_torrent_monitor_config() -> Result<TorrentMonitorConfig, std::io::Error> {
@@ -675,9 +767,9 @@ mod tests {
         handle_request, is_would_block_daemon, is_would_block_io, load_torrent_monitor_config,
         load_torrent_monitor_config_from, maybe_increment_session_counter,
         maybe_increment_session_counter_in, next_available_destination, read_json_object,
-        run_torrent_move, send_request, split_name_and_extension, write_desktop_torrent_status_in,
-        write_json_object, DaemonConfig, DaemonError, DaemonState, IpcRequest,
-        TorrentMonitorConfig, DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS,
+        run_torrent_move, send_request, split_name_and_extension, trigger_payload,
+        write_desktop_torrent_status_in, write_json_object, DaemonConfig, DaemonError, DaemonState,
+        IpcRequest, TorrentMonitorConfig, DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS,
     };
     use std::fs;
     use std::io::{self, Read};
@@ -709,6 +801,32 @@ mod tests {
                     ]
                 }}"#
             ),
+        )
+        .expect("write descriptor");
+        fs::write(
+            ext.join("main.ts"),
+            "export default function(){ return {}; }",
+        )
+        .expect("write main.ts");
+    }
+
+    fn write_windows_display_extension(root: &Path) {
+        let ext = root.join("windows-display-manager");
+        fs::create_dir_all(&ext).expect("create extension directory");
+        fs::write(
+            ext.join("manifest.json"),
+            r#"{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "windows-display-manager",
+                "name": "Windows Display Manager",
+                "version": "1.0.0",
+                "trigger": "windows-display",
+                "permissions": ["ui", "store"],
+                "actions": [
+                    { "id": "status", "label": "Status", "script": "status" },
+                    { "id": "toggle-taskbar-autohide", "label": "Toggle", "script": "toggle" }
+                ]
+            }"#,
         )
         .expect("write descriptor");
         fs::write(
@@ -1294,6 +1412,33 @@ mod tests {
         assert!(response.ok);
         let data = response.data.expect("payload");
         assert!(data.get("sessionCount").and_then(|v| v.as_u64()).is_some());
+    }
+
+    #[test]
+    fn trigger_payload_windows_display_status_reports_host_execution() {
+        let temp = tempdir().expect("tempdir");
+        write_windows_display_extension(temp.path());
+        let state = DaemonState::load(temp.path()).expect("state");
+
+        let result = trigger_payload(&state, "windows-display-manager", Some("status"));
+        if cfg!(target_os = "windows") {
+            let payload = result.expect("payload");
+            assert_eq!(
+                payload.get("extensionId").and_then(|v| v.as_str()),
+                Some("windows-display-manager")
+            );
+            assert_eq!(
+                payload.get("actionId").and_then(|v| v.as_str()),
+                Some("status")
+            );
+            assert!(
+                payload.get("hostExecution").is_some(),
+                "windows-display status action should include host execution payload"
+            );
+        } else {
+            let err = result.expect_err("non-windows should not support display manager");
+            assert!(err.contains("only supported on Windows"));
+        }
     }
 
     #[test]

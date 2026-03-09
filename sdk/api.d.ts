@@ -54,4 +54,29 @@ export interface Api {
     get<T = unknown>(key: string): Promise<T | null>;
     set<T = unknown>(key: string, value: T): Promise<void>;
   };
+  windows?: {
+    display: {
+      status(): Promise<{
+        taskbarAutoHide: boolean;
+        taskbarPinned: boolean;
+        resolution: { width: number; height: number; refreshRate: number };
+        scale: { currentPercent: number; availablePercentages: number[] };
+      }>;
+      toggleTaskbarAutoHide(): Promise<{
+        taskbarAutoHide: boolean;
+        taskbarPinned: boolean;
+      }>;
+      setTaskbarAutoHide(autoHide: boolean): Promise<{
+        applied: boolean;
+        taskbarAutoHide: boolean;
+        taskbarPinned: boolean;
+      }>;
+      setResolution(
+        width: number,
+        height: number,
+        refreshRate: number
+      ): Promise<{ applied: boolean }>;
+      setScale(scalePercent: number): Promise<{ applied: boolean }>;
+    };
+  };
 }

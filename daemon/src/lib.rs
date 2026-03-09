@@ -7,5 +7,6 @@ pub mod extension;
 pub mod runtime;
 pub mod schema;
 pub mod tray;
+pub mod tray_extension;
 
 pub use cli::run;

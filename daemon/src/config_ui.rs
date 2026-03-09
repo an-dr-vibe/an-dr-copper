@@ -673,7 +673,24 @@ fn render_html(state: &UiServerState) -> String {
     const model = {model_inline};
     const descriptors = model.descriptors || [];
     const byId = Object.fromEntries(descriptors.map(d => [d.id, d]));
-    let currentSection = model.selectedExtensionId ? `ext:${{model.selectedExtensionId}}` : 'core';
+    let currentSection = (() => {{
+      const defaultSection = model.selectedExtensionId ? `ext:${{model.selectedExtensionId}}` : 'core';
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get('section');
+      if (!requested) {{
+        return defaultSection;
+      }}
+      if (requested === 'core') {{
+        return 'core';
+      }}
+      if (requested.startsWith('ext:')) {{
+        const id = requested.slice(4);
+        if (byId[id]) {{
+          return requested;
+        }}
+      }}
+      return defaultSection;
+    }})();
 
     const navEl = document.getElementById('nav');
     const formEl = document.getElementById('form');

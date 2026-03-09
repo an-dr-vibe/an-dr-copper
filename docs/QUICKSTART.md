@@ -59,7 +59,11 @@ Release output is written to `dist/release` and includes:
 cargo run -p copperd -- verify --extensions-dir ./extensions
 cargo run -p copperd -- trigger session-counter --extensions-dir ./extensions
 cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents --extensions-dir ./extensions
+cargo run -p copperd -- daemon trigger windows-display-manager --action status --bind-addr 127.0.0.1:4765
+cargo run -p copperd -- daemon trigger windows-display-manager --action set-resolution --bind-addr 127.0.0.1:4765
 ```
+
+`windows-display-manager` is a Windows-only host extension. On non-Windows hosts, trigger execution returns a platform support error.
 
 ## 6. Generate main.ts from manifest
 

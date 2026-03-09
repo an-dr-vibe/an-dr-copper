@@ -140,3 +140,78 @@ fn desktop_torrent_main_enforces_torrent_only_moves_and_no_delete() {
         "extension should support package install target directory"
     );
 }
+
+#[test]
+fn windows_display_manager_descriptor_matches_required_contract() {
+    let descriptor = read_descriptor("windows-display-manager");
+    assert_eq!(descriptor.id, "windows-display-manager");
+    assert_eq!(descriptor.trigger, "windows-display");
+    assert_eq!(
+        descriptor.permissions,
+        vec![Permission::Ui, Permission::Store]
+    );
+
+    let action_ids = descriptor
+        .actions
+        .iter()
+        .map(|action| action.id.as_str())
+        .collect::<Vec<_>>();
+    assert!(action_ids.contains(&"status"));
+    assert!(action_ids.contains(&"toggle-taskbar-autohide"));
+    assert!(action_ids.contains(&"set-taskbar-autohide"));
+    assert!(action_ids.contains(&"set-resolution"));
+    assert!(action_ids.contains(&"set-scale"));
+
+    let width = descriptor
+        .inputs
+        .iter()
+        .find(|input| input.id == "resolutionWidth")
+        .expect("resolutionWidth input");
+    assert_eq!(width.default.as_u64(), Some(1920));
+
+    let height = descriptor
+        .inputs
+        .iter()
+        .find(|input| input.id == "resolutionHeight")
+        .expect("resolutionHeight input");
+    assert_eq!(height.default.as_u64(), Some(1080));
+
+    let hz = descriptor
+        .inputs
+        .iter()
+        .find(|input| input.id == "refreshRate")
+        .expect("refreshRate input");
+    assert_eq!(hz.default.as_u64(), Some(60));
+
+    let scale = descriptor
+        .inputs
+        .iter()
+        .find(|input| input.id == "scalePercent")
+        .expect("scalePercent input");
+    assert_eq!(scale.default.as_u64(), Some(100));
+}
+
+#[test]
+fn windows_display_manager_main_documents_host_api_contract() {
+    let main_ts = read_main_ts("windows-display-manager");
+    assert!(
+        main_ts.contains("windows-display-manager"),
+        "extension should identify itself"
+    );
+    assert!(
+        main_ts.contains("toggle-taskbar-autohide"),
+        "extension should expose taskbar toggle action"
+    );
+    assert!(
+        main_ts.contains("set-resolution"),
+        "extension should expose resolution action"
+    );
+    assert!(
+        main_ts.contains("set-scale"),
+        "extension should expose scale action"
+    );
+    assert!(
+        main_ts.contains("daemon trigger"),
+        "extension should document trigger entrypoint"
+    );
+}

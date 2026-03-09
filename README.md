@@ -58,6 +58,8 @@ cargo run -p copperd -- verify --extensions-dir ./extensions
 cargo run -p copperd -- trigger sort-downloads --extensions-dir ./extensions
 cargo run -p copperd -- trigger session-counter --extensions-dir ./extensions
 cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents --extensions-dir ./extensions
+cargo run -p copperd -- daemon trigger windows-display-manager --action status --bind-addr 127.0.0.1:4765
+cargo run -p copperd -- daemon trigger windows-display-manager --action toggle-taskbar-autohide --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
 cargo run -p copperd -- generate-main extensions/sort-downloads/manifest.json
 cargo run -p copperd -- run
@@ -72,7 +74,7 @@ cargo run -p copperd -- daemon shutdown --bind-addr 127.0.0.1:4765
 - `daemon/` Rust host implementation
 - `schemas/` descriptor schema contract
 - `sdk/` TypeScript API type definitions
-- `extensions/` sample extension pack (`sort-downloads`, `session-counter`, `desktop-torrent-organizer`)
+- `extensions/` sample extension pack (`sort-downloads`, `session-counter`, `desktop-torrent-organizer`, `windows-display-manager`)
 - `scripts/` cross-platform build and verification scripts
 - `docs/` architecture and usage docs
 
@@ -88,6 +90,10 @@ Runtime extension roots:
 
 - Core extensions: executable-adjacent `extensions/` (shipped with release)
 - User extensions: `~/.Copper/extensions` (user-installed/custom)
+
+Windows host extension note:
+- `windows-display-manager` executes taskbar/resolution/scale actions through daemon host APIs.
+- It is Windows-only; on macOS/Linux the extension can still be configured but trigger execution returns a platform error.
 
 ## Documentation
 

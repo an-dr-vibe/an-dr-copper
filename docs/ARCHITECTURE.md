@@ -34,6 +34,7 @@ Daemon capabilities:
 - Validates extension manifests against versioned schema.
 - Periodically reloads extension registry (hot-reload behavior).
 - Runs background polling tasks for core extensions (currently `desktop-torrent-organizer` file polling).
+- Executes host-native actions for `windows-display-manager` through daemon API bridges (taskbar auto-hide, display resolution, scale).
 - Handles IPC operations:
   - `health`
   - `list`
@@ -42,6 +43,7 @@ Daemon capabilities:
   - `verify`
   - `shutdown`
 - Persists extension state per extension in `~/.Copper/extensions/<extension-id>/data.json`.
+  - Includes action execution snapshots for host-native extensions (for example `windows-display-manager`).
 
 This restores the daemon as the center of system lifecycle.
 

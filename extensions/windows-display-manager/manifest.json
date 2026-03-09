@@ -1,0 +1,70 @@
+{
+  "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+  "id": "windows-display-manager",
+  "name": "Windows Display Manager",
+  "version": "1.0.0",
+  "trigger": "windows-display",
+  "permissions": ["ui", "store"],
+  "inputs": [
+    {
+      "id": "taskbarAutoHide",
+      "type": "boolean",
+      "label": "Taskbar auto-hide",
+      "default": false
+    },
+    {
+      "id": "resolutionWidth",
+      "type": "number",
+      "label": "Resolution width",
+      "default": 1920
+    },
+    {
+      "id": "resolutionHeight",
+      "type": "number",
+      "label": "Resolution height",
+      "default": 1080
+    },
+    {
+      "id": "refreshRate",
+      "type": "number",
+      "label": "Refresh rate (Hz)",
+      "default": 60
+    },
+    {
+      "id": "scalePercent",
+      "type": "number",
+      "label": "Display scale (%)",
+      "default": 100
+    }
+  ],
+  "actions": [
+    {
+      "id": "status",
+      "label": "Read taskbar and display status",
+      "script": "Query taskbar auto-hide, current resolution, and current scale from daemon host API."
+    },
+    {
+      "id": "toggle-taskbar-autohide",
+      "label": "Toggle taskbar auto-hide",
+      "script": "Toggle Windows taskbar auto-hide state and return updated status."
+    },
+    {
+      "id": "set-taskbar-autohide",
+      "label": "Set taskbar auto-hide",
+      "script": "Apply taskbarAutoHide from settings and return updated status."
+    },
+    {
+      "id": "set-resolution",
+      "label": "Set display resolution",
+      "script": "Apply resolutionWidth, resolutionHeight, and refreshRate through daemon host API."
+    },
+    {
+      "id": "set-scale",
+      "label": "Set display scale",
+      "script": "Apply scalePercent via daemon host API and return updated status."
+    }
+  ],
+  "ui": {
+    "type": "form"
+  }
+}
