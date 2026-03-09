@@ -27,7 +27,7 @@ pub enum AdditionalTrayError {
 pub struct AdditionalTrayController {
     specs: Vec<AdditionalTrayIconSpec>,
     #[cfg(windows)]
-    windows_display: Option<WindowsDisplayTrayHandle>,
+    _windows_display: Option<WindowsDisplayTrayHandle>,
 }
 
 impl AdditionalTrayController {
@@ -57,7 +57,7 @@ impl AdditionalTrayController {
         Ok(Self {
             specs,
             #[cfg(windows)]
-            windows_display,
+            _windows_display: windows_display,
         })
     }
 
@@ -200,7 +200,7 @@ mod windows_impl {
     ) -> Result<(), String> {
         let data_path = extension_data_path(WINDOWS_DISPLAY_EXTENSION_ID)?;
         let mut state = WindowsDisplayTrayState {
-            hwnd: 0,
+            hwnd: ptr::null_mut(),
             running: Arc::clone(&running),
             daemon_ui_url,
             data_path,
@@ -422,9 +422,7 @@ mod windows_impl {
             )
         };
         let _ = unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null()) };
-        let _ = unsafe {
-            AppendMenuW(menu, MF_STRING, CMD_EXIT as usize, wide("Exit").as_ptr())
-        };
+        let _ = unsafe { AppendMenuW(menu, MF_STRING, CMD_EXIT as usize, wide("Exit").as_ptr()) };
 
         let mut point = POINT { x: 0, y: 0 };
         unsafe {
@@ -459,7 +457,10 @@ mod windows_impl {
             return;
         }
         if command_id == CMD_SETTINGS {
-            let settings_url = format!("{}?section=ext:windows-display-manager", state.daemon_ui_url);
+            let settings_url = format!(
+                "{}?section=ext:windows-display-manager",
+                state.daemon_ui_url
+            );
             if let Err(err) = open_url_in_browser(&settings_url) {
                 eprintln!("failed to open windows-display settings: {err}");
             }
@@ -469,7 +470,8 @@ mod windows_impl {
             state.running.store(false, Ordering::Relaxed);
             return;
         }
-        if (CMD_RES_BASE..CMD_RES_BASE + state.resolution_presets.len() as u32).contains(&command_id)
+        if (CMD_RES_BASE..CMD_RES_BASE + state.resolution_presets.len() as u32)
+            .contains(&command_id)
         {
             let index = (command_id - CMD_RES_BASE) as usize;
             if let Some(preset) = state.resolution_presets.get(index) {
@@ -591,7 +593,8 @@ mod windows_impl {
                     .get("refreshRate")
                     .and_then(Value::as_i64)
                     .and_then(|v| i32::try_from(v).ok());
-                if let (Some(width), Some(height), Some(refresh_rate)) = (width, height, refresh_rate)
+                if let (Some(width), Some(height), Some(refresh_rate)) =
+                    (width, height, refresh_rate)
                 {
                     presets.push(ResolutionPreset {
                         width,
@@ -857,7 +860,87 @@ mod windows_impl {
     fn state_mut() -> Option<&'static mut WindowsDisplayTrayState> {
         unsafe { WINDOWS_DISPLAY_STATE.as_mut() }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{
+            default_resolution_presets, load_resolution_presets, merge_object, parse_status,
+        };
+
+        #[test]
+        fn parse_status_reads_resolution_scale_and_theme() {
+            let status = parse_status(&serde_json::json!({
+                "taskbarAutoHide": true,
+                "systemUsesLightTheme": false,
+                "resolution": { "width": 2560, "height": 1440, "refreshRate": 144 },
+                "scale": { "currentPercent": 150, "availablePercentages": [100,125,150] }
+            }));
+            assert!(status.taskbar_auto_hide);
+            assert!(!status.system_uses_light_theme);
+            assert_eq!(status.width, 2560);
+            assert_eq!(status.height, 1440);
+            assert_eq!(status.refresh_rate, 144);
+            assert_eq!(status.current_scale, 150);
+            assert_eq!(status.available_scales, vec![100, 125, 150]);
+        }
+
+        #[test]
+        fn load_resolution_presets_falls_back_to_defaults() {
+            let defaults = default_resolution_presets();
+            let loaded = load_resolution_presets(&serde_json::json!({}));
+            assert_eq!(loaded.len(), defaults.len());
+            assert_eq!(loaded[0].width, defaults[0].width);
+            assert_eq!(loaded[0].height, defaults[0].height);
+            assert_eq!(loaded[0].refresh_rate, defaults[0].refresh_rate);
+        }
+
+        #[test]
+        fn load_resolution_presets_reads_valid_entries_only() {
+            let loaded = load_resolution_presets(&serde_json::json!({
+                "resolutions": [
+                    { "width": 1920, "height": 1080, "refreshRate": 60 },
+                    { "width": 2560, "height": 1440, "refreshRate": 144 },
+                    { "width": "bad", "height": 1000, "refreshRate": 60 }
+                ]
+            }));
+            assert_eq!(loaded.len(), 2);
+            assert_eq!(loaded[1].width, 2560);
+            assert_eq!(loaded[1].refresh_rate, 144);
+        }
+
+        #[test]
+        fn merge_object_overwrites_keys_from_source() {
+            let mut target = serde_json::json!({ "scalePercent": 100, "taskbarAutoHide": false });
+            let source = serde_json::json!({ "scalePercent": 150 });
+            merge_object(&mut target, &source);
+            assert_eq!(
+                target.get("scalePercent").and_then(|v| v.as_i64()),
+                Some(150)
+            );
+            assert_eq!(
+                target.get("taskbarAutoHide").and_then(|v| v.as_bool()),
+                Some(false)
+            );
+        }
+    }
 }
 
 #[cfg(windows)]
 use windows_impl::run_windows_display_tray;
+
+#[cfg(test)]
+mod tests {
+    use super::AdditionalTrayController;
+    use std::sync::{atomic::AtomicBool, Arc};
+
+    #[test]
+    fn initialize_without_enabled_extensions_creates_empty_controller() {
+        let controller = AdditionalTrayController::initialize(
+            Arc::new(AtomicBool::new(true)),
+            "http://127.0.0.1:4766".to_string(),
+            false,
+        )
+        .expect("controller");
+        assert!(controller.specs().is_empty());
+    }
+}

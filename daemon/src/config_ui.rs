@@ -1130,6 +1130,7 @@ mod tests {
         assert!(html.contains("Desktop Torrent Organizer"));
         assert!(html.contains("Save Section"));
         assert!(html.contains("Info"));
+        assert!(html.contains("URLSearchParams(window.location.search)"));
     }
 
     #[test]

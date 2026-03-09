@@ -254,8 +254,8 @@ public static class CopperWinDisplay {
       "SystemUsesLightTheme",
       1
     );
-    if (value is int n) {
-      return n != 0;
+    if (value is int) {
+      return ((int)value) != 0;
     }
     return true;
   }

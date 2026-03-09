@@ -37,7 +37,7 @@ export default function (api: Api) {
           requestedAction: action,
           requested,
           runFromDaemon: "copperd daemon trigger windows-display-manager --action <action-id>",
-          note: "Daemon host API executes taskbar/resolution/scale actions and stores result in ~/.Copper/extensions/windows-display-manager/data.json."
+          note: "Daemon host API executes taskbar/resolution/scale actions, stores result in ~/.Copper/extensions/windows-display-manager/data.json, and drives the Windows tray icon."
         }
       });
       await api.notify(`windows-display-manager request queued: ${action}`);

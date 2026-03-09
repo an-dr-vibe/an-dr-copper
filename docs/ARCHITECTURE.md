@@ -35,6 +35,8 @@ Daemon capabilities:
 - Periodically reloads extension registry (hot-reload behavior).
 - Runs background polling tasks for core extensions (currently `desktop-torrent-organizer` file polling).
 - Executes host-native actions for `windows-display-manager` through daemon API bridges (taskbar auto-hide, display resolution, scale).
+- Exposes additional tray icon API in daemon (`tray_extension`) so core extensions can register dedicated tray icons.
+- Current implementation includes a Windows tray icon for `windows-display-manager` with left-click toggle and right-click action menu.
 - Handles IPC operations:
   - `health`
   - `list`

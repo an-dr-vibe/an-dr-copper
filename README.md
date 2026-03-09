@@ -93,6 +93,9 @@ Runtime extension roots:
 
 Windows host extension note:
 - `windows-display-manager` executes taskbar/resolution/scale actions through daemon host APIs.
+- On Windows, daemon startup also registers an additional tray icon for `windows-display-manager`:
+  - Left click: toggle taskbar auto-hide
+  - Right click: taskbar/resolution/scale menu, settings, exit
 - It is Windows-only; on macOS/Linux the extension can still be configured but trigger execution returns a platform error.
 
 ## Documentation

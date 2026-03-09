@@ -79,4 +79,13 @@ export interface Api {
       setScale(scalePercent: number): Promise<{ applied: boolean }>;
     };
   };
+  tray?: {
+    register(spec: {
+      id: string;
+      title: string;
+      tooltip?: string;
+    }): Promise<void>;
+    update(id: string, patch: { title?: string; tooltip?: string }): Promise<void>;
+    unregister(id: string): Promise<void>;
+  };
 }

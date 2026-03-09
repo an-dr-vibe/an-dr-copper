@@ -3,8 +3,8 @@ use crate::descriptor::Permission;
 use crate::extension::{
     core_extensions_dir, default_extensions_dir, load_runtime_registry, Registry,
 };
-use crate::tray_extension::AdditionalTrayController;
 use crate::tray::TrayController;
+use crate::tray_extension::AdditionalTrayController;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs;
@@ -210,7 +210,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
         )
     };
-    let _additional_trays = if disable_tray {
+    let additional_trays = if disable_tray {
         None
     } else {
         let windows_display_enabled = state.registry.get(WINDOWS_DISPLAY_MANAGER_ID).is_some();
@@ -223,9 +223,13 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
         )
     };
+    let additional_tray_count = additional_trays
+        .as_ref()
+        .map(|controller| controller.specs().len())
+        .unwrap_or(0);
 
     println!(
-        "Daemon started on {} (user extensions: {}, core extensions: {}, config UI: {})",
+        "Daemon started on {} (user extensions: {}, core extensions: {}, config UI: {}, additional tray icons: {})",
         config.bind_addr,
         config.extensions_dir.display(),
         state
@@ -233,7 +237,8 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "<not found>".to_string()),
-        daemon_ui.url
+        daemon_ui.url,
+        additional_tray_count
     );
 
     let mut last_reload = Instant::now();

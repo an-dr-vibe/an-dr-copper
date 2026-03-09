@@ -35,6 +35,8 @@ pwsh -NoProfile -Command "$s=Invoke-RestMethod 'https://raw.githubusercontent.co
 ./scripts/daemon.ps1 -Action list
 # config UI is always available while daemon runs:
 # http://127.0.0.1:4766
+# Windows-only: `windows-display-manager` registers an additional tray icon.
+# Left click toggles taskbar auto-hide. Right click opens resolution/scale/settings/exit menu.
 ./target/release/copperd.exe ui open --extension desktop-torrent-organizer
 ./scripts/daemon.ps1 -Action shutdown
 ```
