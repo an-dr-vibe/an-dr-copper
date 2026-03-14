@@ -108,7 +108,11 @@ pub fn core_extensions_dir() -> Option<PathBuf> {
 
 pub fn runtime_extension_roots(user_extensions_dir: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Some(core) = core_extensions_dir() {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            roots.extend(core_extension_roots_from_exe_dir(exe_dir));
+        }
+    } else if let Some(core) = core_extensions_dir() {
         roots.push(core);
     }
     roots.push(user_extensions_dir.to_path_buf());
@@ -132,16 +136,32 @@ pub fn load_runtime_registry(user_extensions_dir: &Path) -> Result<Registry, Ext
 }
 
 fn core_extensions_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
+    core_extension_roots_from_exe_dir(exe_dir)
+        .into_iter()
+        .next_back()
+}
+
+fn core_extension_roots_from_exe_dir(exe_dir: &Path) -> Vec<PathBuf> {
     let candidates = [
-        exe_dir.join("extensions"),
-        exe_dir.join("..").join("extensions"),
         exe_dir.join("..").join("..").join("extensions"),
+        exe_dir.join("..").join("extensions"),
+        exe_dir.join("extensions"),
         // Backward compatibility for older bundles:
-        exe_dir.join("core-extensions"),
         exe_dir.join("..").join("core-extensions"),
+        exe_dir.join("core-extensions"),
     ];
 
-    candidates.into_iter().find(|candidate| candidate.exists())
+    let mut roots = Vec::new();
+    for candidate in candidates {
+        if candidate.exists()
+            && !roots
+                .iter()
+                .any(|existing: &PathBuf| existing == &candidate)
+        {
+            roots.push(candidate);
+        }
+    }
+    roots
 }
 
 pub fn check_permission(ext: &Extension, permission: Permission) -> bool {
@@ -151,8 +171,8 @@ pub fn check_permission(ext: &Extension, permission: Permission) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_permission, core_extensions_dir_from_exe_dir, runtime_extension_roots,
-        ExtensionError, Registry,
+        check_permission, core_extension_roots_from_exe_dir, core_extensions_dir_from_exe_dir,
+        runtime_extension_roots, ExtensionError, Registry,
     };
     use crate::descriptor::Permission;
     use std::fs;
@@ -316,5 +336,26 @@ mod tests {
         fs::create_dir_all(exe_dir.join("core-extensions")).expect("core-extensions dir");
         let detected = core_extensions_dir_from_exe_dir(&exe_dir);
         assert_eq!(detected, Some(exe_dir.join("core-extensions")));
+    }
+
+    #[test]
+    fn core_extension_roots_include_workspace_fallback_before_adjacent_root() {
+        let temp = tempdir().expect("tempdir");
+        let exe_dir = temp.path().join("target").join("debug");
+        fs::create_dir_all(temp.path().join("extensions")).expect("workspace extensions");
+        fs::create_dir_all(exe_dir.join("extensions")).expect("adjacent extensions");
+
+        let detected = core_extension_roots_from_exe_dir(&exe_dir)
+            .into_iter()
+            .map(|path| fs::canonicalize(path).expect("canonical path"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            detected,
+            vec![
+                fs::canonicalize(temp.path().join("extensions")).expect("workspace canonical path"),
+                fs::canonicalize(exe_dir.join("extensions")).expect("adjacent canonical path"),
+            ]
+        );
     }
 }

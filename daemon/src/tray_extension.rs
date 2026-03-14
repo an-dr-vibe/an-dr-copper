@@ -142,6 +142,7 @@ mod windows_impl {
         width: i32,
         height: i32,
         refresh_rate: i32,
+        available_resolutions: Vec<ResolutionPreset>,
         current_scale: i32,
         available_scales: Vec<i32>,
         system_uses_light_theme: bool,
@@ -154,6 +155,7 @@ mod windows_impl {
                 width: 1920,
                 height: 1080,
                 refresh_rate: 60,
+                available_resolutions: default_resolution_presets(),
                 current_scale: 100,
                 available_scales: vec![100, 125, 150, 175, 200],
                 system_uses_light_theme: true,
@@ -205,7 +207,7 @@ mod windows_impl {
             daemon_ui_url,
             data_path,
             status: DisplayStatus::default(),
-            resolution_presets: default_resolution_presets(),
+            resolution_presets: DisplayStatus::default().available_resolutions,
             icon_pinned_dark: create_pin_icon(true, true).unwrap_or_else(default_icon),
             icon_unpinned_dark: create_pin_icon(false, true).unwrap_or_else(default_icon),
             icon_pinned_light: create_pin_icon(true, false).unwrap_or_else(default_icon),
@@ -518,7 +520,22 @@ mod windows_impl {
         }
         save_data_file(&state.data_path, &config);
         state.status = parse_status(&result);
-        state.resolution_presets = load_resolution_presets(&config);
+        state.resolution_presets = state.status.available_resolutions.clone();
+        if action_id == "set-scale"
+            && result
+                .get("applied")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            if let Some(scale) = result
+                .get("requested")
+                .and_then(|requested| requested.get("scalePercent"))
+                .and_then(Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+            {
+                state.status.current_scale = scale;
+            }
+        }
         Ok(())
     }
 
@@ -526,7 +543,7 @@ mod windows_impl {
         let config = load_data_file(&state.data_path);
         let result = windows_display::execute_action("status", &config)?;
         state.status = parse_status(&result);
-        state.resolution_presets = load_resolution_presets(&config);
+        state.resolution_presets = state.status.available_resolutions.clone();
         Ok(())
     }
 
@@ -556,6 +573,15 @@ mod windows_impl {
                 .and_then(Value::as_i64)
                 .and_then(|v| i32::try_from(v).ok())
                 .unwrap_or(status.refresh_rate);
+            if let Some(values) = res.get("availableModes").and_then(Value::as_array) {
+                let parsed = values
+                    .iter()
+                    .filter_map(parse_resolution_preset)
+                    .collect::<Vec<_>>();
+                if !parsed.is_empty() {
+                    status.available_resolutions = parsed;
+                }
+            }
         }
         if let Some(scale) = raw.get("scale") {
             status.current_scale = scale
@@ -577,37 +603,24 @@ mod windows_impl {
         status
     }
 
-    fn load_resolution_presets(config: &Value) -> Vec<ResolutionPreset> {
-        let mut presets = Vec::new();
-        if let Some(items) = config.get("resolutions").and_then(Value::as_array) {
-            for item in items {
-                let width = item
-                    .get("width")
-                    .and_then(Value::as_i64)
-                    .and_then(|v| i32::try_from(v).ok());
-                let height = item
-                    .get("height")
-                    .and_then(Value::as_i64)
-                    .and_then(|v| i32::try_from(v).ok());
-                let refresh_rate = item
-                    .get("refreshRate")
-                    .and_then(Value::as_i64)
-                    .and_then(|v| i32::try_from(v).ok());
-                if let (Some(width), Some(height), Some(refresh_rate)) =
-                    (width, height, refresh_rate)
-                {
-                    presets.push(ResolutionPreset {
-                        width,
-                        height,
-                        refresh_rate,
-                    });
-                }
-            }
-        }
-        if presets.is_empty() {
-            return default_resolution_presets();
-        }
-        presets
+    fn parse_resolution_preset(value: &Value) -> Option<ResolutionPreset> {
+        let width = value
+            .get("width")
+            .and_then(Value::as_i64)
+            .and_then(|v| i32::try_from(v).ok())?;
+        let height = value
+            .get("height")
+            .and_then(Value::as_i64)
+            .and_then(|v| i32::try_from(v).ok())?;
+        let refresh_rate = value
+            .get("refreshRate")
+            .and_then(Value::as_i64)
+            .and_then(|v| i32::try_from(v).ok())?;
+        Some(ResolutionPreset {
+            width,
+            height,
+            refresh_rate,
+        })
     }
 
     fn default_resolution_presets() -> Vec<ResolutionPreset> {
@@ -864,15 +877,23 @@ mod windows_impl {
     #[cfg(test)]
     mod tests {
         use super::{
-            default_resolution_presets, load_resolution_presets, merge_object, parse_status,
+            default_resolution_presets, merge_object, parse_resolution_preset, parse_status,
         };
 
         #[test]
-        fn parse_status_reads_resolution_scale_and_theme() {
+        fn parse_status_reads_resolution_scale_theme_and_available_modes() {
             let status = parse_status(&serde_json::json!({
                 "taskbarAutoHide": true,
                 "systemUsesLightTheme": false,
-                "resolution": { "width": 2560, "height": 1440, "refreshRate": 144 },
+                "resolution": {
+                    "width": 2560,
+                    "height": 1440,
+                    "refreshRate": 144,
+                    "availableModes": [
+                        { "width": 1920, "height": 1080, "refreshRate": 60 },
+                        { "width": 2560, "height": 1440, "refreshRate": 144 }
+                    ]
+                },
                 "scale": { "currentPercent": 150, "availablePercentages": [100,125,150] }
             }));
             assert!(status.taskbar_auto_hide);
@@ -880,32 +901,42 @@ mod windows_impl {
             assert_eq!(status.width, 2560);
             assert_eq!(status.height, 1440);
             assert_eq!(status.refresh_rate, 144);
+            assert_eq!(status.available_resolutions.len(), 2);
+            assert_eq!(status.available_resolutions[1].width, 2560);
             assert_eq!(status.current_scale, 150);
             assert_eq!(status.available_scales, vec![100, 125, 150]);
         }
 
         #[test]
-        fn load_resolution_presets_falls_back_to_defaults() {
+        fn parse_status_falls_back_to_default_resolution_modes() {
             let defaults = default_resolution_presets();
-            let loaded = load_resolution_presets(&serde_json::json!({}));
-            assert_eq!(loaded.len(), defaults.len());
-            assert_eq!(loaded[0].width, defaults[0].width);
-            assert_eq!(loaded[0].height, defaults[0].height);
-            assert_eq!(loaded[0].refresh_rate, defaults[0].refresh_rate);
+            let status = parse_status(&serde_json::json!({}));
+            assert_eq!(status.available_resolutions.len(), defaults.len());
+            assert_eq!(status.available_resolutions[0].width, defaults[0].width);
+            assert_eq!(status.available_resolutions[0].height, defaults[0].height);
+            assert_eq!(
+                status.available_resolutions[0].refresh_rate,
+                defaults[0].refresh_rate
+            );
         }
 
         #[test]
-        fn load_resolution_presets_reads_valid_entries_only() {
-            let loaded = load_resolution_presets(&serde_json::json!({
-                "resolutions": [
-                    { "width": 1920, "height": 1080, "refreshRate": 60 },
-                    { "width": 2560, "height": 1440, "refreshRate": 144 },
-                    { "width": "bad", "height": 1000, "refreshRate": 60 }
-                ]
-            }));
-            assert_eq!(loaded.len(), 2);
-            assert_eq!(loaded[1].width, 2560);
-            assert_eq!(loaded[1].refresh_rate, 144);
+        fn parse_resolution_preset_reads_valid_entries_only() {
+            assert!(parse_resolution_preset(&serde_json::json!({
+                "width": "bad",
+                "height": 1000,
+                "refreshRate": 60
+            }))
+            .is_none());
+
+            let loaded = parse_resolution_preset(&serde_json::json!({
+                "width": 2560,
+                "height": 1440,
+                "refreshRate": 144
+            }))
+            .expect("resolution preset");
+            assert_eq!(loaded.width, 2560);
+            assert_eq!(loaded.refresh_rate, 144);
         }
 
         #[test]
