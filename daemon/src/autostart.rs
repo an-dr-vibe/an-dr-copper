@@ -6,7 +6,13 @@ use serde_json::Value;
 ))]
 use std::fs;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(
+    target_os = "windows",
+    all(not(test), target_os = "linux"),
+    all(not(test), target_os = "macos")
+))]
+use std::path::PathBuf;
 
 #[cfg(all(not(test), target_os = "windows"))]
 use std::process::Command;

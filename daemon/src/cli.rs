@@ -588,6 +588,7 @@ mod tests {
             name: "Test".to_string(),
             version: "1.0.0".to_string(),
             trigger: "test".to_string(),
+            platforms: vec![],
             permissions: vec![],
             inputs: vec![],
             actions: vec![Action {
@@ -622,6 +623,7 @@ mod tests {
             name: "Test".to_string(),
             version: "1.0.0".to_string(),
             trigger: "test".to_string(),
+            platforms: vec![],
             permissions: vec![],
             inputs: vec![],
             actions: vec![Action {
@@ -648,6 +650,7 @@ mod tests {
             name: "Bob's Tool".to_string(),
             version: "1.0.0".to_string(),
             trigger: "test".to_string(),
+            platforms: vec![],
             permissions: vec![],
             inputs: vec![],
             actions: vec![Action {
@@ -691,6 +694,7 @@ mod tests {
             name: "No Actions".to_string(),
             version: "1.0.0".to_string(),
             trigger: "test".to_string(),
+            platforms: vec![],
             permissions: vec![],
             inputs: vec![],
             actions: vec![],

@@ -1,6 +1,6 @@
 # Copper Architecture
 
-Version: 0.2.1  
+Version: 0.3.0  
 Last updated: 2026-03-15
 
 ## 1. Overview
@@ -34,6 +34,7 @@ Daemon capabilities:
   - user extensions override same-id core extensions
 - Validates extension manifests against versioned schema.
 - Periodically reloads extension registry (hot-reload behavior).
+- Filters runtime activation through manifest-declared host platforms and core config disable rules.
 - Routes trigger preparation through a single `ExecutionEngine`, which combines the runtime adapter, host extension registry, and shared state store.
 - Runs host-native background tasks through `HostExtensionRegistry` instead of daemon-local extension ID branching.
 - Executes host-native actions for built-in extensions through `HostExtensionRegistry` capability handlers.
@@ -48,6 +49,8 @@ Daemon capabilities:
   - `shutdown`
 - Persists extension settings per extension in `~/.Copper/extensions/<extension-id>/config.json`.
 - Persists runtime status per extension in `~/.Copper/extensions/<extension-id>/status.json`.
+- Persists core daemon config in `~/.Copper/extensions/copper-core/config.json`.
+  - `disabledExtensions` suppresses selected extensions from the active runtime while keeping them discoverable in the settings UI.
   - Legacy `data.json` is still read as a fallback during migration.
   - Includes action execution snapshots for host-native extensions (for example `windows-display-manager`).
 - Uses a shared `ExtensionStateStore` for daemon, config UI, and tray persistence access.
@@ -68,6 +71,11 @@ Extension folder:
 Schema source:
 
 - `schemas/extension/1.0.0/descriptor.schema.json`
+
+Runtime gating:
+
+- Optional manifest field `platforms`: restricts runtime activation to `windows`, `macos`, and/or `linux`.
+- Config UI still shows platform-restricted extensions so users can inspect settings on any host.
 
 Type contract for AI generation:
 

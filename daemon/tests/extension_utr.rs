@@ -307,3 +307,26 @@ fn windows_display_manager_main_documents_host_api_contract() {
         "extension should document trigger entrypoint"
     );
 }
+
+#[test]
+fn descriptors_can_restrict_supported_platforms() {
+    let raw = r#"{
+        "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+        "id": "windows-only-ext",
+        "name": "Windows Only",
+        "version": "1.0.0",
+        "trigger": "windows-only",
+        "platforms": ["windows"],
+        "actions": [
+            { "id": "run", "label": "Run", "script": "return;" }
+        ]
+    }"#;
+
+    let descriptor = parse_and_validate(raw).expect("descriptor validation");
+    let platforms = descriptor
+        .platforms
+        .iter()
+        .map(|platform| platform.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(platforms, vec!["windows"]);
+}

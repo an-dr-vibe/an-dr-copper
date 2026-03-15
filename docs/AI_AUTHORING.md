@@ -15,6 +15,7 @@ When requesting extension generation, always include:
 
 - `manifest.json` valid against schema
 - `main.ts` using only APIs declared in `sdk/api.d.ts`
+- `platforms` included only when the extension is intentionally OS-specific
 
 ## Verification Flow
 
@@ -27,3 +28,15 @@ After AI changes:
 ## Design Rule
 
 Manifest is the source of truth. If generated `main.ts` conflicts with manifest permissions/actions, fix manifest first, then regenerate/update `main.ts`.
+
+## Platform Restriction
+
+Use the optional manifest field below only when the extension should load on a subset of hosts:
+
+```json
+{
+  "platforms": ["windows"]
+}
+```
+
+Supported values are `windows`, `macos`, and `linux`. Omit the field for cross-platform extensions.

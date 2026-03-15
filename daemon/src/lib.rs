@@ -3,6 +3,7 @@ pub mod autostart;
 pub mod cli;
 pub mod config_ui;
 pub mod control_plane;
+pub mod core_config;
 pub mod daemon;
 pub mod descriptor;
 pub mod execution;

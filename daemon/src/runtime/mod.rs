@@ -65,6 +65,7 @@ mod tests {
                 name: "Sample".to_string(),
                 version: "1.0.0".to_string(),
                 trigger: "sample".to_string(),
+                platforms: vec![],
                 permissions: vec![],
                 inputs: vec![],
                 actions,

@@ -1,7 +1,9 @@
 use crate::autostart;
 use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
 use crate::descriptor::Descriptor;
-use crate::extension::{core_extensions_dir, load_runtime_registry, runtime_extension_roots};
+use crate::extension::{
+    core_extensions_dir, current_platform, load_discoverable_registry, runtime_extension_roots,
+};
 use crate::host_extensions::HostExtensionRegistry;
 use crate::logging;
 use crate::state_store::{merge_json_object, ExtensionStateStore};
@@ -219,7 +221,7 @@ fn build_ui_state(
     auth: ControlPlaneAuth,
     origin: String,
 ) -> Result<UiServerState, UiConfigError> {
-    let registry = load_runtime_registry(extensions_dir)?;
+    let registry = load_discoverable_registry(extensions_dir)?;
     let mut descriptors = registry
         .list()
         .map(|extension| extension.descriptor.clone())
@@ -632,8 +634,8 @@ fn store_config(path: &Path, value: &Value) -> Result<(), UiConfigError> {
 
 fn build_core_info(state: &UiServerState) -> Value {
     serde_json::json!({
-        "selectedExtensionId": state.selected_extension_id,
         "extensionsLoaded": state.descriptors.len(),
+        "hostPlatform": current_platform().as_str(),
         "userExtensionsDir": state.user_extensions_dir.display().to_string(),
         "coreExtensionsDir": state
             .core_extensions_dir
@@ -873,6 +875,12 @@ fn render_html(state: &UiServerState) -> String {
     .command-help-list li {{ margin:0 0 4px; }}
     .mono {{ font-family:Consolas, monospace; }}
     .checkbox-list {{ display:grid; gap:8px; }}
+    .toggle-control {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
+    .toggle-group {{ display:inline-flex; gap:8px; }}
+    .toggle-btn {{ background:var(--panel3); border:1px solid var(--line); color:var(--muted); }}
+    .toggle-btn.active-enable {{ background:#1f4b2f; border-color:#3d8b5c; color:#e7fff0; }}
+    .toggle-btn.active-disable {{ background:#4a2222; border-color:#a25555; color:#ffecec; }}
+    .toggle-state {{ color:var(--muted); font-size:13px; }}
     .checkbox-item {{
       display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line);
       border-radius:10px; background:var(--panel3);
@@ -1050,6 +1058,52 @@ fn render_html(state: &UiServerState) -> String {
         control = document.createElement('select');
         control.innerHTML = '<option value="true">Enabled</option><option value="false">Disabled</option>';
         control.value = String(value ?? input.default ?? false);
+      }} else if (input.type === 'extension-toggle') {{
+        const currentValue = String(value ?? input.default ?? false);
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.value = currentValue;
+        hidden.dataset.inputId = input.id;
+        hidden.dataset.inputType = input.type;
+
+        control = document.createElement('div');
+        control.className = 'toggle-control';
+
+        const buttonGroup = document.createElement('div');
+        buttonGroup.className = 'toggle-group';
+        const enableBtn = document.createElement('button');
+        enableBtn.type = 'button';
+        enableBtn.className = 'toggle-btn';
+        enableBtn.textContent = 'Enable';
+        const disableBtn = document.createElement('button');
+        disableBtn.type = 'button';
+        disableBtn.className = 'toggle-btn';
+        disableBtn.textContent = 'Disable';
+        const stateText = document.createElement('span');
+        stateText.className = 'toggle-state';
+
+        const updateToggleUi = () => {{
+          const enabled = hidden.value === 'true';
+          enableBtn.className = 'toggle-btn' + (enabled ? ' active-enable' : '');
+          disableBtn.className = 'toggle-btn' + (!enabled ? ' active-disable' : '');
+          stateText.textContent = enabled ? 'Currently enabled' : 'Currently disabled';
+        }};
+
+        enableBtn.addEventListener('click', () => {{
+          hidden.value = 'true';
+          updateToggleUi();
+        }});
+        disableBtn.addEventListener('click', () => {{
+          hidden.value = 'false';
+          updateToggleUi();
+        }});
+
+        buttonGroup.appendChild(enableBtn);
+        buttonGroup.appendChild(disableBtn);
+        control.appendChild(buttonGroup);
+        control.appendChild(stateText);
+        control.appendChild(hidden);
+        updateToggleUi();
       }} else if (input.type === 'multi-select') {{
         const options = resolveInputOptions(input, info);
         const selected = Array.isArray(value)
@@ -1097,7 +1151,7 @@ fn render_html(state: &UiServerState) -> String {
         control.value = String(value ?? input.default ?? '');
       }}
 
-      if (input.type !== 'multi-select') {{
+      if (input.type !== 'multi-select' && input.type !== 'extension-toggle') {{
         control.dataset.inputId = input.id;
         control.dataset.inputType = input.type;
       }}
@@ -1248,7 +1302,21 @@ fn render_html(state: &UiServerState) -> String {
       renderTabs();
       toggleViews();
 
-      function coreSections() {{
+      function coreSections(config) {{
+        const disabledExtensions = new Set(Array.isArray(config.disabledExtensions) ? config.disabledExtensions : []);
+        const extensionFields = descriptors.map(descriptor => {{
+          const platforms = Array.isArray(descriptor.platforms) && descriptor.platforms.length > 0
+            ? descriptor.platforms.join(', ')
+            : 'windows, macos, linux';
+          return {{
+            id: 'extensionEnabled:' + descriptor.id,
+            label: descriptor.name,
+            description: 'Supported platforms: ' + platforms,
+            type: 'extension-toggle',
+            default: !disabledExtensions.has(descriptor.id)
+          }};
+        }});
+
         return [
           {{
             title: 'General',
@@ -1303,6 +1371,11 @@ fn render_html(state: &UiServerState) -> String {
                 default: '~/.Copper/extensions'
               }}
             ]
+          }},
+          {{
+            title: 'Extensions',
+            description: 'Extensions can stay discoverable in the UI while being disabled for the active runtime.',
+            fields: extensionFields
           }}
         ];
       }}
@@ -1321,7 +1394,7 @@ fn render_html(state: &UiServerState) -> String {
         pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
         saveBtn.textContent = 'Save settings';
 
-        coreSections().forEach(section => {{
+        coreSections(config).forEach(section => {{
           const settingsCard = createCard(section.title, section.description);
           section.fields.forEach(field => {{
             settingsCard.appendChild(createInput(field, config[field.id], info));
@@ -1330,8 +1403,8 @@ fn render_html(state: &UiServerState) -> String {
         }});
 
         const coreRows = [
-          {{ label: 'Selected extension', value: info.selectedExtensionId || 'Not set' }},
           {{ label: 'Extensions loaded', value: info.extensionsLoaded ?? 0 }},
+          {{ label: 'Host platform', value: info.hostPlatform || 'unknown' }},
           {{ label: 'Launch at login', value: config.autoStart ?? false, format: 'boolean' }},
           {{ label: 'User extensions directory', value: info.userExtensionsDir, format: 'path', mono: true }},
           {{ label: 'Core extensions directory', value: info.coreExtensionsDir || 'Not available', format: 'path', mono: true }},
@@ -1412,18 +1485,20 @@ fn render_html(state: &UiServerState) -> String {
           autoStart: false,
           uiTheme: 'obsidian',
           startupExtension: model.selectedExtensionId || '',
+          disabledExtensions: [],
           extensionPackage: '',
           extensionsInstallDir: '~/.Copper/extensions'
         }};
         const controls = settingsViewEl.querySelectorAll('[data-input-id]');
         const handled = new Set();
+        const disabledExtensions = [];
         controls.forEach(ctrl => {{
           const id = ctrl.dataset.inputId;
           if (handled.has(id)) return;
           handled.add(id);
           const type = ctrl.dataset.inputType;
           let value;
-          if (type === 'boolean') {{
+          if (type === 'boolean' || type === 'extension-toggle') {{
             value = ctrl.value === 'true';
           }} else if (type === 'multi-select') {{
             value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
@@ -1434,8 +1509,16 @@ fn render_html(state: &UiServerState) -> String {
           }} else {{
             value = ctrl.value;
           }}
+          if (id.startsWith('extensionEnabled:')) {{
+            if (!value) {{
+              disabledExtensions.push(id.slice('extensionEnabled:'.length));
+            }}
+            return;
+          }}
           addKey(id, value, coreDefaults[id]);
         }});
+        disabledExtensions.sort();
+        addKey('disabledExtensions', disabledExtensions, coreDefaults.disabledExtensions);
         if (remove.length > 0) payload.__remove = remove;
         return payload;
       }}
@@ -1454,7 +1537,7 @@ fn render_html(state: &UiServerState) -> String {
         handled.add(id);
         const type = ctrl.dataset.inputType;
         let value;
-        if (type === 'boolean') {{
+        if (type === 'boolean' || type === 'extension-toggle') {{
           value = ctrl.value === 'true';
         }} else if (type === 'multi-select') {{
           value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
@@ -1548,7 +1631,7 @@ mod tests {
     };
     use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
     use crate::descriptor::{
-        Action, Descriptor, InputField, InputType, SettingsDescriptor, SettingsSection,
+        Action, Descriptor, InputField, InputType, Platform, SettingsDescriptor, SettingsSection,
         StatusDescriptor, StatusField, StatusFieldFormat, UiDescriptor,
     };
     use crate::host_extensions::HostExtensionRegistry;
@@ -1575,6 +1658,7 @@ mod tests {
             name: "Desktop Torrent Organizer".to_string(),
             version: "1.0.0".to_string(),
             trigger: "desktop-torrents".to_string(),
+            platforms: vec![],
             permissions: vec![],
             inputs: vec![InputField {
                 id: "desktopFolder".to_string(),
@@ -1666,7 +1750,7 @@ mod tests {
     fn write_extension(root: &std::path::Path, descriptor: &Descriptor) {
         let ext = root.join(&descriptor.id);
         fs::create_dir_all(&ext).expect("create extension dir");
-        let manifest = serde_json::json!({
+        let mut manifest = serde_json::json!({
             "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
             "id": descriptor.id,
             "name": descriptor.name,
@@ -1686,6 +1770,15 @@ mod tests {
             }],
             "ui": { "type": "form" }
         });
+        if !descriptor.platforms.is_empty() {
+            manifest["platforms"] = serde_json::Value::Array(
+                descriptor
+                    .platforms
+                    .iter()
+                    .map(|platform| serde_json::json!(platform.as_str()))
+                    .collect::<Vec<_>>(),
+            );
+        }
         fs::write(
             ext.join("manifest.json"),
             serde_json::to_string_pretty(&manifest).expect("descriptor json"),
@@ -1732,6 +1825,30 @@ mod tests {
             .expect("build state");
         assert!(state.extension_ids.contains(&state.selected_extension_id));
         assert_eq!(state.selected_extension_id, "alpha-ext");
+    }
+
+    #[test]
+    fn build_ui_state_keeps_platform_restricted_extensions_visible() {
+        let temp = tempdir().expect("tempdir");
+        let mut descriptor = sample_descriptor();
+        descriptor.id = "platform-bound".to_string();
+        descriptor.name = "Platform Bound".to_string();
+        descriptor.platforms = vec![match super::current_platform() {
+            Platform::Windows => Platform::Linux,
+            Platform::Macos => Platform::Windows,
+            Platform::Linux => Platform::Windows,
+        }];
+        write_extension(temp.path(), &descriptor);
+
+        let state = build_ui_state(
+            temp.path(),
+            Some("platform-bound"),
+            true,
+            test_auth(),
+            test_origin(),
+        )
+        .expect("build");
+        assert!(state.extension_ids.contains("platform-bound"));
     }
 
     fn http_request(addr: &str, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
@@ -1824,6 +1941,14 @@ mod tests {
             info.get("dataRoot").is_some(),
             "core info should include extension data root"
         );
+        assert_eq!(
+            info.get("hostPlatform").and_then(|v| v.as_str()),
+            Some(super::current_platform().as_str())
+        );
+        assert!(
+            info.get("selectedExtensionId").is_none(),
+            "core status should not expose the currently selected extension"
+        );
     }
 
     #[test]
@@ -1848,6 +1973,7 @@ mod tests {
             name: "Windows Display Manager".to_string(),
             version: "1.0.0".to_string(),
             trigger: "windows-display".to_string(),
+            platforms: vec![],
             permissions: vec![],
             inputs: vec![],
             actions: vec![

@@ -197,29 +197,38 @@ impl HostExtensionHandler for WindowsDisplayHandler {
     }
 
     fn dynamic_options(&self, config: &Value) -> Result<Value, std::io::Error> {
-        let status =
-            windows_display::execute_action("status", config).map_err(std::io::Error::other)?;
-        let presets = status
-            .get("resolution")
-            .and_then(|value| value.get("availableModes"))
-            .and_then(Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| {
-                        Some(format!(
-                            "{}x{}@{}",
-                            value.get("width")?.as_i64()?,
-                            value.get("height")?.as_i64()?,
-                            value.get("refreshRate")?.as_i64()?
-                        ))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        Ok(serde_json::json!({
-            "trayResolutionPresets": presets
-        }))
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = config;
+            Ok(serde_json::json!({}))
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let status =
+                windows_display::execute_action("status", config).map_err(std::io::Error::other)?;
+            let presets = status
+                .get("resolution")
+                .and_then(|value| value.get("availableModes"))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| {
+                            Some(format!(
+                                "{}x{}@{}",
+                                value.get("width")?.as_i64()?,
+                                value.get("height")?.as_i64()?,
+                                value.get("refreshRate")?.as_i64()?
+                            ))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Ok(serde_json::json!({
+                "trayResolutionPresets": presets
+            }))
+        }
     }
 }
 
@@ -537,6 +546,20 @@ mod tests {
         } else {
             let err = result.expect_err("non windows");
             assert_eq!(err.kind(), std::io::ErrorKind::Other);
+        }
+    }
+
+    #[test]
+    fn windows_display_dynamic_options_degrade_off_windows() {
+        let registry = HostExtensionRegistry::new();
+        let options = registry
+            .dynamic_options(WINDOWS_DISPLAY_MANAGER_ID, &serde_json::json!({}))
+            .expect("dynamic options");
+
+        if cfg!(target_os = "windows") {
+            assert!(options.get("trayResolutionPresets").is_some());
+        } else {
+            assert_eq!(options, serde_json::json!({}));
         }
     }
 
