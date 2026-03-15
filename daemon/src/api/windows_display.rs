@@ -1,4 +1,5 @@
 use serde_json::Value;
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 #[cfg(target_os = "windows")]
@@ -116,6 +117,7 @@ fn read_i32(config: &Value, key: &str, default_value: i32, min: i32, max: i32) -
     value.clamp(min, max)
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn apply_taskbar_state(result: &mut Value, auto_hide: bool) {
     ensure_object(result);
     let map = result
@@ -126,6 +128,7 @@ fn apply_taskbar_state(result: &mut Value, auto_hide: bool) {
     map.insert("taskbarPinned".to_string(), Value::Bool(!auto_hide));
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn finalize_taskbar_action(
     result: &mut Value,
     action_id: &str,
@@ -146,6 +149,7 @@ fn finalize_taskbar_action(
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn ensure_object(value: &mut Value) {
     if !value.is_object() {
         *value = serde_json::json!({});

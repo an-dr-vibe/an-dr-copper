@@ -1,15 +1,22 @@
+#[cfg(windows)]
 use crate::api::windows_display;
+#[cfg(windows)]
 use crate::config_ui::open_url_in_browser;
 use crate::extension::Registry;
+#[cfg(windows)]
 use crate::logging;
+#[cfg(windows)]
 use crate::state_store::{write_json_object, ExtensionStateStore};
+#[cfg(windows)]
 use crate::tray_assets;
+#[cfg(windows)]
 use serde_json::Value;
+#[cfg(windows)]
 use std::path::PathBuf;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+#[cfg(windows)]
+use std::sync::atomic::Ordering;
+use std::sync::{atomic::AtomicBool, Arc};
+#[cfg(windows)]
 use std::thread::JoinHandle;
 use thiserror::Error;
 
@@ -33,8 +40,8 @@ pub struct AdditionalTrayController {
     _handles: Vec<WindowsDisplayTrayHandle>,
 }
 
+#[cfg(windows)]
 trait TrayProviderFactory {
-    #[cfg(windows)]
     fn start(
         &self,
         running: Arc<AtomicBool>,
@@ -49,6 +56,8 @@ impl AdditionalTrayController {
         daemon_ui_url: String,
         registry: &Registry,
     ) -> Result<Self, AdditionalTrayError> {
+        #[cfg(not(windows))]
+        let _ = (&running, &daemon_ui_url);
         let specs = collect_specs(registry);
         #[cfg(windows)]
         let mut handles = Vec::new();
@@ -80,6 +89,7 @@ impl AdditionalTrayController {
     }
 }
 
+#[cfg(windows)]
 struct WindowsDisplayTrayProvider;
 
 #[cfg(windows)]
@@ -104,11 +114,6 @@ fn provider_factory(provider: &str) -> Option<&'static dyn TrayProviderFactory> 
 
 #[cfg(windows)]
 static WINDOWS_DISPLAY_TRAY_PROVIDER: WindowsDisplayTrayProvider = WindowsDisplayTrayProvider;
-
-#[cfg(not(windows))]
-fn provider_factory(_provider: &str) -> Option<&'static dyn TrayProviderFactory> {
-    None
-}
 
 fn collect_specs(registry: &Registry) -> Vec<AdditionalTrayIconSpec> {
     registry
