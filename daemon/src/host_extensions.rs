@@ -19,6 +19,10 @@ pub struct AppliedActionResult {
 }
 
 pub trait HostExtensionHandler {
+    fn supports_cli_trigger(&self, _action_id: &str) -> bool {
+        false
+    }
+
     fn trigger_payload(
         &self,
         _store: &ExtensionStateStore,
@@ -100,6 +104,13 @@ impl HostExtensionRegistry {
         }
     }
 
+    pub fn supports_cli_trigger(&self, extension_id: &str, action_id: &str) -> bool {
+        match self.handler(extension_id) {
+            Some(handler) => handler.supports_cli_trigger(action_id),
+            None => false,
+        }
+    }
+
     pub fn background_extension_ids(&self) -> &'static [&'static str] {
         &[DESKTOP_TORRENT_ORGANIZER_ID]
     }
@@ -118,6 +129,10 @@ impl HostExtensionRegistry {
 struct SessionCounterHandler;
 
 impl HostExtensionHandler for SessionCounterHandler {
+    fn supports_cli_trigger(&self, action_id: &str) -> bool {
+        action_id == SESSION_COUNTER_INCREMENT_ACTION
+    }
+
     fn trigger_payload(
         &self,
         store: &ExtensionStateStore,
@@ -144,6 +159,17 @@ impl HostExtensionHandler for SessionCounterHandler {
 struct WindowsDisplayHandler;
 
 impl HostExtensionHandler for WindowsDisplayHandler {
+    fn supports_cli_trigger(&self, action_id: &str) -> bool {
+        matches!(
+            action_id,
+            "status"
+                | "toggle-taskbar-autohide"
+                | "set-taskbar-autohide"
+                | "set-resolution"
+                | "set-scale"
+        )
+    }
+
     fn trigger_payload(
         &self,
         store: &ExtensionStateStore,

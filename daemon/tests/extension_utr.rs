@@ -124,7 +124,7 @@ fn desktop_torrent_descriptor_matches_required_contract() {
         .expect("desktop torrent settings metadata");
     assert_eq!(
         settings.description.as_deref(),
-        Some("Configure how Copper watches the desktop and manages extension packages.")
+        Some("Configure how Copper watches the desktop for incoming .torrent files.")
     );
     assert!(
         settings
@@ -132,6 +132,13 @@ fn desktop_torrent_descriptor_matches_required_contract() {
             .iter()
             .any(|section| section.id == "monitor"),
         "desktop torrent settings should define a monitor section"
+    );
+    assert!(
+        !settings
+            .sections
+            .iter()
+            .any(|section| section.id == "package-install"),
+        "package install settings should live in core configuration, not in the torrent extension"
     );
     assert!(
         settings

@@ -70,19 +70,13 @@
   ],
   "settings": {
     "title": "Desktop Torrent Organizer",
-    "description": "Configure how Copper watches the desktop and manages extension packages.",
+    "description": "Configure how Copper watches the desktop for incoming .torrent files.",
     "sections": [
       {
         "id": "monitor",
         "title": "Monitor",
         "description": "Background watcher settings for automatic torrent moves.",
         "inputs": ["desktopFolder", "torrentsFolder", "autoRun", "pollIntervalSeconds"]
-      },
-      {
-        "id": "package-install",
-        "title": "Package install",
-        "description": "Inputs used when installing extension packages from this page.",
-        "inputs": ["extensionPackage", "extensionsInstallDir"]
       }
     ],
     "status": {

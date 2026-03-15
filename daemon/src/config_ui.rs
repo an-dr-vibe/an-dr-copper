@@ -676,16 +676,15 @@ fn build_extension_info(
 ) -> Result<Value, UiConfigError> {
     let config = state.state_store.load_config(&descriptor.id)?;
     let status = state.state_store.load_status(&descriptor.id)?;
+    let apply_actions = descriptor
+        .settings
+        .as_ref()
+        .map(|settings| settings.apply_actions.clone())
+        .unwrap_or_default();
     let commands = descriptor
         .actions
         .iter()
-        .map(|action| {
-            serde_json::json!({
-                "id": action.id,
-                "label": action.label,
-                "description": action.description,
-            })
-        })
+        .filter_map(|action| build_user_command_info(state, descriptor, action, &apply_actions))
         .collect::<Vec<_>>();
     let dynamic_options = state
         .host_extensions
@@ -699,13 +698,46 @@ fn build_extension_info(
             .settings
             .as_ref()
             .and_then(|settings| settings.status.clone()),
-        "applyActions": descriptor
-            .settings
-            .as_ref()
-            .map(|settings| settings.apply_actions.clone())
-            .unwrap_or_default(),
+        "applyActions": apply_actions,
         "commands": commands,
         "dynamicOptions": dynamic_options,
+    }))
+}
+
+fn build_user_command_info(
+    state: &UiServerState,
+    descriptor: &Descriptor,
+    action: &crate::descriptor::Action,
+    apply_actions: &[String],
+) -> Option<Value> {
+    let mut usage = Vec::new();
+
+    if apply_actions
+        .iter()
+        .any(|candidate| candidate == &action.id)
+    {
+        usage.push("Update the saved settings above, then click Save and apply.".to_string());
+    }
+
+    if state
+        .host_extensions
+        .supports_cli_trigger(&descriptor.id, &action.id)
+    {
+        usage.push(format!(
+            "Run `copperd daemon trigger {} --action {}` while the daemon is running.",
+            descriptor.id, action.id
+        ));
+    }
+
+    if usage.is_empty() {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "id": action.id,
+        "label": action.label,
+        "description": action.description,
+        "usage": usage,
     }))
 }
 
@@ -820,6 +852,9 @@ fn render_html(state: &UiServerState) -> String {
     .command-title {{ font-weight:700; margin:0 0 4px; }}
     .command-meta {{ color:var(--muted); font-size:12px; margin:0 0 6px; }}
     .command-desc {{ color:var(--text); margin:0; font-size:14px; }}
+    .command-help-title {{ color:var(--muted); font-size:12px; margin:10px 0 6px; text-transform:uppercase; letter-spacing:.06em; }}
+    .command-help-list {{ margin:0; padding-left:18px; color:var(--text); font-size:13px; }}
+    .command-help-list li {{ margin:0 0 4px; }}
     .mono {{ font-family:Consolas, monospace; }}
     .checkbox-list {{ display:grid; gap:8px; }}
     .checkbox-item {{
@@ -1109,26 +1144,51 @@ fn render_html(state: &UiServerState) -> String {
     }}
 
     function renderCommands(target, commands) {{
-      const card = createCard('Commands', 'Manual operations exposed by this extension.');
       if (!commands.length) {{
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = 'This extension does not expose any manual commands.';
-        card.appendChild(empty);
-      }} else {{
-        const list = document.createElement('div');
-        list.className = 'command-list';
-        commands.forEach(command => {{
-          const item = document.createElement('div');
-          item.className = 'command-item';
-          item.innerHTML =
-            `<div class="command-title">${{command.label || command.id}}</div>` +
-            `<div class="command-meta mono">${{command.id}}</div>` +
-            `<p class="command-desc">${{command.description || 'No description provided.'}}</p>`;
-          list.appendChild(item);
-        }});
-        card.appendChild(list);
+        return;
       }}
+      const card = createCard('Commands', 'Manual operations exposed by this extension and how to use them.');
+      const list = document.createElement('div');
+      list.className = 'command-list';
+      commands.forEach(command => {{
+        const item = document.createElement('div');
+        item.className = 'command-item';
+
+        const title = document.createElement('div');
+        title.className = 'command-title';
+        title.textContent = command.label || command.id;
+        item.appendChild(title);
+
+        const meta = document.createElement('div');
+        meta.className = 'command-meta mono';
+        meta.textContent = command.id;
+        item.appendChild(meta);
+
+        const desc = document.createElement('p');
+        desc.className = 'command-desc';
+        desc.textContent = command.description || 'No description provided.';
+        item.appendChild(desc);
+
+        const usage = Array.isArray(command.usage) ? command.usage : [];
+        if (usage.length > 0) {{
+          const helpTitle = document.createElement('div');
+          helpTitle.className = 'command-help-title';
+          helpTitle.textContent = 'How to use';
+          item.appendChild(helpTitle);
+
+          const helpList = document.createElement('ul');
+          helpList.className = 'command-help-list';
+          usage.forEach(step => {{
+            const li = document.createElement('li');
+            li.textContent = step;
+            helpList.appendChild(li);
+          }});
+          item.appendChild(helpList);
+        }}
+
+        list.appendChild(item);
+      }});
+      card.appendChild(list);
       target.appendChild(card);
     }}
 
@@ -1172,28 +1232,54 @@ fn render_html(state: &UiServerState) -> String {
       renderTabs();
       toggleViews();
 
-      function coreFieldDefs() {{
+      function coreSections() {{
         return [
           {{
-            id: 'userExtensionsDir',
-            label: 'User extensions directory',
-            description: 'Folder where user-installed extensions are discovered.',
-            type: 'text',
-            default: '~/.Copper/extensions'
+            title: 'General',
+            description: 'Core Copper configuration.',
+            fields: [
+              {{
+                id: 'userExtensionsDir',
+                label: 'User extensions directory',
+                description: 'Folder where user-installed extensions are discovered.',
+                type: 'text',
+                default: '~/.Copper/extensions'
+              }},
+              {{
+                id: 'uiTheme',
+                label: 'UI theme',
+                description: 'Name of the preferred host settings theme.',
+                type: 'text',
+                default: 'obsidian'
+              }},
+              {{
+                id: 'startupExtension',
+                label: 'Startup extension id',
+                description: 'Extension page selected when the settings UI opens.',
+                type: 'text',
+                default: model.selectedExtensionId || ''
+              }}
+            ]
           }},
           {{
-            id: 'uiTheme',
-            label: 'UI theme',
-            description: 'Name of the preferred host settings theme.',
-            type: 'text',
-            default: 'obsidian'
-          }},
-          {{
-            id: 'startupExtension',
-            label: 'Startup extension id',
-            description: 'Extension page selected when the settings UI opens.',
-            type: 'text',
-            default: model.selectedExtensionId || ''
+            title: 'Package install',
+            description: 'Shared extension package installation inputs belong to Copper core settings, not to a torrent workflow extension.',
+            fields: [
+              {{
+                id: 'extensionPackage',
+                label: 'Extension package (.zip or .tar.gz)',
+                description: 'Package file path used when installing an extension manually.',
+                type: 'text',
+                default: ''
+              }},
+              {{
+                id: 'extensionsInstallDir',
+                label: 'Extensions install directory',
+                description: 'Target folder for installed extension packages.',
+                type: 'text',
+                default: '~/.Copper/extensions'
+              }}
+            ]
           }}
         ];
       }}
@@ -1212,11 +1298,13 @@ fn render_html(state: &UiServerState) -> String {
         pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
         saveBtn.textContent = 'Save settings';
 
-        const settingsCard = createCard('Settings', 'Core Copper configuration.');
-        coreFieldDefs().forEach(field => {{
-          settingsCard.appendChild(createInput(field, config[field.id], info));
+        coreSections().forEach(section => {{
+          const settingsCard = createCard(section.title, section.description);
+          section.fields.forEach(field => {{
+            settingsCard.appendChild(createInput(field, config[field.id], info));
+          }});
+          settingsViewEl.appendChild(settingsCard);
         }});
-        settingsViewEl.appendChild(settingsCard);
 
         const coreRows = [
           {{ label: 'Selected extension', value: info.selectedExtensionId || 'Not set' }},
@@ -1298,7 +1386,9 @@ fn render_html(state: &UiServerState) -> String {
         const coreDefaults = {{
           userExtensionsDir: '~/.Copper/extensions',
           uiTheme: 'obsidian',
-          startupExtension: model.selectedExtensionId || ''
+          startupExtension: model.selectedExtensionId || '',
+          extensionPackage: '',
+          extensionsInstallDir: '~/.Copper/extensions'
         }};
         const controls = settingsViewEl.querySelectorAll('[data-input-id]');
         const handled = new Set();
@@ -1708,6 +1798,106 @@ mod tests {
             info.get("dataRoot").is_some(),
             "core info should include extension data root"
         );
+    }
+
+    #[test]
+    fn build_extension_info_hides_commands_without_user_access_path() {
+        let state = sample_state();
+        let descriptor = state.descriptors[0].clone();
+        let info = super::build_extension_info(&state, &descriptor).expect("info");
+        let commands = info
+            .get("commands")
+            .and_then(|value| value.as_array())
+            .expect("commands array");
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn build_extension_info_explains_user_accessible_commands() {
+        let descriptor = Descriptor {
+            schema: Some(
+                "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json".to_string(),
+            ),
+            id: "windows-display-manager".to_string(),
+            name: "Windows Display Manager".to_string(),
+            version: "1.0.0".to_string(),
+            trigger: "windows-display".to_string(),
+            permissions: vec![],
+            inputs: vec![],
+            actions: vec![
+                Action {
+                    id: "status".to_string(),
+                    label: "Read status".to_string(),
+                    description: Some("Read current display state.".to_string()),
+                    script: "status".to_string(),
+                },
+                Action {
+                    id: "set-resolution".to_string(),
+                    label: "Set resolution".to_string(),
+                    description: Some("Apply the saved resolution.".to_string()),
+                    script: "set-resolution".to_string(),
+                },
+            ],
+            ui: Some(UiDescriptor {
+                ui_type: "form".to_string(),
+                source: None,
+                on_select: None,
+            }),
+            settings: Some(SettingsDescriptor {
+                title: Some("Display".to_string()),
+                description: Some("Configure Windows display settings.".to_string()),
+                apply_actions: vec!["set-resolution".to_string()],
+                sections: vec![],
+                status: None,
+            }),
+            tray: None,
+        };
+        let state = super::UiServerState {
+            selected_extension_id: descriptor.id.clone(),
+            extension_ids: [descriptor.id.clone()].into_iter().collect::<HashSet<_>>(),
+            descriptors: vec![descriptor.clone()],
+            user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
+            core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
+            runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],
+            state_store: ExtensionStateStore::new(PathBuf::from("C:/tmp/.Copper/extensions")),
+            host_extensions: HostExtensionRegistry::new(),
+            auth_token: "test-auth-token".to_string(),
+            origin: "http://127.0.0.1:4766".to_string(),
+            allow_close: true,
+        };
+
+        let info = super::build_extension_info(&state, &descriptor).expect("info");
+        let commands = info
+            .get("commands")
+            .and_then(|value| value.as_array())
+            .expect("commands array");
+        assert_eq!(commands.len(), 2);
+
+        let status_command = commands
+            .iter()
+            .find(|value| value.get("id").and_then(|v| v.as_str()) == Some("status"))
+            .expect("status command");
+        let status_usage = status_command
+            .get("usage")
+            .and_then(|value| value.as_array())
+            .expect("status usage");
+        assert_eq!(status_usage.len(), 1);
+        assert!(status_usage[0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("copperd daemon trigger windows-display-manager --action status"));
+
+        let set_resolution_command = commands
+            .iter()
+            .find(|value| value.get("id").and_then(|v| v.as_str()) == Some("set-resolution"))
+            .expect("set-resolution command");
+        let set_resolution_usage = set_resolution_command
+            .get("usage")
+            .and_then(|value| value.as_array())
+            .expect("set-resolution usage");
+        assert_eq!(set_resolution_usage.len(), 2);
+        assert!(set_resolution_usage.iter().any(|value| value.as_str()
+            == Some("Update the saved settings above, then click Save and apply.")));
     }
 
     #[test]

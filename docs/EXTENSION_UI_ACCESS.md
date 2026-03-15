@@ -32,7 +32,7 @@ Recommended config actions in UI:
 1. `move-torrents`
    - `desktopFolder` (default `~/Desktop`)
    - `torrentsFolder` (default `~/Desktop/Torrents`)
-2. `add-extension`
+2. Core package install settings
    - `extensionPackage` (zip or tar.gz)
    - `extensionsInstallDir` (default `~/.Copper/extensions`)
 3. `show-config`
@@ -51,6 +51,7 @@ Recommended config actions in UI:
   - `~/.Copper/extensions/<extension-id>/status.json`
 - Legacy `data.json` is still read as a fallback during migration.
 - UI now uses a dedicated extension page with separate **Settings** and **Status** tabs.
+- Shared package-install inputs now live on the **Core** settings page instead of inside the desktop torrent extension settings.
 - `windows-display-manager` now saves and applies its declared display actions from the config page.
 - Runtime execution of `main.ts` from saved config remains future work.
 
