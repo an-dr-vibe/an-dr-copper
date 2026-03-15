@@ -10,35 +10,41 @@
       "id": "desktopFolder",
       "type": "folder-picker",
       "label": "Desktop folder",
+      "description": "Folder Copper scans for incoming .torrent files.",
       "default": "~/Desktop"
     },
     {
       "id": "torrentsFolder",
       "type": "folder-picker",
       "label": "Torrents folder",
+      "description": "Destination folder for moved .torrent files.",
       "default": "~/Desktop/Torrents"
     },
     {
       "id": "autoRun",
       "type": "boolean",
       "label": "Auto run monitor",
+      "description": "Continuously monitor the desktop and move new torrent files automatically.",
       "default": true
     },
     {
       "id": "pollIntervalSeconds",
       "type": "number",
       "label": "Poll interval (seconds)",
+      "description": "How often the daemon scans the desktop for new .torrent files.",
       "default": 5
     },
     {
       "id": "extensionPackage",
       "type": "file-picker",
-      "label": "Extension package (.zip or .tar.gz)"
+      "label": "Extension package (.zip or .tar.gz)",
+      "description": "Package file used when installing an extension from this page."
     },
     {
       "id": "extensionsInstallDir",
       "type": "folder-picker",
       "label": "Extensions install directory",
+      "description": "Target folder for installed extension packages.",
       "default": "~/.Copper/extensions"
     }
   ],
@@ -46,19 +52,51 @@
     {
       "id": "move-torrents",
       "label": "Move .torrent files from Desktop to Torrents",
+      "description": "Run the organizer immediately using the saved monitor settings.",
       "script": "Move .torrent files from desktopFolder to torrentsFolder and report summary."
     },
     {
       "id": "add-extension",
       "label": "Add extension package via UI input",
+      "description": "Install the selected extension package into the configured extensions directory.",
       "script": "Install extensionPackage into extensionsInstallDir and persist install metadata."
     },
     {
       "id": "show-config",
       "label": "Show extension configuration summary",
+      "description": "Display the persisted configuration and recent install metadata.",
       "script": "Read persisted configuration and show it in UI detail view."
     }
   ],
+  "settings": {
+    "title": "Desktop Torrent Organizer",
+    "description": "Configure how Copper watches the desktop and manages extension packages.",
+    "sections": [
+      {
+        "id": "monitor",
+        "title": "Monitor",
+        "description": "Background watcher settings for automatic torrent moves.",
+        "inputs": ["desktopFolder", "torrentsFolder", "autoRun", "pollIntervalSeconds"]
+      },
+      {
+        "id": "package-install",
+        "title": "Package install",
+        "description": "Inputs used when installing extension packages from this page.",
+        "inputs": ["extensionPackage", "extensionsInstallDir"]
+      }
+    ],
+    "status": {
+      "title": "Current status",
+      "description": "Latest monitor activity reported by the daemon.",
+      "fields": [
+        { "key": "lastScanUnix", "label": "Last scan", "format": "date-time" },
+        { "key": "lastScanFound", "label": "Last scan found" },
+        { "key": "lastScanMoved", "label": "Last scan moved" },
+        { "key": "lastScanFailed", "label": "Last scan failed" },
+        { "key": "lastMoveUnix", "label": "Last move", "format": "date-time" }
+      ]
+    }
+  },
   "ui": {
     "type": "form"
   }

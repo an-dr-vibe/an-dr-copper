@@ -268,7 +268,7 @@ fn cmd_ui(command: UiCommands) -> Result<(), CliError> {
                     .join(".Copper")
                     .join("extensions")
                     .join(&extension)
-                    .join("data.json")
+                    .join("config.json")
                     .display()
             );
         }
@@ -586,9 +586,12 @@ mod tests {
             actions: vec![Action {
                 id: "run".to_string(),
                 label: "Run".to_string(),
+                description: None,
                 script: "const value = 1;".to_string(),
             }],
             ui: None,
+            settings: None,
+            tray: None,
         };
         let generated = render_main_ts(&descriptor);
         assert!(generated.contains("api.notify"));
@@ -617,9 +620,12 @@ mod tests {
             actions: vec![Action {
                 id: "run".to_string(),
                 label: "Run".to_string(),
+                description: None,
                 script: "const first = 1;\nconst second = 2;".to_string(),
             }],
             ui: None,
+            settings: None,
+            tray: None,
         };
 
         let generated = render_main_ts(&descriptor);
@@ -640,9 +646,12 @@ mod tests {
             actions: vec![Action {
                 id: "run".to_string(),
                 label: "Run".to_string(),
+                description: None,
                 script: "return;".to_string(),
             }],
             ui: None,
+            settings: None,
+            tray: None,
         };
 
         let generated = render_main_ts(&descriptor);
@@ -679,6 +688,8 @@ mod tests {
             inputs: vec![],
             actions: vec![],
             ui: None,
+            settings: None,
+            tray: None,
         };
 
         let generated = render_main_ts(&descriptor);

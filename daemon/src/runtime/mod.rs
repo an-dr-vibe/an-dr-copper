@@ -69,6 +69,8 @@ mod tests {
                 inputs: vec![],
                 actions,
                 ui: None,
+                settings: None,
+                tray: None,
             },
         }
     }
@@ -80,11 +82,13 @@ mod tests {
             Action {
                 id: "first".to_string(),
                 label: "First".to_string(),
+                description: None,
                 script: "return 1;".to_string(),
             },
             Action {
                 id: "second".to_string(),
                 label: "Second".to_string(),
+                description: None,
                 script: "return 2;".to_string(),
             },
         ]);
@@ -105,11 +109,13 @@ mod tests {
             Action {
                 id: "first".to_string(),
                 label: "First".to_string(),
+                description: None,
                 script: "return 1;".to_string(),
             },
             Action {
                 id: "second".to_string(),
                 label: "Second".to_string(),
+                description: None,
                 script: "return 2;".to_string(),
             },
         ]);
@@ -129,6 +135,7 @@ mod tests {
         let extension = extension_with_actions(vec![Action {
             id: "first".to_string(),
             label: "First".to_string(),
+            description: None,
             script: "return 1;".to_string(),
         }]);
 
@@ -155,6 +162,7 @@ mod tests {
         let extension = extension_with_actions(vec![Action {
             id: "first".to_string(),
             label: "First".to_string(),
+            description: None,
             script: "return 1;".to_string(),
         }]);
         assert!(runtime.on_load(&extension).is_ok());

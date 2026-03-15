@@ -20,6 +20,8 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/daemon.ps1 -Action list
 # daemon also hosts config UI at:
 # http://127.0.0.1:4766
+# extension settings: ~/.Copper/extensions/<extension-id>/config.json
+# extension status:   ~/.Copper/extensions/<extension-id>/status.json
 ./scripts/daemon.ps1 -Action shutdown
 .\target\release\copperd.exe ui open --extension desktop-torrent-organizer
 ./scripts/run-tests.ps1
@@ -93,7 +95,9 @@ Runtime extension roots:
 
 Windows host extension note:
 - `windows-display-manager` executes taskbar/resolution/scale actions through daemon host APIs.
-- On Windows, daemon startup also registers an additional tray icon for `windows-display-manager`:
+- Its settings page can save and immediately apply the configured taskbar, resolution, and scale values.
+- `windows-display-manager` also declares a tray icon through manifest `tray` metadata, which the daemon loads through its tray provider API.
+- On Windows, that tray provider registers an additional tray icon with:
   - Left click: toggle taskbar auto-hide
   - Right click: taskbar/resolution/scale menu, settings, exit
 - It is Windows-only; on macOS/Linux the extension can still be configured but trigger execution returns a platform error.

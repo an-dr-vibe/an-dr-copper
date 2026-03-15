@@ -213,12 +213,11 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     let additional_trays = if disable_tray {
         None
     } else {
-        let windows_display_enabled = state.registry.get(WINDOWS_DISPLAY_MANAGER_ID).is_some();
         Some(
             AdditionalTrayController::initialize(
                 Arc::clone(&running),
                 daemon_ui.url.clone(),
-                windows_display_enabled,
+                &state.registry,
             )
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
         )
@@ -476,7 +475,7 @@ fn maybe_increment_session_counter_in(
     }
 
     fs::create_dir_all(data_root)?;
-    let path = extension_data_path_in(data_root, SESSION_COUNTER_ID);
+    let path = extension_status_path_in(data_root, SESSION_COUNTER_ID);
 
     let mut status = read_json_object(&path)?;
     let current = status.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -504,10 +503,33 @@ fn maybe_execute_windows_display_action_in(
     data_root: &Path,
     action_id: &str,
 ) -> Result<Option<serde_json::Value>, std::io::Error> {
+    execute_windows_display_action_in(data_root, action_id).map(Some)
+}
+
+pub(crate) fn execute_windows_display_action_in(
+    data_root: &Path,
+    action_id: &str,
+) -> Result<serde_json::Value, std::io::Error> {
+    execute_windows_display_action_with_runner_in(
+        data_root,
+        action_id,
+        crate::api::windows_display::execute_action,
+    )
+}
+
+fn execute_windows_display_action_with_runner_in<F>(
+    data_root: &Path,
+    action_id: &str,
+    runner: F,
+) -> Result<serde_json::Value, std::io::Error>
+where
+    F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value, String>,
+{
     fs::create_dir_all(data_root)?;
-    let path = extension_data_path_in(data_root, WINDOWS_DISPLAY_MANAGER_ID);
+    let config = load_extension_config_object(data_root, WINDOWS_DISPLAY_MANAGER_ID)?;
+    let path = extension_status_path_in(data_root, WINDOWS_DISPLAY_MANAGER_ID);
     let mut state = read_json_object(&path)?;
-    let execution = match crate::api::windows_display::execute_action(action_id, &state) {
+    let execution = match runner(action_id, &config) {
         Ok(value) => value,
         Err(err) => {
             let message = err.clone();
@@ -555,7 +577,7 @@ fn maybe_execute_windows_display_action_in(
     }
 
     write_json_object(&path, &state)?;
-    Ok(Some(execution))
+    Ok(execution)
 }
 
 fn load_torrent_monitor_config() -> Result<TorrentMonitorConfig, std::io::Error> {
@@ -566,8 +588,7 @@ fn load_torrent_monitor_config() -> Result<TorrentMonitorConfig, std::io::Error>
 fn load_torrent_monitor_config_from(
     data_root: &Path,
 ) -> Result<TorrentMonitorConfig, std::io::Error> {
-    let path = extension_data_path_in(data_root, DESKTOP_TORRENT_ORGANIZER_ID);
-    let config = read_json_object(&path)?;
+    let config = load_extension_config_object(data_root, DESKTOP_TORRENT_ORGANIZER_ID)?;
 
     let enabled = config
         .get("autoRun")
@@ -690,7 +711,7 @@ fn write_desktop_torrent_status_in(
     report: TorrentMoveReport,
 ) -> Result<(), std::io::Error> {
     fs::create_dir_all(data_root)?;
-    let path = extension_data_path_in(data_root, DESKTOP_TORRENT_ORGANIZER_ID);
+    let path = extension_status_path_in(data_root, DESKTOP_TORRENT_ORGANIZER_ID);
 
     let mut status = read_json_object(&path)?;
     status["autoRun"] = serde_json::json!(config.enabled);
@@ -733,8 +754,31 @@ fn copper_data_root_from_home(home: &Path) -> PathBuf {
     home.join(".Copper").join("extensions")
 }
 
-fn extension_data_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
+fn extension_config_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
+    data_root.join(extension_id).join("config.json")
+}
+
+fn extension_status_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
+    data_root.join(extension_id).join("status.json")
+}
+
+fn extension_legacy_data_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
     data_root.join(extension_id).join("data.json")
+}
+
+fn load_extension_config_object(
+    data_root: &Path,
+    extension_id: &str,
+) -> Result<serde_json::Value, std::io::Error> {
+    let config_path = extension_config_path_in(data_root, extension_id);
+    if config_path.exists() {
+        return read_json_object(&config_path);
+    }
+    let legacy_path = extension_legacy_data_path_in(data_root, extension_id);
+    if legacy_path.exists() {
+        return read_json_object(&legacy_path);
+    }
+    Ok(serde_json::json!({}))
 }
 
 fn read_json_object(path: &Path) -> Result<serde_json::Value, std::io::Error> {
@@ -768,13 +812,15 @@ fn unix_now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        copper_data_root_from_home, expand_home, extension_data_path_in, handle_connection,
-        handle_request, is_would_block_daemon, is_would_block_io, load_torrent_monitor_config,
+        copper_data_root_from_home, execute_windows_display_action_with_runner_in, expand_home,
+        extension_config_path_in, extension_status_path_in, handle_connection, handle_request,
+        is_would_block_daemon, is_would_block_io, load_torrent_monitor_config,
         load_torrent_monitor_config_from, maybe_increment_session_counter,
         maybe_increment_session_counter_in, next_available_destination, read_json_object,
         run_torrent_move, send_request, split_name_and_extension, trigger_payload,
         write_desktop_torrent_status_in, write_json_object, DaemonConfig, DaemonError, DaemonState,
         IpcRequest, TorrentMonitorConfig, DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS,
+        WINDOWS_DISPLAY_MANAGER_ID,
     };
     use std::fs;
     use std::io::{self, Read};
@@ -1084,12 +1130,17 @@ mod tests {
     }
 
     #[test]
-    fn extension_data_path_is_scoped_to_extension() {
+    fn extension_storage_paths_are_scoped_to_extension() {
         let root = PathBuf::from("C:/tmp/.Copper/extensions");
-        let path = extension_data_path_in(&root, "desktop-torrent-organizer");
+        let config_path = extension_config_path_in(&root, "desktop-torrent-organizer");
+        let status_path = extension_status_path_in(&root, "desktop-torrent-organizer");
         assert_eq!(
-            path,
-            root.join("desktop-torrent-organizer").join("data.json")
+            config_path,
+            root.join("desktop-torrent-organizer").join("config.json")
+        );
+        assert_eq!(
+            status_path,
+            root.join("desktop-torrent-organizer").join("status.json")
         );
     }
 
@@ -1209,7 +1260,7 @@ mod tests {
         };
 
         write_desktop_torrent_status_in(&data_root, &config, report).expect("write status");
-        let stored = read_json_object(&extension_data_path_in(
+        let stored = read_json_object(&extension_status_path_in(
             &data_root,
             "desktop-torrent-organizer",
         ))
@@ -1447,6 +1498,96 @@ mod tests {
     }
 
     #[test]
+    fn windows_display_actions_apply_saved_config_instead_of_status_snapshot() {
+        let temp = tempdir().expect("tempdir");
+        let data_root = temp.path();
+        write_json_object(
+            &extension_config_path_in(data_root, WINDOWS_DISPLAY_MANAGER_ID),
+            &serde_json::json!({
+                "taskbarAutoHide": true,
+                "resolutionWidth": 2560,
+                "resolutionHeight": 1440,
+                "refreshRate": 144,
+                "scalePercent": 150
+            }),
+        )
+        .expect("write config");
+        write_json_object(
+            &extension_status_path_in(data_root, WINDOWS_DISPLAY_MANAGER_ID),
+            &serde_json::json!({
+                "taskbarAutoHide": false,
+                "resolutionWidth": 1920,
+                "resolutionHeight": 1080,
+                "refreshRate": 60,
+                "scalePercent": 100
+            }),
+        )
+        .expect("write status");
+
+        let execution = execute_windows_display_action_with_runner_in(
+            data_root,
+            "set-resolution",
+            |action_id, config| {
+                assert_eq!(action_id, "set-resolution");
+                assert_eq!(
+                    config.get("resolutionWidth").and_then(|v| v.as_i64()),
+                    Some(2560)
+                );
+                assert_eq!(
+                    config.get("resolutionHeight").and_then(|v| v.as_i64()),
+                    Some(1440)
+                );
+                assert_eq!(
+                    config.get("refreshRate").and_then(|v| v.as_i64()),
+                    Some(144)
+                );
+                Ok(serde_json::json!({
+                    "ok": true,
+                    "action": "set-resolution",
+                    "applied": true,
+                    "resolution": {
+                        "width": 2560,
+                        "height": 1440,
+                        "refreshRate": 144
+                    }
+                }))
+            },
+        )
+        .expect("execution");
+
+        assert_eq!(
+            execution.get("action").and_then(|value| value.as_str()),
+            Some("set-resolution")
+        );
+
+        let status = read_json_object(&extension_status_path_in(
+            data_root,
+            WINDOWS_DISPLAY_MANAGER_ID,
+        ))
+        .expect("read status");
+        assert_eq!(
+            status.get("lastActionOk").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            status
+                .get("resolutionWidth")
+                .and_then(|value| value.as_i64()),
+            Some(2560)
+        );
+        assert_eq!(
+            status
+                .get("resolutionHeight")
+                .and_then(|value| value.as_i64()),
+            Some(1440)
+        );
+        assert_eq!(
+            status.get("refreshRate").and_then(|value| value.as_i64()),
+            Some(144)
+        );
+    }
+
+    #[test]
     fn verify_request_errors_when_loaded_extension_loses_main_file() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
@@ -1524,11 +1665,59 @@ mod tests {
         };
 
         write_desktop_torrent_status_in(&data_root, &config, report).expect("write status");
-        let stored = read_json_object(&extension_data_path_in(
+        let stored = read_json_object(&extension_status_path_in(
             &data_root,
             "desktop-torrent-organizer",
         ))
         .expect("read status");
         assert!(stored.get("lastMoveUnix").is_none());
+    }
+
+    #[test]
+    fn load_torrent_monitor_config_prefers_config_file_and_falls_back_to_legacy_data_file() {
+        let temp = tempdir().expect("tempdir");
+        let data_root = temp.path().join(".Copper/extensions");
+        let ext_dir = data_root.join("desktop-torrent-organizer");
+        fs::create_dir_all(&ext_dir).expect("create extension dir");
+
+        fs::write(
+            ext_dir.join("data.json"),
+            r#"{
+                "desktopFolder": "D:/LegacyDesktop",
+                "torrentsFolder": "D:/LegacyDesktop/Torrents",
+                "autoRun": false,
+                "pollIntervalSeconds": 33
+            }"#,
+        )
+        .expect("write legacy data");
+
+        let legacy = load_torrent_monitor_config_from(&data_root).expect("load legacy");
+        assert_eq!(legacy.desktop_folder, PathBuf::from("D:/LegacyDesktop"));
+        assert_eq!(
+            legacy.torrents_folder,
+            PathBuf::from("D:/LegacyDesktop/Torrents")
+        );
+        assert!(!legacy.enabled);
+        assert_eq!(legacy.poll_interval.as_secs(), 33);
+
+        fs::write(
+            ext_dir.join("config.json"),
+            r#"{
+                "desktopFolder": "D:/ConfigDesktop",
+                "torrentsFolder": "D:/ConfigDesktop/Torrents",
+                "autoRun": true,
+                "pollIntervalSeconds": 9
+            }"#,
+        )
+        .expect("write config");
+
+        let config = load_torrent_monitor_config_from(&data_root).expect("load config");
+        assert_eq!(config.desktop_folder, PathBuf::from("D:/ConfigDesktop"));
+        assert_eq!(
+            config.torrents_folder,
+            PathBuf::from("D:/ConfigDesktop/Torrents")
+        );
+        assert!(config.enabled);
+        assert_eq!(config.poll_interval.as_secs(), 9);
     }
 }

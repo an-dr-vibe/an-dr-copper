@@ -1,5 +1,6 @@
 use crate::api::windows_display;
 use crate::config_ui::open_url_in_browser;
+use crate::extension::Registry;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -10,12 +11,14 @@ use std::sync::{
 use std::thread::JoinHandle;
 use thiserror::Error;
 
-const WINDOWS_DISPLAY_EXTENSION_ID: &str = "windows-display-manager";
+const WINDOWS_DISPLAY_TRAY_PROVIDER: &str = "windows-display";
 
 #[derive(Debug, Clone)]
 pub struct AdditionalTrayIconSpec {
-    pub extension_id: &'static str,
-    pub title: &'static str,
+    pub extension_id: String,
+    pub provider: String,
+    pub title: String,
+    pub tooltip: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -27,43 +30,67 @@ pub enum AdditionalTrayError {
 pub struct AdditionalTrayController {
     specs: Vec<AdditionalTrayIconSpec>,
     #[cfg(windows)]
-    _windows_display: Option<WindowsDisplayTrayHandle>,
+    _handles: Vec<WindowsDisplayTrayHandle>,
 }
 
 impl AdditionalTrayController {
     pub fn initialize(
         running: Arc<AtomicBool>,
         daemon_ui_url: String,
-        windows_display_enabled: bool,
+        registry: &Registry,
     ) -> Result<Self, AdditionalTrayError> {
-        let mut specs = Vec::new();
+        let specs = collect_specs(registry);
         #[cfg(windows)]
-        let mut windows_display = None;
+        let mut handles = Vec::new();
 
-        if windows_display_enabled {
-            specs.push(AdditionalTrayIconSpec {
-                extension_id: WINDOWS_DISPLAY_EXTENSION_ID,
-                title: "Windows Display Manager",
-            });
-            #[cfg(windows)]
-            {
-                windows_display = Some(
-                    WindowsDisplayTrayHandle::start(running, daemon_ui_url)
-                        .map_err(AdditionalTrayError::Init)?,
-                );
+        #[cfg(windows)]
+        for spec in &specs {
+            match spec.provider.as_str() {
+                WINDOWS_DISPLAY_TRAY_PROVIDER => handles.push(
+                    WindowsDisplayTrayHandle::start(
+                        Arc::clone(&running),
+                        daemon_ui_url.clone(),
+                        spec.clone(),
+                    )
+                    .map_err(AdditionalTrayError::Init)?,
+                ),
+                other => {
+                    return Err(AdditionalTrayError::Init(format!(
+                        "unsupported tray provider '{other}' for extension '{}'",
+                        spec.extension_id
+                    )));
+                }
             }
         }
 
         Ok(Self {
             specs,
             #[cfg(windows)]
-            _windows_display: windows_display,
+            _handles: handles,
         })
     }
 
     pub fn specs(&self) -> &[AdditionalTrayIconSpec] {
         &self.specs
     }
+}
+
+fn collect_specs(registry: &Registry) -> Vec<AdditionalTrayIconSpec> {
+    registry
+        .list()
+        .filter_map(|extension| {
+            extension
+                .descriptor
+                .tray
+                .as_ref()
+                .map(|tray| AdditionalTrayIconSpec {
+                    extension_id: extension.descriptor.id.clone(),
+                    provider: tray.provider.clone(),
+                    title: tray.title.clone(),
+                    tooltip: tray.tooltip.clone(),
+                })
+        })
+        .collect()
 }
 
 #[cfg(windows)]
@@ -73,11 +100,15 @@ struct WindowsDisplayTrayHandle {
 
 #[cfg(windows)]
 impl WindowsDisplayTrayHandle {
-    fn start(running: Arc<AtomicBool>, daemon_ui_url: String) -> Result<Self, String> {
+    fn start(
+        running: Arc<AtomicBool>,
+        daemon_ui_url: String,
+        spec: AdditionalTrayIconSpec,
+    ) -> Result<Self, String> {
         let thread = std::thread::Builder::new()
-            .name("windows-display-tray".to_string())
+            .name(format!("tray-{}", spec.extension_id))
             .spawn(move || {
-                if let Err(err) = run_windows_display_tray(running, daemon_ui_url) {
+                if let Err(err) = run_windows_display_tray(running, daemon_ui_url, spec) {
                     eprintln!("windows display tray error: {err}");
                 }
             })
@@ -102,7 +133,7 @@ mod windows_impl {
     use super::*;
     use std::mem;
     use std::ptr;
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Shell::{
@@ -165,9 +196,12 @@ mod windows_impl {
 
     struct WindowsDisplayTrayState {
         hwnd: HWND,
+        extension_id: String,
         running: Arc<AtomicBool>,
         daemon_ui_url: String,
-        data_path: PathBuf,
+        config_path: PathBuf,
+        status_path: PathBuf,
+        legacy_path: PathBuf,
         status: DisplayStatus,
         resolution_presets: Vec<ResolutionPreset>,
         icon_pinned_dark: HICON,
@@ -199,13 +233,19 @@ mod windows_impl {
     pub(super) fn run_windows_display_tray(
         running: Arc<AtomicBool>,
         daemon_ui_url: String,
+        spec: AdditionalTrayIconSpec,
     ) -> Result<(), String> {
-        let data_path = extension_data_path(WINDOWS_DISPLAY_EXTENSION_ID)?;
+        let config_path = extension_config_path(&spec.extension_id)?;
+        let status_path = extension_status_path(&spec.extension_id)?;
+        let legacy_path = extension_legacy_data_path(&spec.extension_id)?;
         let mut state = WindowsDisplayTrayState {
             hwnd: ptr::null_mut(),
+            extension_id: spec.extension_id.clone(),
             running: Arc::clone(&running),
             daemon_ui_url,
-            data_path,
+            config_path,
+            status_path,
+            legacy_path,
             status: DisplayStatus::default(),
             resolution_presets: DisplayStatus::default().available_resolutions,
             icon_pinned_dark: create_pin_icon(true, true).unwrap_or_else(default_icon),
@@ -459,10 +499,8 @@ mod windows_impl {
             return;
         }
         if command_id == CMD_SETTINGS {
-            let settings_url = format!(
-                "{}?section=ext:windows-display-manager",
-                state.daemon_ui_url
-            );
+            let settings_url =
+                format!("{}?section=ext:{}", state.daemon_ui_url, state.extension_id);
             if let Err(err) = open_url_in_browser(&settings_url) {
                 eprintln!("failed to open windows-display settings: {err}");
             }
@@ -510,17 +548,15 @@ mod windows_impl {
         action_id: &str,
         overrides: Value,
     ) -> Result<(), String> {
-        let mut config = load_data_file(&state.data_path);
+        let mut config = load_saved_data_file(&state.config_path, Some(&state.legacy_path));
         merge_object(&mut config, &overrides);
+        save_data_file(&state.config_path, &config);
         let result = windows_display::execute_action(action_id, &config)?;
-        if let Some(obj) = config.as_object_mut() {
-            obj.insert("lastActionId".to_string(), serde_json::json!(action_id));
-            obj.insert("lastActionOk".to_string(), serde_json::json!(true));
-            obj.insert("lastResult".to_string(), result.clone());
-        }
-        save_data_file(&state.data_path, &config);
+        let mut status = load_saved_data_file(&state.status_path, Some(&state.legacy_path));
+        update_status_snapshot(&mut status, action_id, &result, true, None);
+        save_data_file(&state.status_path, &status);
         state.status = parse_status(&result);
-        state.resolution_presets = state.status.available_resolutions.clone();
+        state.resolution_presets = resolve_resolution_presets(&config, &state.status);
         if action_id == "set-scale"
             && result
                 .get("applied")
@@ -540,10 +576,13 @@ mod windows_impl {
     }
 
     fn refresh_status(state: &mut WindowsDisplayTrayState) -> Result<(), String> {
-        let config = load_data_file(&state.data_path);
+        let config = load_saved_data_file(&state.config_path, Some(&state.legacy_path));
         let result = windows_display::execute_action("status", &config)?;
         state.status = parse_status(&result);
-        state.resolution_presets = state.status.available_resolutions.clone();
+        state.resolution_presets = resolve_resolution_presets(&config, &state.status);
+        let mut status = load_saved_data_file(&state.status_path, Some(&state.legacy_path));
+        update_status_snapshot(&mut status, "status", &result, true, None);
+        save_data_file(&state.status_path, &status);
         Ok(())
     }
 
@@ -638,12 +677,56 @@ mod windows_impl {
         ]
     }
 
+    fn parse_tray_resolution_presets(value: &Value) -> Vec<ResolutionPreset> {
+        value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter_map(|raw| {
+                let (dimensions, refresh_raw) = raw.split_once('@')?;
+                let (width_raw, height_raw) = dimensions.split_once('x')?;
+                Some(ResolutionPreset {
+                    width: width_raw.parse().ok()?,
+                    height: height_raw.parse().ok()?,
+                    refresh_rate: refresh_raw.parse().ok()?,
+                })
+            })
+            .collect()
+    }
+
+    fn resolve_resolution_presets(config: &Value, status: &DisplayStatus) -> Vec<ResolutionPreset> {
+        let configured = config
+            .get("trayResolutionPresets")
+            .map(parse_tray_resolution_presets)
+            .unwrap_or_default();
+        if !configured.is_empty() {
+            return configured;
+        }
+        if !status.available_resolutions.is_empty() {
+            return status.available_resolutions.clone();
+        }
+        default_resolution_presets()
+    }
+
     fn load_data_file(path: &PathBuf) -> Value {
         fs::read_to_string(path)
             .ok()
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
             .filter(Value::is_object)
             .unwrap_or_else(|| serde_json::json!({}))
+    }
+
+    fn load_saved_data_file(path: &PathBuf, legacy_path: Option<&PathBuf>) -> Value {
+        if path.exists() {
+            return load_data_file(path);
+        }
+        if let Some(legacy_path) = legacy_path {
+            if legacy_path.exists() {
+                return load_data_file(legacy_path);
+            }
+        }
+        serde_json::json!({})
     }
 
     fn save_data_file(path: &PathBuf, value: &Value) {
@@ -663,13 +746,71 @@ mod windows_impl {
         }
     }
 
-    fn extension_data_path(extension_id: &str) -> Result<PathBuf, String> {
+    fn update_status_snapshot(
+        status: &mut Value,
+        action_id: &str,
+        result: &Value,
+        ok: bool,
+        error: Option<&str>,
+    ) {
+        if !status.is_object() {
+            *status = serde_json::json!({});
+        }
+        if let Some(obj) = status.as_object_mut() {
+            obj.insert("lastActionId".to_string(), serde_json::json!(action_id));
+            obj.insert(
+                "lastActionUnix".to_string(),
+                serde_json::json!(unix_now_secs()),
+            );
+            obj.insert("lastActionOk".to_string(), serde_json::json!(ok));
+            obj.insert("lastResult".to_string(), result.clone());
+            if let Some(error) = error {
+                obj.insert("lastError".to_string(), serde_json::json!(error));
+            } else {
+                obj.remove("lastError");
+            }
+            if let Some(taskbar_auto_hide) = result.get("taskbarAutoHide") {
+                obj.insert("taskbarAutoHide".to_string(), taskbar_auto_hide.clone());
+            }
+            if let Some(scale_current) = result.get("scale").and_then(|v| v.get("currentPercent")) {
+                obj.insert("scalePercent".to_string(), scale_current.clone());
+            }
+            if let Some(resolution) = result.get("resolution") {
+                if let Some(width) = resolution.get("width") {
+                    obj.insert("resolutionWidth".to_string(), width.clone());
+                }
+                if let Some(height) = resolution.get("height") {
+                    obj.insert("resolutionHeight".to_string(), height.clone());
+                }
+                if let Some(refresh_rate) = resolution.get("refreshRate") {
+                    obj.insert("refreshRate".to_string(), refresh_rate.clone());
+                }
+            }
+        }
+    }
+
+    fn extension_root_path(extension_id: &str) -> Result<PathBuf, String> {
         let home = dirs::home_dir().ok_or_else(|| "home directory is not available".to_string())?;
-        Ok(home
-            .join(".Copper")
-            .join("extensions")
-            .join(extension_id)
-            .join("data.json"))
+        Ok(home.join(".Copper").join("extensions").join(extension_id))
+    }
+
+    fn extension_config_path(extension_id: &str) -> Result<PathBuf, String> {
+        Ok(extension_root_path(extension_id)?.join("config.json"))
+    }
+
+    fn extension_status_path(extension_id: &str) -> Result<PathBuf, String> {
+        Ok(extension_root_path(extension_id)?.join("status.json"))
+    }
+
+    fn extension_legacy_data_path(extension_id: &str) -> Result<PathBuf, String> {
+        Ok(extension_root_path(extension_id)?.join("data.json"))
+    }
+
+    fn unix_now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     fn add_notify_icon(hwnd: HWND, icon: HICON, tooltip: &str) -> Result<(), String> {
@@ -961,17 +1102,57 @@ use windows_impl::run_windows_display_tray;
 
 #[cfg(test)]
 mod tests {
-    use super::AdditionalTrayController;
+    use super::{collect_specs, AdditionalTrayController};
+    use crate::extension::Registry;
+    use std::fs;
+    use std::path::Path;
     use std::sync::{atomic::AtomicBool, Arc};
+    use tempfile::tempdir;
+
+    fn write_extension(root: &Path, manifest: &str) {
+        fs::create_dir_all(root).expect("create extension dir");
+        fs::write(root.join("manifest.json"), manifest).expect("write manifest");
+        fs::write(root.join("main.ts"), "export default function(){}").expect("write main.ts");
+    }
 
     #[test]
     fn initialize_without_enabled_extensions_creates_empty_controller() {
+        let temp = tempdir().expect("tempdir");
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
         let controller = AdditionalTrayController::initialize(
             Arc::new(AtomicBool::new(true)),
             "http://127.0.0.1:4766".to_string(),
-            false,
+            &registry,
         )
         .expect("controller");
         assert!(controller.specs().is_empty());
+    }
+
+    #[test]
+    fn collect_specs_discovers_tray_specs_from_registry_metadata() {
+        let temp = tempdir().expect("tempdir");
+        write_extension(
+            &temp.path().join("windows-display-manager"),
+            r#"{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "windows-display-manager",
+                "name": "Windows Display Manager",
+                "version": "1.0.0",
+                "trigger": "windows-display",
+                "permissions": ["ui", "store"],
+                "actions": [{ "id": "status", "label": "Status", "script": "return;" }],
+                "tray": {
+                    "provider": "windows-display",
+                    "title": "Windows Display Manager",
+                    "tooltip": "Taskbar and display shortcuts"
+                }
+            }"#,
+        );
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let specs = collect_specs(&registry);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].extension_id, "windows-display-manager");
+        assert_eq!(specs[0].provider, "windows-display");
+        assert_eq!(specs[0].title, "Windows Display Manager");
     }
 }

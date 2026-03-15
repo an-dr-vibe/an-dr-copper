@@ -118,6 +118,32 @@ fn desktop_torrent_descriptor_matches_required_contract() {
         .find(|input| input.id == "pollIntervalSeconds")
         .expect("pollIntervalSeconds input");
     assert_eq!(poll_input.default.as_u64(), Some(5));
+
+    let settings = descriptor
+        .settings
+        .expect("desktop torrent settings metadata");
+    assert_eq!(
+        settings.description.as_deref(),
+        Some("Configure how Copper watches the desktop and manages extension packages.")
+    );
+    assert!(
+        settings
+            .sections
+            .iter()
+            .any(|section| section.id == "monitor"),
+        "desktop torrent settings should define a monitor section"
+    );
+    assert!(
+        settings
+            .status
+            .as_ref()
+            .map(|status| status
+                .fields
+                .iter()
+                .any(|field| field.key == "lastScanUnix"))
+            .unwrap_or(false),
+        "desktop torrent settings should describe status fields"
+    );
 }
 
 #[test]
@@ -189,6 +215,65 @@ fn windows_display_manager_descriptor_matches_required_contract() {
         .find(|input| input.id == "scalePercent")
         .expect("scalePercent input");
     assert_eq!(scale.default.as_u64(), Some(100));
+
+    let tray_presets = descriptor
+        .inputs
+        .iter()
+        .find(|input| input.id == "trayResolutionPresets")
+        .expect("trayResolutionPresets input");
+    assert_eq!(
+        tray_presets.default.as_array().map(|values| values.len()),
+        Some(2),
+        "windows display manager should seed tray menu presets"
+    );
+    assert_eq!(
+        tray_presets.options_source.as_deref(),
+        Some("dynamicOptions.trayResolutionPresets")
+    );
+
+    let settings = descriptor
+        .settings
+        .expect("windows display settings metadata");
+    assert_eq!(settings.title.as_deref(), Some("Display"));
+    assert_eq!(
+        settings.apply_actions,
+        vec![
+            "set-taskbar-autohide".to_string(),
+            "set-resolution".to_string(),
+            "set-scale".to_string()
+        ],
+        "windows display settings should declare which actions apply saved settings"
+    );
+    assert!(
+        settings
+            .sections
+            .iter()
+            .any(|section| section.id == "taskbar"),
+        "windows display settings should define a taskbar section"
+    );
+    assert!(
+        settings
+            .sections
+            .iter()
+            .any(|section| section.id == "tray-menu"),
+        "windows display settings should define a tray menu section"
+    );
+    assert!(
+        settings
+            .status
+            .as_ref()
+            .map(|status| status
+                .fields
+                .iter()
+                .any(|field| field.key == "lastActionUnix"))
+            .unwrap_or(false),
+        "windows display settings should describe status fields"
+    );
+    let tray = descriptor
+        .tray
+        .expect("windows display manager should declare tray metadata");
+    assert_eq!(tray.provider, "windows-display");
+    assert_eq!(tray.title, "Windows Display Manager");
 }
 
 #[test]

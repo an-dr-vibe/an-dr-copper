@@ -23,6 +23,7 @@ pub enum InputType {
     FolderPicker,
     FilePicker,
     Select,
+    MultiSelect,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,15 +33,21 @@ pub struct InputField {
     pub field_type: InputType,
     pub label: String,
     #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
     pub default: serde_json::Value,
     #[serde(default)]
     pub options: Vec<String>,
+    #[serde(default, rename = "optionsSource")]
+    pub options_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Action {
     pub id: String,
     pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub script: String,
 }
 
@@ -53,6 +60,66 @@ pub struct UiDescriptor {
     pub source: Option<String>,
     #[serde(default)]
     pub on_select: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrayDescriptor {
+    pub provider: String,
+    pub title: String,
+    #[serde(default)]
+    pub tooltip: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum StatusFieldFormat {
+    Text,
+    Boolean,
+    Number,
+    Path,
+    DateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SettingsSection {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub inputs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StatusField {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub format: Option<StatusFieldFormat>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StatusDescriptor {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub fields: Vec<StatusField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SettingsDescriptor {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default, rename = "applyActions")]
+    pub apply_actions: Vec<String>,
+    #[serde(default)]
+    pub sections: Vec<SettingsSection>,
+    #[serde(default)]
+    pub status: Option<StatusDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -71,6 +138,10 @@ pub struct Descriptor {
     pub actions: Vec<Action>,
     #[serde(default)]
     pub ui: Option<UiDescriptor>,
+    #[serde(default)]
+    pub settings: Option<SettingsDescriptor>,
+    #[serde(default)]
+    pub tray: Option<TrayDescriptor>,
 }
 
 impl Descriptor {

@@ -1,7 +1,7 @@
 # Copper Architecture
 
 Version: 0.2.0  
-Last updated: 2026-03-08
+Last updated: 2026-03-15
 
 ## 1. Overview
 
@@ -19,7 +19,7 @@ Two-process target model (same intent as original architecture):
 Current implementation status:
 
 - Implemented: always-on daemon, extension registry loading, periodic hot-reload, IPC control plane, descriptor validation, trigger preparation, skeleton generation, local config UI (`ui open`), tray menu shortcut for desktop torrent extension config.
-- Implemented: daemon-hosted always-on config UI (`http://127.0.0.1:4766`) with per-section settings/info panels.
+- Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with Obsidian-style per-extension pages, separate Settings/Status views, and manifest-driven settings sections.
 - Planned: embedded `deno_core` runtime execution, richer tray/hotkey integration, on-demand Tauri UI renderer.
 
 ## 3. Implemented Daemon Core
@@ -28,15 +28,15 @@ Daemon capabilities:
 
 - Binds to TCP IPC endpoint (default `127.0.0.1:4765`).
 - Loads extensions from merged roots:
-  - executable-adjacent `extensions/` (preferred, fallback `core-extensions/` for legacy bundles)
+  - executable-adjacent `extensions/`, parent `extensions/`, and workspace `extensions/` when present during local source runs (legacy `core-extensions/` still supported)
   - user directory `~/.Copper/extensions`
   - user extensions override same-id core extensions
 - Validates extension manifests against versioned schema.
 - Periodically reloads extension registry (hot-reload behavior).
 - Runs background polling tasks for core extensions (currently `desktop-torrent-organizer` file polling).
 - Executes host-native actions for `windows-display-manager` through daemon API bridges (taskbar auto-hide, display resolution, scale).
-- Exposes additional tray icon API in daemon (`tray_extension`) so core extensions can register dedicated tray icons.
-- Current implementation includes a Windows tray icon for `windows-display-manager` with left-click toggle and right-click action menu.
+- Exposes manifest-driven additional tray icon API in daemon (`tray_extension`) so extensions can declare dedicated tray icons through descriptor metadata.
+- Current implementation includes a `tray.provider = "windows-display"` host tray provider used by `windows-display-manager` for left-click toggle and right-click action menu behavior.
 - Handles IPC operations:
   - `health`
   - `list`
@@ -44,8 +44,11 @@ Daemon capabilities:
   - `reload`
   - `verify`
   - `shutdown`
-- Persists extension state per extension in `~/.Copper/extensions/<extension-id>/data.json`.
+- Persists extension settings per extension in `~/.Copper/extensions/<extension-id>/config.json`.
+- Persists runtime status per extension in `~/.Copper/extensions/<extension-id>/status.json`.
+  - Legacy `data.json` is still read as a fallback during migration.
   - Includes action execution snapshots for host-native extensions (for example `windows-display-manager`).
+- Config UI can save-and-apply host-native extension settings when the manifest declares `settings.applyActions`.
 
 This restores the daemon as the center of system lifecycle.
 

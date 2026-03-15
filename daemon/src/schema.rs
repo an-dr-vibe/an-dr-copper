@@ -175,4 +175,103 @@ mod tests {
         let error = parse_and_validate("{not-json").expect_err("invalid json should fail");
         assert!(error.to_string().contains("invalid JSON"));
     }
+
+    #[test]
+    fn validates_descriptor_with_settings_metadata() {
+        let raw = format!(
+            r#"{{
+                "$schema": "{SUPPORTED_SCHEMA_URL}",
+                "id": "windows-display-manager",
+                "name": "Windows Display Manager",
+                "version": "1.0.0",
+                "trigger": "windows-display",
+                "inputs": [
+                    {{
+                        "id": "taskbarAutoHide",
+                        "type": "boolean",
+                        "label": "Taskbar auto-hide",
+                        "description": "Hide the taskbar until the pointer touches the screen edge.",
+                        "default": false
+                    }},
+                    {{
+                        "id": "trayResolutionPresets",
+                        "type": "multi-select",
+                        "label": "Tray resolution presets",
+                        "description": "Choose which resolutions appear in the tray menu.",
+                        "default": ["1920x1080@60"],
+                        "optionsSource": "dynamicOptions.trayResolutionPresets"
+                    }}
+                ],
+                "actions": [
+                    {{
+                        "id": "status",
+                        "label": "Refresh status",
+                        "description": "Query the current Windows display state.",
+                        "script": "return;"
+                    }}
+                ],
+                "settings": {{
+                    "title": "Display",
+                    "description": "Configure display behavior and review the latest runtime status.",
+                    "applyActions": [
+                        "set-taskbar-autohide",
+                        "set-resolution",
+                        "set-scale"
+                    ],
+                    "sections": [
+                        {{
+                            "id": "taskbar",
+                            "title": "Taskbar",
+                            "description": "Taskbar behavior settings.",
+                            "inputs": ["taskbarAutoHide"]
+                        }}
+                    ],
+                    "status": {{
+                        "title": "Current status",
+                        "description": "Latest values reported by the daemon.",
+                        "fields": [
+                            {{
+                                "key": "lastActionUnix",
+                                "label": "Last updated",
+                                "format": "date-time"
+                            }}
+                        ]
+                    }}
+                }},
+                "tray": {{
+                    "provider": "windows-display",
+                    "title": "Windows Display Manager",
+                    "tooltip": "Taskbar and display shortcuts"
+                }}
+            }}"#
+        );
+
+        let descriptor = parse_and_validate(&raw).expect("descriptor should pass validation");
+        let settings = descriptor.settings.expect("settings metadata");
+        assert_eq!(settings.title.as_deref(), Some("Display"));
+        assert_eq!(settings.sections.len(), 1);
+        assert_eq!(settings.sections[0].inputs, vec!["taskbarAutoHide"]);
+        assert_eq!(
+            settings.apply_actions,
+            vec![
+                "set-taskbar-autohide".to_string(),
+                "set-resolution".to_string(),
+                "set-scale".to_string()
+            ]
+        );
+        assert_eq!(
+            descriptor.inputs[1].options_source.as_deref(),
+            Some("dynamicOptions.trayResolutionPresets")
+        );
+        let status = settings.status.expect("status metadata");
+        assert_eq!(status.fields.len(), 1);
+        assert_eq!(status.fields[0].key, "lastActionUnix");
+        let tray = descriptor.tray.expect("tray metadata");
+        assert_eq!(tray.provider, "windows-display");
+        assert_eq!(tray.title, "Windows Display Manager");
+        assert_eq!(
+            tray.tooltip.as_deref(),
+            Some("Taskbar and display shortcuts")
+        );
+    }
 }

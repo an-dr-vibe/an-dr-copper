@@ -143,12 +143,12 @@ fn core_extensions_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
 
 fn core_extension_roots_from_exe_dir(exe_dir: &Path) -> Vec<PathBuf> {
     let candidates = [
-        exe_dir.join("..").join("..").join("extensions"),
-        exe_dir.join("..").join("extensions"),
         exe_dir.join("extensions"),
+        exe_dir.join("..").join("extensions"),
+        exe_dir.join("..").join("..").join("extensions"),
         // Backward compatibility for older bundles:
-        exe_dir.join("..").join("core-extensions"),
         exe_dir.join("core-extensions"),
+        exe_dir.join("..").join("core-extensions"),
     ];
 
     let mut roots = Vec::new();
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn core_extension_roots_include_workspace_fallback_before_adjacent_root() {
+    fn core_extension_roots_prefer_adjacent_root_before_workspace_fallback() {
         let temp = tempdir().expect("tempdir");
         let exe_dir = temp.path().join("target").join("debug");
         fs::create_dir_all(temp.path().join("extensions")).expect("workspace extensions");
@@ -353,9 +353,61 @@ mod tests {
         assert_eq!(
             detected,
             vec![
-                fs::canonicalize(temp.path().join("extensions")).expect("workspace canonical path"),
                 fs::canonicalize(exe_dir.join("extensions")).expect("adjacent canonical path"),
+                fs::canonicalize(temp.path().join("extensions")).expect("workspace canonical path"),
             ]
         );
+    }
+
+    #[test]
+    fn runtime_core_roots_allow_workspace_manifest_to_override_stale_bundle() {
+        let temp = tempdir().expect("tempdir");
+        let exe_dir = temp.path().join("target").join("release");
+        let workspace_root = temp.path().join("extensions");
+        let bundled_root = exe_dir.join("extensions");
+        fs::create_dir_all(workspace_root.join("same-id")).expect("workspace extension dir");
+        fs::create_dir_all(bundled_root.join("same-id")).expect("bundled extension dir");
+
+        fs::write(
+            bundled_root.join("same-id").join("manifest.json"),
+            r#"{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "same-id",
+                "name": "Bundled Extension",
+                "version": "1.0.0",
+                "trigger": "bundle",
+                "actions": [{ "id": "run", "label": "Run", "script": "return;" }]
+            }"#,
+        )
+        .expect("write bundled descriptor");
+        fs::write(
+            bundled_root.join("same-id").join("main.ts"),
+            "export default function(){}",
+        )
+        .expect("write bundled main");
+
+        fs::write(
+            workspace_root.join("same-id").join("manifest.json"),
+            r#"{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "same-id",
+                "name": "Workspace Extension",
+                "version": "1.0.0",
+                "trigger": "workspace",
+                "actions": [{ "id": "run", "label": "Run", "script": "return;" }]
+            }"#,
+        )
+        .expect("write workspace descriptor");
+        fs::write(
+            workspace_root.join("same-id").join("main.ts"),
+            "export default function(){}",
+        )
+        .expect("write workspace main");
+
+        let roots = core_extension_roots_from_exe_dir(&exe_dir);
+        let registry =
+            Registry::load_from_dirs(roots.iter().map(PathBuf::as_path)).expect("registry");
+        let extension = registry.get("same-id").expect("extension");
+        assert_eq!(extension.descriptor.name, "Workspace Extension");
     }
 }
