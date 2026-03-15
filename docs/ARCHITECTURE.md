@@ -1,6 +1,6 @@
 # Copper Architecture
 
-Version: 0.2.1  
+Version: 0.3.0  
 Last updated: 2026-03-15
 
 ## 1. Overview
@@ -49,7 +49,7 @@ Daemon capabilities:
   - `shutdown`
 - Persists extension settings per extension in `~/.Copper/extensions/<extension-id>/config.json`.
 - Persists runtime status per extension in `~/.Copper/extensions/<extension-id>/status.json`.
-- Persists core daemon config in `~/.Copper/extensions/copper-core/data.json`.
+- Persists core daemon config in `~/.Copper/extensions/copper-core/config.json`.
   - `disabledExtensions` suppresses selected extensions from the active runtime while keeping them discoverable in the settings UI.
   - Legacy `data.json` is still read as a fallback during migration.
   - Includes action execution snapshots for host-native extensions (for example `windows-display-manager`).

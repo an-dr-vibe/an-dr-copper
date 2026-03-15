@@ -43,7 +43,7 @@ pwsh -NoProfile -Command "$s=Invoke-RestMethod 'https://raw.githubusercontent.co
 ./scripts/install.ps1 -Force -AutoStart
 
 # released/copy install of a specific release tag:
-./scripts/install.ps1 -Version v0.1.0
+./scripts/install.ps1 -Version v0.3.0
 
 # linked development install from a cloned repo:
 ./scripts/install-dev.ps1 -Force
@@ -107,7 +107,8 @@ Runtime extension roots:
 - Core extensions: executable-adjacent `extensions/` (shipped with release)
 - User extensions: `~/.Copper/extensions` (user-installed/custom)
 - Runtime activation respects optional manifest `platforms` restrictions (`windows`, `macos`, `linux`).
-- Core settings can disable specific extensions through `~/.Copper/extensions/copper-core/data.json` via `disabledExtensions`.
+- Core settings can disable specific extensions through `~/.Copper/extensions/copper-core/config.json` via `disabledExtensions`.
+- Legacy `~/.Copper/extensions/copper-core/data.json` is still read as a fallback during migration.
 
 Windows host extension note:
 - `windows-display-manager` executes taskbar/resolution/scale actions through daemon host APIs.

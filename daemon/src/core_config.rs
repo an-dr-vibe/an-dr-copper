@@ -20,11 +20,20 @@ pub fn load_core_config() -> Result<CoreConfig, std::io::Error> {
 }
 
 pub fn load_core_config_from(data_root: &Path) -> Result<CoreConfig, std::io::Error> {
-    let path = core_data_path_in(data_root);
-    if !path.exists() {
-        return Ok(CoreConfig::default());
+    let path = core_config_path_in(data_root);
+    if path.exists() {
+        return read_core_config(&path);
     }
 
+    let legacy_path = core_data_path_in(data_root);
+    if legacy_path.exists() {
+        return read_core_config(&legacy_path);
+    }
+
+    Ok(CoreConfig::default())
+}
+
+fn read_core_config(path: &Path) -> Result<CoreConfig, std::io::Error> {
     let raw = fs::read_to_string(path)?;
     let parsed: Value = serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
 
@@ -43,6 +52,10 @@ pub fn load_core_config_from(data_root: &Path) -> Result<CoreConfig, std::io::Er
     Ok(CoreConfig {
         disabled_extensions,
     })
+}
+
+pub fn core_config_path_in(data_root: &Path) -> PathBuf {
+    data_root.join("copper-core").join("config.json")
 }
 
 pub fn core_data_path_in(data_root: &Path) -> PathBuf {
@@ -65,7 +78,7 @@ fn copper_data_root_from_home(home: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{core_data_path_in, load_core_config_from, CoreConfig};
+    use super::{core_config_path_in, core_data_path_in, load_core_config_from, CoreConfig};
     use std::collections::BTreeSet;
     use std::fs;
     use tempfile::tempdir;
@@ -81,7 +94,7 @@ mod tests {
     #[test]
     fn core_config_reads_disabled_extensions() {
         let temp = tempdir().expect("tempdir");
-        let path = core_data_path_in(temp.path());
+        let path = core_config_path_in(temp.path());
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(
             &path,
@@ -103,11 +116,41 @@ mod tests {
     #[test]
     fn core_config_ignores_invalid_payloads() {
         let temp = tempdir().expect("tempdir");
-        let path = core_data_path_in(temp.path());
+        let path = core_config_path_in(temp.path());
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(&path, r#"{"disabledExtensions":"nope"}"#).expect("write config");
 
         let config = load_core_config_from(temp.path()).expect("load");
         assert!(config.disabled_extensions.is_empty());
+    }
+
+    #[test]
+    fn core_config_falls_back_to_legacy_data_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = core_data_path_in(temp.path());
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+        fs::write(&path, r#"{"disabledExtensions":["legacy-ext"]}"#).expect("write config");
+
+        let config = load_core_config_from(temp.path()).expect("load");
+        assert_eq!(
+            config.disabled_extensions,
+            BTreeSet::from(["legacy-ext".to_string()])
+        );
+    }
+
+    #[test]
+    fn core_config_prefers_config_json_over_legacy_data_file() {
+        let temp = tempdir().expect("tempdir");
+        let config_path = core_config_path_in(temp.path());
+        let legacy_path = core_data_path_in(temp.path());
+        fs::create_dir_all(config_path.parent().expect("parent")).expect("create parent");
+        fs::write(&config_path, r#"{"disabledExtensions":["config-ext"]}"#).expect("write config");
+        fs::write(&legacy_path, r#"{"disabledExtensions":["legacy-ext"]}"#).expect("write config");
+
+        let config = load_core_config_from(temp.path()).expect("load");
+        assert_eq!(
+            config.disabled_extensions,
+            BTreeSet::from(["config-ext".to_string()])
+        );
     }
 }

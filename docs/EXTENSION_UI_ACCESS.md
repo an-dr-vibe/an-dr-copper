@@ -53,7 +53,8 @@ Recommended config actions in UI:
 - UI now uses a dedicated extension page with separate **Settings** and **Status** tabs.
 - Shared package-install inputs now live on the **Core** settings page instead of inside the desktop torrent extension settings.
 - Core settings now include **Launch Copper at login**, which applies user-level autostart registration when saved. On Windows, the autostart path prefers the `copper.exe` GUI launcher so it does not open a terminal window at login.
-- Core settings also include per-extension enable/disable toggles backed by `~/.Copper/extensions/copper-core/data.json` `disabledExtensions`.
+- Core settings also include per-extension enable/disable toggles backed by `~/.Copper/extensions/copper-core/config.json` `disabledExtensions`.
+- Legacy `~/.Copper/extensions/copper-core/data.json` is still read as a fallback during migration.
 - Platform-restricted extensions remain visible in the UI with their supported-platform metadata even when the current host cannot run them.
 - `windows-display-manager` now saves and applies its declared display actions from the config page.
 - Runtime execution of `main.ts` from saved config remains future work.
