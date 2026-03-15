@@ -1,4 +1,6 @@
 use crate::config_ui::open_url_in_browser;
+use crate::logging;
+use crate::tray_assets;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -59,7 +61,7 @@ where
     let ui_url_for_menu = ui_url;
     tray.add_menu_item("Open Extension Config", move || {
         if let Err(err) = open_browser(&ui_url_for_menu) {
-            eprintln!("failed to open config UI in browser: {err}");
+            logging::error(format!("failed to open config UI in browser: {err}"));
         }
     })
     .map_err(TrayError::Init)?;
@@ -89,19 +91,40 @@ impl TrayController {
 
 #[cfg(target_os = "windows")]
 fn default_icon() -> IconSource {
-    unsafe {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_APPLICATION};
-        let icon_handle = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
-        IconSource::RawIcon(icon_handle as isize)
+    if let Ok(icon) = tray_assets::copper_server_icon() {
+        if let Some(hicon) = tray_assets::create_hicon(&icon) {
+            return IconSource::RawIcon(hicon as isize);
+        }
+        logging::error("failed to convert embedded server tray icon to HICON".to_string());
     }
+    fallback_windows_icon()
 }
 
 #[cfg(not(target_os = "windows"))]
 fn default_icon() -> IconSource {
-    IconSource::Data {
-        width: 16,
-        height: 16,
-        data: solid_green_icon_rgba(16, 16),
+    match tray_assets::copper_server_icon() {
+        Ok(icon) => IconSource::Data {
+            width: icon.width as i32,
+            height: icon.height as i32,
+            data: icon.rgba,
+        },
+        Err(err) => {
+            logging::error(format!("failed to render embedded server tray icon: {err}"));
+            IconSource::Data {
+                width: 16,
+                height: 16,
+                data: solid_green_icon_rgba(16, 16),
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn fallback_windows_icon() -> IconSource {
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_APPLICATION};
+        let icon_handle = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+        IconSource::RawIcon(icon_handle as isize)
     }
 }
 

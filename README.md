@@ -20,6 +20,8 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/daemon.ps1 -Action list
 # daemon also hosts config UI at:
 # http://127.0.0.1:4766
+# extension settings: ~/.Copper/extensions/<extension-id>/config.json
+# extension status:   ~/.Copper/extensions/<extension-id>/status.json
 ./scripts/daemon.ps1 -Action shutdown
 .\target\release\copperd.exe ui open --extension desktop-torrent-organizer
 ./scripts/run-tests.ps1
@@ -28,23 +30,37 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/build-release.ps1
 ```
 
-## Install Released Build (Cross-Platform PowerShell)
+## Install Copper (Cross-Platform PowerShell)
 
 ```powershell
-# copy/paste one command (install + run):
-pwsh -NoProfile -Command "$s=Invoke-RestMethod 'https://raw.githubusercontent.com/an-dr-vibe/an-dr-copper/main/scripts/install.ps1'; & ([ScriptBlock]::Create($s)) -Force; $dir=if($IsWindows){Join-Path $env:LOCALAPPDATA 'Copper'}else{Join-Path ([Environment]::GetFolderPath('UserProfile')) '.local/share/copper'}; $exe=if($IsWindows){'copperd.exe'}else{'copperd'}; & (Join-Path $dir $exe)"
+# released/copy install from GitHub:
+pwsh -NoProfile -Command "$s=Invoke-RestMethod 'https://raw.githubusercontent.com/an-dr-vibe/an-dr-copper/main/scripts/install.ps1'; & ([ScriptBlock]::Create($s)) -Force"
 
-# from cloned repo:
+# released/copy install from cloned repo:
 ./scripts/install.ps1
 
-# install a specific release tag:
+# released/copy install with autostart:
+./scripts/install.ps1 -Force -AutoStart
+
+# released/copy install of a specific release tag:
 ./scripts/install.ps1 -Version v0.1.0
 
-# overwrite existing install:
-./scripts/install.ps1 -Force
+# linked development install from a cloned repo:
+./scripts/install-dev.ps1 -Force
+
+# linked development install with autostart:
+./scripts/install-dev.ps1 -Force -AutoStart
 ```
 
-Installer behavior:
+Installer modes:
+- `./scripts/install.ps1`: copies a released or locally-built Copper bundle into the install directory.
+- `./scripts/install-dev.ps1`: installs only launchers and keeps execution rooted in the repo for simpler development.
+- Both installers create a `copper-start` launcher in the install directory.
+- On Windows, release/source installs also include `copper.exe` as the no-terminal double-click launcher.
+- `-AutoStart` registers the launcher for the next login. `-NoAutoStart` removes that registration.
+- While the daemon is running, the same login-start preference can also be toggled in the Copper UI on the **Core** settings page.
+
+Copy installer behavior:
 - Uses GitHub release asset `copper-<target-triple>.zip` when available.
 - Falls back to source download + local release build when no release asset exists (requires `cargo`).
 
@@ -58,6 +74,8 @@ cargo run -p copperd -- verify --extensions-dir ./extensions
 cargo run -p copperd -- trigger sort-downloads --extensions-dir ./extensions
 cargo run -p copperd -- trigger session-counter --extensions-dir ./extensions
 cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents --extensions-dir ./extensions
+cargo run -p copperd -- daemon trigger windows-display-manager --action status --bind-addr 127.0.0.1:4765
+cargo run -p copperd -- daemon trigger windows-display-manager --action toggle-taskbar-autohide --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
 cargo run -p copperd -- generate-main extensions/sort-downloads/manifest.json
 cargo run -p copperd -- run
@@ -72,7 +90,7 @@ cargo run -p copperd -- daemon shutdown --bind-addr 127.0.0.1:4765
 - `daemon/` Rust host implementation
 - `schemas/` descriptor schema contract
 - `sdk/` TypeScript API type definitions
-- `extensions/` sample extension pack (`sort-downloads`, `session-counter`, `desktop-torrent-organizer`)
+- `extensions/` sample extension pack (`sort-downloads`, `session-counter`, `desktop-torrent-organizer`, `windows-display-manager`)
 - `scripts/` cross-platform build and verification scripts
 - `docs/` architecture and usage docs
 
@@ -88,6 +106,15 @@ Runtime extension roots:
 
 - Core extensions: executable-adjacent `extensions/` (shipped with release)
 - User extensions: `~/.Copper/extensions` (user-installed/custom)
+
+Windows host extension note:
+- `windows-display-manager` executes taskbar/resolution/scale actions through daemon host APIs.
+- Its settings page can save and immediately apply the configured taskbar, resolution, and scale values.
+- `windows-display-manager` also declares a tray icon through manifest `tray` metadata, which the daemon loads through its tray provider API.
+- On Windows, that tray provider registers an additional tray icon with:
+  - Left click: toggle taskbar auto-hide
+  - Right click: taskbar/resolution/scale menu, settings, exit
+- It is Windows-only; on macOS/Linux the extension can still be configured but trigger execution returns a platform error.
 
 ## Documentation
 

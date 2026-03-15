@@ -31,15 +31,18 @@
               "boolean",
               "folder-picker",
               "file-picker",
-              "select"
+              "select",
+              "multi-select"
             ]
           },
           "label": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
           "default": {},
           "options": {
             "type": "array",
             "items": { "type": "string" }
-          }
+          },
+          "optionsSource": { "type": "string", "minLength": 1 }
         }
       }
     },
@@ -53,6 +56,7 @@
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "label": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
           "script": { "type": "string", "minLength": 1 }
         }
       }
@@ -65,6 +69,70 @@
         "type": { "enum": ["list", "form", "detail", "toast"] },
         "source": { "type": "string" },
         "onSelect": { "type": "string" }
+      }
+    },
+    "tray": {
+      "type": "object",
+      "required": ["provider", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "tooltip": { "type": "string", "minLength": 1 }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "applyActions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "inputs"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "inputs": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              }
+            }
+          }
+        },
+        "status": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "description": { "type": "string", "minLength": 1 },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["key", "label"],
+                "additionalProperties": false,
+                "properties": {
+                  "key": { "type": "string", "minLength": 1 },
+                  "label": { "type": "string", "minLength": 1 },
+                  "format": {
+                    "enum": ["text", "boolean", "number", "path", "date-time"]
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
