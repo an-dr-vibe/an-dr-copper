@@ -3,6 +3,7 @@ use crate::config_ui::open_url_in_browser;
 use crate::extension::Registry;
 use crate::logging;
 use crate::state_store::{write_json_object, ExtensionStateStore};
+use crate::tray_assets;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::{
@@ -175,13 +176,12 @@ mod windows_impl {
         NOTIFYICONDATAW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CreateIcon, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon,
-        DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, LoadIconW, PeekMessageW,
-        PostQuitMessage, RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
-        CW_USEDEFAULT, HICON, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING,
-        MF_UNCHECKED, MSG, PM_REMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_LEFTBUTTON,
-        TPM_RETURNCMD, WM_CLOSE, WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WM_USER,
-        WNDCLASSW, WS_OVERLAPPEDWINDOW,
+        AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
+        DestroyWindow, DispatchMessageW, GetCursorPos, LoadIconW, PeekMessageW, PostQuitMessage,
+        RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, CW_USEDEFAULT,
+        HICON, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG,
+        PM_REMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_CLOSE,
+        WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
     };
 
     const WM_TRAYICON: u32 = WM_USER + 121;
@@ -190,7 +190,8 @@ mod windows_impl {
     const CMD_EXIT: u32 = 1003;
     const CMD_RES_BASE: u32 = 2000;
     const CMD_SCALE_BASE: u32 = 3000;
-    const ICON_SIZE: i32 = 16;
+    const STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+    const TRAY_LOOP_SLEEP: Duration = Duration::from_millis(20);
 
     static mut WINDOWS_DISPLAY_STATE: *mut WindowsDisplayTrayState = ptr::null_mut();
 
@@ -285,10 +286,10 @@ mod windows_impl {
             state_store,
             status: DisplayStatus::default(),
             resolution_presets: DisplayStatus::default().available_resolutions,
-            icon_pinned_dark: create_pin_icon(true, true).unwrap_or_else(default_icon),
-            icon_unpinned_dark: create_pin_icon(false, true).unwrap_or_else(default_icon),
-            icon_pinned_light: create_pin_icon(true, false).unwrap_or_else(default_icon),
-            icon_unpinned_light: create_pin_icon(false, false).unwrap_or_else(default_icon),
+            icon_pinned_dark: load_pin_icon(true, true).unwrap_or_else(default_icon),
+            icon_unpinned_dark: load_pin_icon(false, true).unwrap_or_else(default_icon),
+            icon_pinned_light: load_pin_icon(true, false).unwrap_or_else(default_icon),
+            icon_unpinned_light: load_pin_icon(false, false).unwrap_or_else(default_icon),
         };
         refresh_status(&mut state).ok();
 
@@ -351,9 +352,13 @@ mod windows_impl {
                 }
             }
 
-            if last_refresh.elapsed() >= Duration::from_secs(2) {
+            if last_refresh.elapsed() >= STATUS_REFRESH_INTERVAL {
                 if let Some(state) = state_mut() {
-                    if refresh_status(state).is_ok() {
+                    let previous_icon = state.icon_for_status();
+                    let previous_tooltip = state.tooltip();
+                    if refresh_status(state).is_ok()
+                        && tray_visual_changed(state, previous_icon, &previous_tooltip)
+                    {
                         let _ = modify_notify_icon(
                             state.hwnd,
                             state.icon_for_status(),
@@ -363,7 +368,7 @@ mod windows_impl {
                 }
                 last_refresh = Instant::now();
             }
-            std::thread::sleep(Duration::from_millis(35));
+            std::thread::sleep(TRAY_LOOP_SLEEP);
         }
 
         remove_notify_icon(hwnd).ok();
@@ -635,6 +640,14 @@ mod windows_impl {
         Ok(())
     }
 
+    fn tray_visual_changed(
+        state: &WindowsDisplayTrayState,
+        previous_icon: HICON,
+        previous_tooltip: &str,
+    ) -> bool {
+        state.icon_for_status() != previous_icon || state.tooltip() != previous_tooltip
+    }
+
     fn parse_status(raw: &Value) -> DisplayStatus {
         let mut status = DisplayStatus::default();
         status.taskbar_auto_hide = raw
@@ -888,122 +901,17 @@ mod windows_impl {
         nid.szTip[..limit].copy_from_slice(&wide_tip[..limit]);
     }
 
-    fn create_pin_icon(pinned: bool, dark_variant: bool) -> Option<HICON> {
-        let mut rgba = vec![0u8; (ICON_SIZE * ICON_SIZE * 4) as usize];
-        let color = if dark_variant {
-            [25u8, 25u8, 25u8, 255u8]
-        } else {
-            [236u8, 236u8, 236u8, 255u8]
+    fn load_pin_icon(pinned: bool, dark_variant: bool) -> Option<HICON> {
+        let icon = match tray_assets::windows_display_pin_icon(pinned, dark_variant) {
+            Ok(icon) => icon,
+            Err(err) => {
+                logging::error(format!(
+                    "failed to render windows display pin icon (pinned={pinned}, dark={dark_variant}): {err}"
+                ));
+                return None;
+            }
         };
-
-        if pinned {
-            draw_rect(&mut rgba, 5, 2, 11, 4, color);
-            draw_rect(&mut rgba, 7, 5, 9, 11, color);
-            draw_triangle_down(&mut rgba, 8, 12, 3, color);
-        } else {
-            draw_rect(&mut rgba, 3, 4, 8, 6, color);
-            draw_rect(&mut rgba, 8, 6, 12, 8, color);
-            draw_triangle_right(&mut rgba, 12, 9, 3, color);
-        }
-
-        create_icon_from_rgba(&rgba, ICON_SIZE, ICON_SIZE)
-    }
-
-    fn create_icon_from_rgba(rgba: &[u8], width: i32, height: i32) -> Option<HICON> {
-        let pixel_count = (width * height) as usize;
-        if rgba.len() != pixel_count * 4 {
-            return None;
-        }
-
-        let mut xor = vec![0u8; pixel_count * 4];
-        let stride = ((width + 31) / 32 * 4) as usize;
-        let mut and_mask = vec![0u8; stride * height as usize];
-
-        for y in 0..height {
-            for x in 0..width {
-                let src_idx = ((y * width + x) * 4) as usize;
-                let dst_y = height - 1 - y;
-                let dst_idx = ((dst_y * width + x) * 4) as usize;
-                let r = rgba[src_idx];
-                let g = rgba[src_idx + 1];
-                let b = rgba[src_idx + 2];
-                let a = rgba[src_idx + 3];
-                xor[dst_idx] = b;
-                xor[dst_idx + 1] = g;
-                xor[dst_idx + 2] = r;
-                xor[dst_idx + 3] = a;
-
-                if a == 0 {
-                    let row = dst_y as usize;
-                    let byte_index = row * stride + (x as usize / 8);
-                    let bit = 0x80u8 >> (x as usize % 8);
-                    and_mask[byte_index] |= bit;
-                }
-            }
-        }
-
-        let hicon = unsafe {
-            CreateIcon(
-                ptr::null_mut(),
-                width,
-                height,
-                1,
-                32,
-                and_mask.as_ptr(),
-                xor.as_ptr(),
-            )
-        };
-        if hicon.is_null() {
-            None
-        } else {
-            Some(hicon)
-        }
-    }
-
-    fn draw_rect(
-        rgba: &mut [u8],
-        left: i32,
-        top: i32,
-        right_inclusive: i32,
-        bottom_inclusive: i32,
-        color: [u8; 4],
-    ) {
-        for y in top..=bottom_inclusive {
-            for x in left..=right_inclusive {
-                set_pixel(rgba, x, y, color);
-            }
-        }
-    }
-
-    fn draw_triangle_down(rgba: &mut [u8], center_x: i32, top_y: i32, size: i32, color: [u8; 4]) {
-        for row in 0..size {
-            let y = top_y + row;
-            let span = row;
-            for x in (center_x - span)..=(center_x + span) {
-                set_pixel(rgba, x, y, color);
-            }
-        }
-    }
-
-    fn draw_triangle_right(rgba: &mut [u8], left_x: i32, top_y: i32, size: i32, color: [u8; 4]) {
-        for col in 0..size {
-            let x = left_x + col;
-            let half = col / 2;
-            for y in (top_y - half)..=(top_y + half + 1) {
-                set_pixel(rgba, x, y, color);
-            }
-        }
-    }
-
-    fn set_pixel(rgba: &mut [u8], x: i32, y: i32, color: [u8; 4]) {
-        if !(0..ICON_SIZE).contains(&x) || !(0..ICON_SIZE).contains(&y) {
-            return;
-        }
-        let idx = ((y * ICON_SIZE + x) * 4) as usize;
-        rgba[idx] = color[0];
-        rgba[idx + 1] = color[1];
-        rgba[idx + 2] = color[2];
-        rgba[idx + 3] = color[3];
+        tray_assets::create_hicon(&icon)
     }
 
     fn destroy_icons(state: &WindowsDisplayTrayState) {
@@ -1039,7 +947,11 @@ mod windows_impl {
     mod tests {
         use super::{
             default_resolution_presets, merge_object, parse_resolution_preset, parse_status,
+            tray_visual_changed, DisplayStatus, WindowsDisplayTrayState,
         };
+        use crate::state_store::ExtensionStateStore;
+        use std::path::PathBuf;
+        use std::sync::{atomic::AtomicBool, Arc};
 
         #[test]
         fn parse_status_reads_resolution_scale_theme_and_available_modes() {
@@ -1113,6 +1025,42 @@ mod windows_impl {
                 target.get("taskbarAutoHide").and_then(|v| v.as_bool()),
                 Some(false)
             );
+        }
+
+        #[test]
+        fn tray_visual_changed_detects_icon_or_tooltip_updates() {
+            let state_store = ExtensionStateStore::for_current_user().expect("state store");
+            let mut state = WindowsDisplayTrayState {
+                hwnd: std::ptr::null_mut(),
+                extension_id: "windows-display-manager".to_string(),
+                running: Arc::new(AtomicBool::new(true)),
+                daemon_ui_url: "http://127.0.0.1:4766".to_string(),
+                config_path: PathBuf::from("config.json"),
+                status_path: PathBuf::from("status.json"),
+                legacy_path: PathBuf::from("data.json"),
+                state_store,
+                status: DisplayStatus::default(),
+                resolution_presets: default_resolution_presets(),
+                icon_pinned_dark: 1isize as _,
+                icon_unpinned_dark: 2isize as _,
+                icon_pinned_light: 3isize as _,
+                icon_unpinned_light: 4isize as _,
+            };
+
+            let previous_icon = state.icon_for_status();
+            let previous_tooltip = state.tooltip();
+            assert!(!tray_visual_changed(
+                &state,
+                previous_icon,
+                &previous_tooltip
+            ));
+
+            state.status.taskbar_auto_hide = true;
+            assert!(tray_visual_changed(
+                &state,
+                previous_icon,
+                &previous_tooltip
+            ));
         }
     }
 }
