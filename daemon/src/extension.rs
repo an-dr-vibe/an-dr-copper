@@ -150,28 +150,10 @@ pub fn load_discoverable_registry(user_extensions_dir: &Path) -> Result<Registry
 }
 
 fn core_extensions_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
-<<<<<<< HEAD
     core_extension_roots_from_exe_dir(exe_dir)
         .into_iter()
         .next_back()
 }
-=======
-    let parent = exe_dir.parent();
-    let grandparent = parent.and_then(Path::parent);
-    let mut candidates = Vec::with_capacity(5);
-    candidates.push(exe_dir.join("extensions"));
-    if let Some(parent) = parent {
-        candidates.push(parent.join("extensions"));
-    }
-    if let Some(grandparent) = grandparent {
-        candidates.push(grandparent.join("extensions"));
-    }
-    // Backward compatibility for older bundles:
-    candidates.push(exe_dir.join("core-extensions"));
-    if let Some(parent) = parent {
-        candidates.push(parent.join("core-extensions"));
-    }
->>>>>>> d486c44 (Fix core extension path lookup in CI)
 
 fn core_extension_roots_from_exe_dir(exe_dir: &Path) -> Vec<PathBuf> {
     let parent = exe_dir.parent();

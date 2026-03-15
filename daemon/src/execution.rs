@@ -135,6 +135,7 @@ mod tests {
                 name: "Session Counter".to_string(),
                 version: "1.0.0".to_string(),
                 trigger: "session".to_string(),
+                platforms: vec![],
                 permissions: vec![],
                 inputs: vec![],
                 actions: vec![Action {

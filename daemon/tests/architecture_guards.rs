@@ -14,9 +14,11 @@ fn daemon_src(file_name: &str) -> PathBuf {
 
 fn production_source(file_name: &str) -> String {
     let raw = fs::read_to_string(daemon_src(file_name)).expect("read source");
-    raw.split("\n#[cfg(test)]\nmod tests")
+    let normalized = raw.replace("\r\n", "\n");
+    normalized
+        .split("\n#[cfg(test)]\nmod tests")
         .next()
-        .unwrap_or(&raw)
+        .unwrap_or(&normalized)
         .to_string()
 }
 

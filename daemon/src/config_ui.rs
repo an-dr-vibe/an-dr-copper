@@ -1581,8 +1581,8 @@ mod tests {
     };
     use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
     use crate::descriptor::{
-        Action, Descriptor, InputField, InputType, Platform, SettingsDescriptor,
-        SettingsSection, StatusDescriptor, StatusField, StatusFieldFormat, UiDescriptor,
+        Action, Descriptor, InputField, InputType, Platform, SettingsDescriptor, SettingsSection,
+        StatusDescriptor, StatusField, StatusFieldFormat, UiDescriptor,
     };
     use crate::host_extensions::HostExtensionRegistry;
     use crate::state_store::ExtensionStateStore;
