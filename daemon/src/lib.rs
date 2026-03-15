@@ -1,4 +1,5 @@
 pub mod api;
+pub mod autostart;
 pub mod cli;
 pub mod config_ui;
 pub mod control_plane;
@@ -7,6 +8,7 @@ pub mod descriptor;
 pub mod execution;
 pub mod extension;
 pub mod host_extensions;
+pub mod logging;
 pub mod runtime;
 pub mod schema;
 pub mod state_store;

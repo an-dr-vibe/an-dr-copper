@@ -1,3 +1,4 @@
+use crate::autostart;
 use crate::config_ui::{start_daemon_ui_server, DEFAULT_DAEMON_UI_BIND};
 use crate::control_plane::ControlPlaneAuth;
 use crate::execution::{permissions_as_strings, ExecutionEngine};
@@ -5,6 +6,7 @@ use crate::extension::{
     core_extensions_dir, default_extensions_dir, load_runtime_registry, Registry,
 };
 use crate::host_extensions::HostExtensionRegistry;
+use crate::logging;
 use crate::runtime::DryRunRuntime;
 use crate::state_store::ExtensionStateStore;
 use crate::tray::TrayController;
@@ -184,7 +186,7 @@ impl DaemonState {
                 }
                 Ok(false) => {}
                 Err(err) => {
-                    eprintln!("background task error for {extension_id}: {err}");
+                    logging::error(format!("background task error for {extension_id}: {err}"));
                 }
             }
         }
@@ -202,6 +204,23 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     .map_err(|e| DaemonError::SignalHandler(e.to_string()))?;
 
     let mut state = DaemonState::load(&config.extensions_dir)?;
+    match state.state_store.load_path_or_legacy(
+        &state.state_store.core_config_path(),
+        Some(&state.state_store.legacy_path("copper-core")),
+    ) {
+        Ok(core_config) => {
+            if let Err(err) = autostart::sync_from_core_config(&core_config) {
+                logging::error(format!(
+                    "warning: failed to synchronize autostart setting: {err}"
+                ));
+            }
+        }
+        Err(err) => {
+            logging::error(format!(
+                "warning: failed to read core config for autostart sync: {err}"
+            ));
+        }
+    }
     let auth = ControlPlaneAuth::ensure_persisted()?;
     state.auth_token = Some(auth.token().to_string());
     let daemon_ui_bind = std::env::var("COPPERD_DAEMON_UI_BIND")
@@ -245,7 +264,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
         .map(|controller| controller.specs().len())
         .unwrap_or(0);
 
-    println!(
+    logging::info(format!(
         "Daemon started on {} (user extensions: {}, core extensions: {}, config UI: {}, additional tray icons: {})",
         config.bind_addr,
         config.extensions_dir.display(),
@@ -256,7 +275,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .unwrap_or_else(|| "<not found>".to_string()),
         daemon_ui.url,
         additional_tray_count
-    );
+    ));
 
     let mut last_reload = Instant::now();
     while running.load(Ordering::Relaxed) {
@@ -282,7 +301,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    println!("Daemon stopped");
+    logging::info("Daemon stopped");
     Ok(())
 }
 

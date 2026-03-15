@@ -62,6 +62,8 @@ $binaryPath = Join-Path $repoRoot "target/release/$exeName"
 if (-not (Test-Path $binaryPath)) {
   throw "Release binary not found: $binaryPath"
 }
+$guiExeName = if ($IsWindows) { "copper.exe" } else { "copper" }
+$guiBinaryPath = Join-Path $repoRoot "target/release/$guiExeName"
 
 $resolvedOutputDir = (Resolve-Path -Path $OutputDir -ErrorAction SilentlyContinue)
 if (-not $resolvedOutputDir) {
@@ -78,6 +80,9 @@ if (Test-Path $bundlePath) {
 
 New-Item -ItemType Directory -Path $bundlePath -Force | Out-Null
 Copy-Item -Path $binaryPath -Destination (Join-Path $bundlePath $exeName) -Force
+if (Test-Path $guiBinaryPath) {
+  Copy-Item -Path $guiBinaryPath -Destination (Join-Path $bundlePath $guiExeName) -Force
+}
 Copy-Item -Path (Join-Path $repoRoot "README.md") -Destination (Join-Path $bundlePath "README.md") -Force
 Copy-Item -Path (Join-Path $repoRoot "docs/QUICKSTART.md") -Destination (Join-Path $bundlePath "QUICKSTART.md") -Force
 

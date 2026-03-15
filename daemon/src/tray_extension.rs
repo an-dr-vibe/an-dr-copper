@@ -1,6 +1,7 @@
 use crate::api::windows_display;
 use crate::config_ui::open_url_in_browser;
 use crate::extension::Registry;
+use crate::logging;
 use crate::state_store::{write_json_object, ExtensionStateStore};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -142,7 +143,7 @@ impl WindowsDisplayTrayHandle {
             .name(format!("tray-{}", spec.extension_id))
             .spawn(move || {
                 if let Err(err) = run_windows_display_tray(running, daemon_ui_url, spec) {
-                    eprintln!("windows display tray error: {err}");
+                    logging::error(format!("windows display tray error: {err}"));
                 }
             })
             .map_err(|err| err.to_string())?;
@@ -538,7 +539,7 @@ mod windows_impl {
             let settings_url =
                 format!("{}?section=ext:{}", state.daemon_ui_url, state.extension_id);
             if let Err(err) = open_url_in_browser(&settings_url) {
-                eprintln!("failed to open windows-display settings: {err}");
+                logging::error(format!("failed to open windows-display settings: {err}"));
             }
             return;
         }

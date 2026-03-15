@@ -1,6 +1,12 @@
 use serde_json::Value;
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BridgeRequest {
     action: String,
@@ -246,7 +252,9 @@ fn wide_null(value: &str) -> Vec<u16> {
 
 #[cfg(target_os = "windows")]
 fn run_windows_bridge(request: &BridgeRequest) -> Result<Value, String> {
-    let output = Command::new("powershell.exe")
+    let mut command = Command::new("powershell.exe");
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
         .args([
             "-NoProfile",
             "-NonInteractive",

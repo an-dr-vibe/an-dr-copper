@@ -1,7 +1,9 @@
+use crate::autostart;
 use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
 use crate::descriptor::Descriptor;
 use crate::extension::{core_extensions_dir, load_runtime_registry, runtime_extension_roots};
 use crate::host_extensions::HostExtensionRegistry;
+use crate::logging;
 use crate::state_store::{merge_json_object, ExtensionStateStore};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -44,6 +46,8 @@ impl Default for UiOpenOptions {
 pub enum UiConfigError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    AutoStart(#[from] autostart::AutoStartError),
     #[error(transparent)]
     Extension(#[from] crate::extension::ExtensionError),
     #[error(transparent)]
@@ -178,12 +182,12 @@ pub fn start_daemon_ui_server(
                     ) {
                         Ok(state) => state,
                         Err(err) => {
-                            eprintln!("failed to refresh UI state: {err}");
+                            logging::error(format!("failed to refresh UI state: {err}"));
                             continue;
                         }
                     };
                     if let Err(err) = handle_connection(stream, &state) {
-                        eprintln!("config UI request error: {err}");
+                        logging::error(format!("config UI request error: {err}"));
                     }
                 }
                 Err(err)
@@ -193,7 +197,9 @@ pub fn start_daemon_ui_server(
                     std::thread::sleep(Duration::from_millis(30));
                 }
                 Err(err) => {
-                    eprintln!("config UI server socket error on {thread_url}: {err}");
+                    logging::error(format!(
+                        "config UI server socket error on {thread_url}: {err}"
+                    ));
                     std::thread::sleep(Duration::from_millis(100));
                 }
             }
@@ -327,8 +333,13 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
     } else if request.method == HttpMethod::Post && request.path == "/config/core" {
         match parse_json_object(&request.body) {
             Ok(value) => {
-                merge_json_object(&state.state_store.core_config_path(), &value)?;
-                HttpResponse::ok_json(&serde_json::json!({ "ok": true }))?
+                let merged = merge_json_object(&state.state_store.core_config_path(), &value)?;
+                match apply_core_settings(&merged) {
+                    Ok(()) => HttpResponse::ok_json(&serde_json::json!({ "ok": true }))?,
+                    Err(err) => HttpResponse::bad_request(format!(
+                        "core settings were saved, but applying them failed: {err}"
+                    )),
+                }
             }
             Err(err) => HttpResponse::bad_request(err.to_string()),
         }
@@ -636,6 +647,11 @@ fn build_core_info(state: &UiServerState) -> Value {
         "dataRoot": state.state_store.data_root().display().to_string(),
         "coreDataPath": state.state_store.core_config_path().display().to_string()
     })
+}
+
+fn apply_core_settings(config: &Value) -> Result<(), UiConfigError> {
+    autostart::sync_from_core_config(config)?;
+    Ok(())
 }
 
 fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
@@ -1246,6 +1262,13 @@ fn render_html(state: &UiServerState) -> String {
                 default: '~/.Copper/extensions'
               }},
               {{
+                id: 'autoStart',
+                label: 'Launch Copper at login',
+                description: 'Register or remove Copper autostart for the current user when you save these settings.',
+                type: 'boolean',
+                default: false
+              }},
+              {{
                 id: 'uiTheme',
                 label: 'UI theme',
                 description: 'Name of the preferred host settings theme.',
@@ -1309,6 +1332,7 @@ fn render_html(state: &UiServerState) -> String {
         const coreRows = [
           {{ label: 'Selected extension', value: info.selectedExtensionId || 'Not set' }},
           {{ label: 'Extensions loaded', value: info.extensionsLoaded ?? 0 }},
+          {{ label: 'Launch at login', value: config.autoStart ?? false, format: 'boolean' }},
           {{ label: 'User extensions directory', value: info.userExtensionsDir, format: 'path', mono: true }},
           {{ label: 'Core extensions directory', value: info.coreExtensionsDir || 'Not available', format: 'path', mono: true }},
           {{ label: 'Runtime extension roots', value: (info.runtimeExtensionRoots || []).join(', '), format: 'path', mono: true }}
@@ -1385,6 +1409,7 @@ fn render_html(state: &UiServerState) -> String {
       if (!currentSection.startsWith('ext:')) {{
         const coreDefaults = {{
           userExtensionsDir: '~/.Copper/extensions',
+          autoStart: false,
           uiTheme: 'obsidian',
           startupExtension: model.selectedExtensionId || '',
           extensionPackage: '',
@@ -1760,6 +1785,7 @@ mod tests {
         let html = render_html(&sample_state());
         assert!(html.contains("Settings"));
         assert!(html.contains("Copper"));
+        assert!(html.contains("Launch Copper at login"));
         assert!(html.contains("Desktop Torrent Organizer"));
         assert!(html.contains("Save settings"));
         assert!(html.contains("Status"));

@@ -1,4 +1,5 @@
 use crate::config_ui::open_url_in_browser;
+use crate::logging;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -59,7 +60,7 @@ where
     let ui_url_for_menu = ui_url;
     tray.add_menu_item("Open Extension Config", move || {
         if let Err(err) = open_browser(&ui_url_for_menu) {
-            eprintln!("failed to open config UI in browser: {err}");
+            logging::error(format!("failed to open config UI in browser: {err}"));
         }
     })
     .map_err(TrayError::Init)?;
