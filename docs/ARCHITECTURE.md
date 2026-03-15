@@ -1,6 +1,6 @@
 # Copper Architecture
 
-Version: 0.2.0  
+Version: 0.2.1  
 Last updated: 2026-03-15
 
 ## 1. Overview
