@@ -139,7 +139,9 @@ fn solid_green_icon_rgba(width: usize, height: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{configure_tray, default_icon, TrayController, TrayOps};
+    #[cfg(target_os = "windows")]
+    use super::TrayController;
+    use super::{configure_tray, default_icon, TrayOps};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
