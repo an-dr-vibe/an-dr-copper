@@ -200,32 +200,35 @@ impl HostExtensionHandler for WindowsDisplayHandler {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = config;
-            return Ok(serde_json::json!({}));
+            Ok(serde_json::json!({}))
         }
 
-        let status =
-            windows_display::execute_action("status", config).map_err(std::io::Error::other)?;
-        let presets = status
-            .get("resolution")
-            .and_then(|value| value.get("availableModes"))
-            .and_then(Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| {
-                        Some(format!(
-                            "{}x{}@{}",
-                            value.get("width")?.as_i64()?,
-                            value.get("height")?.as_i64()?,
-                            value.get("refreshRate")?.as_i64()?
-                        ))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        Ok(serde_json::json!({
-            "trayResolutionPresets": presets
-        }))
+        #[cfg(target_os = "windows")]
+        {
+            let status =
+                windows_display::execute_action("status", config).map_err(std::io::Error::other)?;
+            let presets = status
+                .get("resolution")
+                .and_then(|value| value.get("availableModes"))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| {
+                            Some(format!(
+                                "{}x{}@{}",
+                                value.get("width")?.as_i64()?,
+                                value.get("height")?.as_i64()?,
+                                value.get("refreshRate")?.as_i64()?
+                            ))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Ok(serde_json::json!({
+                "trayResolutionPresets": presets
+            }))
+        }
     }
 }
 
