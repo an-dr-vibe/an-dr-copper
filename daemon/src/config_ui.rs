@@ -1,9 +1,10 @@
-use crate::daemon::execute_windows_display_action_in;
+use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
 use crate::descriptor::Descriptor;
 use crate::extension::{core_extensions_dir, load_runtime_registry, runtime_extension_roots};
+use crate::host_extensions::HostExtensionRegistry;
+use crate::state_store::{merge_json_object, ExtensionStateStore};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -15,6 +16,9 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use thiserror::Error;
+
+#[cfg(test)]
+use std::fs;
 
 const DEFAULT_UI_BIND: &str = "127.0.0.1:0";
 pub const DEFAULT_DAEMON_UI_BIND: &str = "127.0.0.1:4766";
@@ -62,6 +66,7 @@ enum HttpMethod {
 struct HttpRequest {
     method: HttpMethod,
     path: String,
+    headers: HashMap<String, String>,
     body: Vec<u8>,
 }
 
@@ -116,6 +121,16 @@ impl HttpResponse {
                 .unwrap_or_else(|_| b"{\"error\":\"not found\"}".to_vec()),
         }
     }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        let payload = serde_json::json!({ "error": message.into() });
+        Self {
+            status: 403,
+            content_type: "application/json; charset=utf-8",
+            body: serde_json::to_vec_pretty(&payload)
+                .unwrap_or_else(|_| b"{\"error\":\"forbidden\"}".to_vec()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +141,10 @@ struct UiServerState {
     user_extensions_dir: PathBuf,
     core_extensions_dir: Option<PathBuf>,
     runtime_extension_roots: Vec<PathBuf>,
-    data_root: PathBuf,
+    state_store: ExtensionStateStore,
+    host_extensions: HostExtensionRegistry,
+    auth_token: String,
+    origin: String,
     allow_close: bool,
 }
 
@@ -139,6 +157,7 @@ pub fn start_daemon_ui_server(
     extensions_dir: PathBuf,
     bind_addr: String,
     running: Arc<AtomicBool>,
+    auth: ControlPlaneAuth,
 ) -> Result<PersistentUiServer, UiConfigError> {
     let listener = TcpListener::bind(&bind_addr)?;
     listener.set_nonblocking(true)?;
@@ -150,7 +169,13 @@ pub fn start_daemon_ui_server(
         while running.load(Ordering::Relaxed) {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    let state = match build_ui_state(&extensions_dir, None, false) {
+                    let state = match build_ui_state(
+                        &extensions_dir,
+                        None,
+                        false,
+                        auth.clone(),
+                        format!("http://{}", local_addr),
+                    ) {
                         Ok(state) => state,
                         Err(err) => {
                             eprintln!("failed to refresh UI state: {err}");
@@ -185,6 +210,8 @@ fn build_ui_state(
     extensions_dir: &Path,
     selected_extension_id: Option<&str>,
     allow_close: bool,
+    auth: ControlPlaneAuth,
+    origin: String,
 ) -> Result<UiServerState, UiConfigError> {
     let registry = load_runtime_registry(extensions_dir)?;
     let mut descriptors = registry
@@ -203,8 +230,6 @@ fn build_ui_state(
             return Err(UiConfigError::ExtensionNotFound(selected.to_string()));
         }
         selected.to_string()
-    } else if extension_ids.contains("desktop-torrent-organizer") {
-        "desktop-torrent-organizer".to_string()
     } else {
         descriptors
             .first()
@@ -212,8 +237,8 @@ fn build_ui_state(
             .unwrap_or_default()
     };
 
-    let data_root = copper_data_root()?;
-    fs::create_dir_all(&data_root)?;
+    let state_store = ExtensionStateStore::for_current_user()?;
+    state_store.ensure_root()?;
 
     Ok(UiServerState {
         selected_extension_id,
@@ -222,7 +247,10 @@ fn build_ui_state(
         user_extensions_dir: extensions_dir.to_path_buf(),
         core_extensions_dir: core_extensions_dir(),
         runtime_extension_roots: runtime_extension_roots(extensions_dir),
-        data_root,
+        state_store,
+        host_extensions: HostExtensionRegistry::new(),
+        auth_token: auth.token().to_string(),
+        origin,
         allow_close,
     })
 }
@@ -232,12 +260,13 @@ pub fn open_extension_config(
     extension_id: &str,
     options: UiOpenOptions,
 ) -> Result<String, UiConfigError> {
-    let state = build_ui_state(extensions_dir, Some(extension_id), true)?;
+    let auth = ControlPlaneAuth::ephemeral();
 
     let listener = TcpListener::bind(&options.bind_addr)?;
     listener.set_nonblocking(true)?;
     let local_addr = listener.local_addr()?;
     let url = format!("http://{}", local_addr);
+    let state = build_ui_state(extensions_dir, Some(extension_id), true, auth, url.clone())?;
 
     if options.open_browser {
         open_in_browser(&url)?;
@@ -273,6 +302,15 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
         }
     };
 
+    let requires_auth = !(request.method == HttpMethod::Get && request.path == "/");
+    if requires_auth && !request_is_authorized(&request, state) {
+        write_response(
+            &mut stream,
+            HttpResponse::forbidden("missing or invalid control-plane token"),
+        )?;
+        return Ok(false);
+    }
+
     let mut stop_after = false;
     let response = if request.method == HttpMethod::Get && request.path == "/" {
         HttpResponse::ok_html(render_html(state))
@@ -282,14 +320,14 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
             "descriptors": state.descriptors,
         }))?
     } else if request.method == HttpMethod::Get && request.path == "/config/core" {
-        HttpResponse::ok_json(&load_saved_config(
-            &core_data_path_for(&state.data_root),
-            Some(&legacy_data_path_for(&state.data_root, "copper-core")),
+        HttpResponse::ok_json(&state.state_store.load_path_or_legacy(
+            &state.state_store.core_config_path(),
+            Some(&state.state_store.legacy_path("copper-core")),
         )?)?
     } else if request.method == HttpMethod::Post && request.path == "/config/core" {
         match parse_json_object(&request.body) {
             Ok(value) => {
-                store_config(&core_data_path_for(&state.data_root), &value)?;
+                merge_json_object(&state.state_store.core_config_path(), &value)?;
                 HttpResponse::ok_json(&serde_json::json!({ "ok": true }))?
             }
             Err(err) => HttpResponse::bad_request(err.to_string()),
@@ -332,15 +370,15 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
         if !state.extension_ids.contains(extension_id) {
             HttpResponse::not_found()
         } else {
-            let path = extension_config_path_for(&state.data_root, extension_id);
+            let path = state.state_store.config_path(extension_id);
             match request.method {
-                HttpMethod::Get => HttpResponse::ok_json(&load_saved_config(
+                HttpMethod::Get => HttpResponse::ok_json(&state.state_store.load_path_or_legacy(
                     &path,
-                    Some(&legacy_data_path_for(&state.data_root, extension_id)),
+                    Some(&state.state_store.legacy_path(extension_id)),
                 )?)?,
                 HttpMethod::Post => match parse_json_object(&request.body) {
                     Ok(value) => {
-                        store_config(&path, &value)?;
+                        merge_json_object(&path, &value)?;
                         HttpResponse::ok_json(&serde_json::json!({ "ok": true }))?
                     }
                     Err(err) => HttpResponse::bad_request(err.to_string()),
@@ -353,6 +391,25 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
 
     write_response(&mut stream, response)?;
     Ok(stop_after)
+}
+
+fn request_is_authorized(request: &HttpRequest, state: &UiServerState) -> bool {
+    let token_matches = request
+        .headers
+        .get(UI_AUTH_HEADER)
+        .map(|value| value == &state.auth_token)
+        .unwrap_or(false);
+    if !token_matches {
+        return false;
+    }
+
+    if request.method == HttpMethod::Post {
+        if let Some(origin) = request.headers.get("origin") {
+            return origin == &state.origin;
+        }
+    }
+
+    true
 }
 
 fn parse_json_object(raw: &[u8]) -> Result<Value, UiConfigError> {
@@ -424,7 +481,12 @@ fn parse_request(stream: TcpStream) -> Result<HttpRequest, UiConfigError> {
         Vec::new()
     };
 
-    Ok(HttpRequest { method, path, body })
+    Ok(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
 }
 
 fn read_chunked_body<R: BufRead>(reader: &mut R) -> Result<Vec<u8>, UiConfigError> {
@@ -495,29 +557,22 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) -> Result<(), 
     Ok(())
 }
 
-fn copper_data_root() -> Result<PathBuf, UiConfigError> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        UiConfigError::Request("cannot resolve home directory for extension storage".to_string())
-    })?;
-    Ok(home.join(".Copper").join("extensions"))
-}
-
+#[cfg(test)]
 fn core_data_path_for(data_root: &Path) -> PathBuf {
     extension_config_path_for(data_root, "copper-core")
 }
 
+#[cfg(test)]
 fn extension_config_path_for(data_root: &Path, extension_id: &str) -> PathBuf {
     data_root.join(extension_id).join("config.json")
 }
 
+#[cfg(test)]
 fn extension_status_path_for(data_root: &Path, extension_id: &str) -> PathBuf {
     data_root.join(extension_id).join("status.json")
 }
 
-fn legacy_data_path_for(data_root: &Path, extension_id: &str) -> PathBuf {
-    data_root.join(extension_id).join("data.json")
-}
-
+#[cfg(test)]
 fn load_config(path: &Path) -> Result<Value, UiConfigError> {
     if !path.exists() {
         return Ok(serde_json::json!({}));
@@ -531,6 +586,7 @@ fn load_config(path: &Path) -> Result<Value, UiConfigError> {
     })
 }
 
+#[cfg(test)]
 fn store_config(path: &Path, value: &Value) -> Result<(), UiConfigError> {
     let mut merged = load_config(path)?;
     if let (Some(target), Some(source)) = (merged.as_object_mut(), value.as_object()) {
@@ -577,21 +633,9 @@ fn build_core_info(state: &UiServerState) -> Value {
             .iter()
             .map(|path| path.display().to_string())
             .collect::<Vec<_>>(),
-        "dataRoot": state.data_root.display().to_string(),
-        "coreDataPath": core_data_path_for(&state.data_root).display().to_string()
+        "dataRoot": state.state_store.data_root().display().to_string(),
+        "coreDataPath": state.state_store.core_config_path().display().to_string()
     })
-}
-
-fn load_saved_config(path: &Path, legacy_path: Option<&Path>) -> Result<Value, UiConfigError> {
-    if path.exists() {
-        return load_config(path);
-    }
-    if let Some(legacy_path) = legacy_path {
-        if legacy_path.exists() {
-            return load_config(legacy_path);
-        }
-    }
-    Ok(serde_json::json!({}))
 }
 
 fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
@@ -630,14 +674,8 @@ fn build_extension_info(
     state: &UiServerState,
     descriptor: &Descriptor,
 ) -> Result<Value, UiConfigError> {
-    let config = load_saved_config(
-        &extension_config_path_for(&state.data_root, &descriptor.id),
-        Some(&legacy_data_path_for(&state.data_root, &descriptor.id)),
-    )?;
-    let status = load_saved_config(
-        &extension_status_path_for(&state.data_root, &descriptor.id),
-        Some(&legacy_data_path_for(&state.data_root, &descriptor.id)),
-    )?;
+    let config = state.state_store.load_config(&descriptor.id)?;
+    let status = state.state_store.load_status(&descriptor.id)?;
     let commands = descriptor
         .actions
         .iter()
@@ -649,11 +687,9 @@ fn build_extension_info(
             })
         })
         .collect::<Vec<_>>();
-    let dynamic_options = if descriptor.id == "windows-display-manager" {
-        build_windows_display_dynamic_options(&config)
-    } else {
-        serde_json::json!({})
-    };
+    let dynamic_options = state
+        .host_extensions
+        .dynamic_options(&descriptor.id, &config)?;
 
     Ok(serde_json::json!({
         "extensionId": descriptor.id,
@@ -689,30 +725,25 @@ fn apply_extension_settings(
         )));
     }
 
-    let mut executions = Vec::new();
-    match descriptor.id.as_str() {
-        "windows-display-manager" => {
-            for action_id in &apply_actions {
-                let execution = execute_windows_display_action_in(&state.data_root, action_id)
-                    .map_err(UiConfigError::Io)?;
-                executions.push(serde_json::json!({
-                    "actionId": action_id,
-                    "result": execution,
-                }));
-            }
-        }
-        _ => {
-            return Err(UiConfigError::Request(format!(
-                "extension '{}' does not support settings apply actions in the host",
-                descriptor.id
-            )));
-        }
+    let executions = state
+        .host_extensions
+        .apply_settings(&descriptor.id, &state.state_store, &apply_actions)?
+        .into_iter()
+        .map(|execution| {
+            serde_json::json!({
+                "actionId": execution.action_id,
+                "result": execution.result,
+            })
+        })
+        .collect::<Vec<_>>();
+    if executions.is_empty() {
+        return Err(UiConfigError::Request(format!(
+            "extension '{}' does not support settings apply actions in the host",
+            descriptor.id
+        )));
     }
 
-    let status = load_saved_config(
-        &extension_status_path_for(&state.data_root, &descriptor.id),
-        Some(&legacy_data_path_for(&state.data_root, &descriptor.id)),
-    )?;
+    let status = state.state_store.load_status(&descriptor.id)?;
     Ok(serde_json::json!({
         "ok": true,
         "extensionId": descriptor.id,
@@ -721,37 +752,12 @@ fn apply_extension_settings(
     }))
 }
 
-fn build_windows_display_dynamic_options(config: &Value) -> Value {
-    let status = crate::api::windows_display::execute_action("status", config).ok();
-    let presets = status
-        .as_ref()
-        .and_then(|value| value.get("resolution"))
-        .and_then(|value| value.get("availableModes"))
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(|value| {
-                    Some(format!(
-                        "{}x{}@{}",
-                        value.get("width")?.as_i64()?,
-                        value.get("height")?.as_i64()?,
-                        value.get("refreshRate")?.as_i64()?
-                    ))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    serde_json::json!({
-        "trayResolutionPresets": presets
-    })
-}
-
 fn render_html(state: &UiServerState) -> String {
     let model = serde_json::json!({
         "selectedExtensionId": state.selected_extension_id,
         "descriptors": state.descriptors,
         "allowClose": state.allow_close,
+        "authToken": state.auth_token,
     });
     let model_inline = serde_json::to_string(&model).unwrap_or_else(|_| "{}".to_string());
 
@@ -1150,7 +1156,9 @@ fn render_html(state: &UiServerState) -> String {
     }}
 
     async function loadJson(url) {{
-      const res = await fetch(url);
+      const res = await fetch(url, {{
+        headers: {{ '{UI_AUTH_HEADER}': model.authToken }}
+      }});
       if (!res.ok) {{
         throw new Error((await res.text()) || ('HTTP ' + res.status));
       }}
@@ -1360,7 +1368,10 @@ fn render_html(state: &UiServerState) -> String {
           : '/config/extension/' + encodeURIComponent(currentSection.slice(4));
         const res = await fetch(target, {{
           method: 'POST',
-          headers: {{ 'content-type': 'application/json' }},
+          headers: {{
+            'content-type': 'application/json',
+            '{UI_AUTH_HEADER}': model.authToken
+          }},
           body: JSON.stringify(payload)
         }});
         if (!res.ok) {{
@@ -1369,7 +1380,10 @@ fn render_html(state: &UiServerState) -> String {
         if (descriptor && applyActions.length > 0) {{
           const applyRes = await fetch(
             '/apply/extension/' + encodeURIComponent(descriptor.id),
-            {{ method: 'POST' }}
+            {{
+              method: 'POST',
+              headers: {{ '{UI_AUTH_HEADER}': model.authToken }}
+            }}
           );
           if (!applyRes.ok) {{
             throw new Error('settings were saved, but apply failed: ' + await applyRes.text());
@@ -1388,7 +1402,10 @@ fn render_html(state: &UiServerState) -> String {
     if (closeBtn) {{
       closeBtn.addEventListener('click', async () => {{
         try {{
-          await fetch('/close', {{ method: 'POST' }});
+          await fetch('/close', {{
+            method: 'POST',
+            headers: {{ '{UI_AUTH_HEADER}': model.authToken }}
+          }});
           setStatus('UI server closed. You can close this tab.');
         }} catch (err) {{
           setStatus('Close failed: ' + err);
@@ -1414,10 +1431,13 @@ mod tests {
         read_chunked_body, render_html, start_daemon_ui_server, store_config, write_response,
         HttpMethod, HttpResponse, UiConfigError, UiOpenOptions,
     };
+    use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
     use crate::descriptor::{
         Action, Descriptor, InputField, InputType, SettingsDescriptor, SettingsSection,
         StatusDescriptor, StatusField, StatusFieldFormat, UiDescriptor,
     };
+    use crate::host_extensions::HostExtensionRegistry;
+    use crate::state_store::ExtensionStateStore;
     use std::collections::HashSet;
     use std::fs;
     use std::io::{BufReader, Cursor, Read};
@@ -1504,9 +1524,20 @@ mod tests {
                 PathBuf::from("C:/tmp/copper-core"),
                 PathBuf::from("C:/tmp/copper-user"),
             ],
-            data_root: PathBuf::from("C:/tmp/copper-user"),
+            state_store: ExtensionStateStore::new(PathBuf::from("C:/tmp/.Copper/extensions")),
+            host_extensions: HostExtensionRegistry::new(),
+            auth_token: "test-auth-token".to_string(),
+            origin: "http://127.0.0.1:4766".to_string(),
             allow_close: true,
         }
+    }
+
+    fn test_origin() -> String {
+        "http://127.0.0.1:4766".to_string()
+    }
+
+    fn test_auth() -> ControlPlaneAuth {
+        ControlPlaneAuth::ephemeral()
     }
 
     #[test]
@@ -1561,8 +1592,14 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let descriptor = sample_descriptor();
         write_extension(temp.path(), &descriptor);
-        let err =
-            build_ui_state(temp.path(), Some("missing-extension"), true).expect_err("must fail");
+        let err = build_ui_state(
+            temp.path(),
+            Some("missing-extension"),
+            true,
+            test_auth(),
+            test_origin(),
+        )
+        .expect_err("must fail");
         match err {
             UiConfigError::ExtensionNotFound(id) => assert_eq!(id, "missing-extension"),
             other => panic!("unexpected error: {other}"),
@@ -1576,20 +1613,31 @@ mod tests {
         descriptor.id = "alpha-ext".to_string();
         descriptor.name = "Alpha Extension".to_string();
         write_extension(temp.path(), &descriptor);
-        let state = build_ui_state(temp.path(), None, true).expect("build state");
+        let state = build_ui_state(temp.path(), None, true, test_auth(), test_origin())
+            .expect("build state");
         assert!(state.extension_ids.contains(&state.selected_extension_id));
-        if state.extension_ids.contains("desktop-torrent-organizer") {
-            assert_eq!(state.selected_extension_id, "desktop-torrent-organizer");
-        } else {
-            assert_eq!(state.selected_extension_id, "alpha-ext");
-        }
+        assert_eq!(state.selected_extension_id, "alpha-ext");
     }
 
     fn http_request(addr: &str, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+        http_request_with_headers(addr, method, path, &[], body)
+    }
+
+    fn http_request_with_headers(
+        addr: &str,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<&str>,
+    ) -> (u16, String) {
         let payload = body.unwrap_or("");
         let mut stream = TcpStream::connect(addr).expect("connect");
+        let header_block = headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect::<String>();
         let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{header_block}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
             payload.len(),
             payload
         );
@@ -1607,6 +1655,14 @@ mod tests {
             .expect("status code");
         let body = raw.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
         (status, body)
+    }
+
+    fn extract_auth_token(html: &str) -> String {
+        html.split("\"authToken\":\"")
+            .nth(1)
+            .and_then(|tail| tail.split('"').next())
+            .map(str::to_string)
+            .expect("auth token in html")
     }
 
     #[test]
@@ -1913,84 +1969,141 @@ mod tests {
         write_extension(temp.path(), &descriptor);
 
         let running = Arc::new(AtomicBool::new(true));
+        let auth = ControlPlaneAuth::ephemeral();
+        let token = auth.token().to_string();
         let server = start_daemon_ui_server(
             temp.path().to_path_buf(),
             "127.0.0.1:0".to_string(),
             Arc::clone(&running),
+            auth,
         )
         .expect("start daemon ui");
         let addr = parse_http_url(&server.url);
+        let auth_headers = [(UI_AUTH_HEADER, token.as_str())];
 
         let (status_root, body_root) = http_request(&addr, "GET", "/", None);
         assert_eq!(status_root, 200);
         assert!(body_root.contains("Copper Settings"));
 
-        let (status_descriptor, body_descriptor) = http_request(&addr, "GET", "/descriptor", None);
+        let (status_descriptor, body_descriptor) =
+            http_request_with_headers(&addr, "GET", "/descriptor", &auth_headers, None);
         assert_eq!(status_descriptor, 200);
         assert!(body_descriptor.contains("desktop-torrent-organizer"));
 
-        let (status_core_get, body_core_get) = http_request(&addr, "GET", "/config/core", None);
+        let (status_core_get, body_core_get) =
+            http_request_with_headers(&addr, "GET", "/config/core", &auth_headers, None);
         assert_eq!(status_core_get, 200);
         assert!(body_core_get.contains("{"));
 
-        let (status_core_post, body_core_post) = http_request(
+        let (status_core_post, body_core_post) = http_request_with_headers(
             &addr,
             "POST",
             "/config/core",
+            &auth_headers,
             Some(r#"{"uiTheme":"obsidian"}"#),
         );
         assert_eq!(status_core_post, 200);
         assert!(body_core_post.contains("\"ok\": true"));
 
-        let (status_core_bad, body_core_bad) =
-            http_request(&addr, "POST", "/config/core", Some(r#"["not-object"]"#));
+        let (status_core_bad, body_core_bad) = http_request_with_headers(
+            &addr,
+            "POST",
+            "/config/core",
+            &auth_headers,
+            Some(r#"["not-object"]"#),
+        );
         assert_eq!(status_core_bad, 400);
         assert!(body_core_bad.contains("JSON object"));
 
-        let (status_info_core, body_info_core) = http_request(&addr, "GET", "/info/core", None);
+        let (status_info_core, body_info_core) =
+            http_request_with_headers(&addr, "GET", "/info/core", &auth_headers, None);
         assert_eq!(status_info_core, 200);
         assert!(body_info_core.contains("runtimeExtensionRoots"));
 
         let ext_path = "/config/extension/desktop-torrent-organizer";
-        let (status_ext_get, _) = http_request(&addr, "GET", ext_path, None);
+        let (status_ext_get, _) =
+            http_request_with_headers(&addr, "GET", ext_path, &auth_headers, None);
         assert_eq!(status_ext_get, 200);
 
-        let (status_ext_post, body_ext_post) = http_request(
+        let (status_ext_post, body_ext_post) = http_request_with_headers(
             &addr,
             "POST",
             ext_path,
+            &auth_headers,
             Some(r#"{"desktopFolder":"D:/Desktop"}"#),
         );
         assert_eq!(status_ext_post, 200);
         assert!(body_ext_post.contains("\"ok\": true"));
 
-        let (status_info_ext, body_info_ext) = http_request(
+        let (status_info_ext, body_info_ext) = http_request_with_headers(
             &addr,
             "GET",
             "/info/extension/desktop-torrent-organizer",
+            &auth_headers,
             None,
         );
         assert_eq!(status_info_ext, 200);
         assert!(body_info_ext.contains("\"commands\""));
 
-        let (status_missing_ext_get, _) =
-            http_request(&addr, "GET", "/config/extension/missing", None);
+        let (status_missing_ext_get, _) = http_request_with_headers(
+            &addr,
+            "GET",
+            "/config/extension/missing",
+            &auth_headers,
+            None,
+        );
         assert_eq!(status_missing_ext_get, 404);
 
-        let (status_missing_ext_post, _) = http_request(
+        let (status_missing_ext_post, _) = http_request_with_headers(
             &addr,
             "POST",
             "/config/extension/missing",
+            &auth_headers,
             Some(r#"{"x":1}"#),
         );
         assert_eq!(status_missing_ext_post, 404);
 
-        let (status_close, body_close) = http_request(&addr, "POST", "/close", Some("{}"));
+        let (status_close, body_close) =
+            http_request_with_headers(&addr, "POST", "/close", &auth_headers, Some("{}"));
         assert_eq!(status_close, 400);
         assert!(body_close.contains("close is disabled"));
 
-        let (status_not_found, _) = http_request(&addr, "GET", "/does-not-exist", None);
+        let (status_not_found, _) =
+            http_request_with_headers(&addr, "GET", "/does-not-exist", &auth_headers, None);
         assert_eq!(status_not_found, 404);
+
+        running.store(false, Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(80));
+    }
+
+    #[test]
+    fn daemon_ui_server_rejects_unauthorized_routes() {
+        let temp = tempdir().expect("tempdir");
+        let descriptor = sample_descriptor();
+        write_extension(temp.path(), &descriptor);
+
+        let running = Arc::new(AtomicBool::new(true));
+        let server = start_daemon_ui_server(
+            temp.path().to_path_buf(),
+            "127.0.0.1:0".to_string(),
+            Arc::clone(&running),
+            ControlPlaneAuth::ephemeral(),
+        )
+        .expect("start daemon ui");
+        let addr = parse_http_url(&server.url);
+
+        let (status_descriptor, body_descriptor) = http_request(&addr, "GET", "/descriptor", None);
+        assert_eq!(status_descriptor, 403);
+        assert!(body_descriptor.contains("control-plane token"));
+
+        let (status_post, body_post) = http_request(
+            &addr,
+            "POST",
+            "/config/core",
+            Some(r#"{"uiTheme":"obsidian"}"#),
+        );
+        assert_eq!(status_post, 403);
+        assert!(body_post.contains("control-plane token"));
 
         running.store(false, Ordering::Relaxed);
         std::thread::sleep(Duration::from_millis(80));
@@ -2031,7 +2144,11 @@ mod tests {
         }
         assert!(up, "config UI should accept connections");
 
-        let (status_close, _) = http_request(&bind, "POST", "/close", Some("{}"));
+        let (_, root_body) = http_request(&bind, "GET", "/", None);
+        let token = extract_auth_token(&root_body);
+        let auth_headers = [(UI_AUTH_HEADER, token.as_str())];
+        let (status_close, _) =
+            http_request_with_headers(&bind, "POST", "/close", &auth_headers, Some("{}"));
         assert_eq!(status_close, 204);
 
         let url = handle

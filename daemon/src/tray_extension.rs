@@ -1,8 +1,8 @@
 use crate::api::windows_display;
 use crate::config_ui::open_url_in_browser;
 use crate::extension::Registry;
+use crate::state_store::{write_json_object, ExtensionStateStore};
 use serde_json::Value;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -10,8 +10,6 @@ use std::sync::{
 };
 use std::thread::JoinHandle;
 use thiserror::Error;
-
-const WINDOWS_DISPLAY_TRAY_PROVIDER: &str = "windows-display";
 
 #[derive(Debug, Clone)]
 pub struct AdditionalTrayIconSpec {
@@ -33,6 +31,16 @@ pub struct AdditionalTrayController {
     _handles: Vec<WindowsDisplayTrayHandle>,
 }
 
+trait TrayProviderFactory {
+    #[cfg(windows)]
+    fn start(
+        &self,
+        running: Arc<AtomicBool>,
+        daemon_ui_url: String,
+        spec: AdditionalTrayIconSpec,
+    ) -> Result<WindowsDisplayTrayHandle, String>;
+}
+
 impl AdditionalTrayController {
     pub fn initialize(
         running: Arc<AtomicBool>,
@@ -45,22 +53,17 @@ impl AdditionalTrayController {
 
         #[cfg(windows)]
         for spec in &specs {
-            match spec.provider.as_str() {
-                WINDOWS_DISPLAY_TRAY_PROVIDER => handles.push(
-                    WindowsDisplayTrayHandle::start(
-                        Arc::clone(&running),
-                        daemon_ui_url.clone(),
-                        spec.clone(),
-                    )
+            let provider = provider_factory(&spec.provider).ok_or_else(|| {
+                AdditionalTrayError::Init(format!(
+                    "unsupported tray provider '{}' for extension '{}'",
+                    spec.provider, spec.extension_id
+                ))
+            })?;
+            handles.push(
+                provider
+                    .start(Arc::clone(&running), daemon_ui_url.clone(), spec.clone())
                     .map_err(AdditionalTrayError::Init)?,
-                ),
-                other => {
-                    return Err(AdditionalTrayError::Init(format!(
-                        "unsupported tray provider '{other}' for extension '{}'",
-                        spec.extension_id
-                    )));
-                }
-            }
+            );
         }
 
         Ok(Self {
@@ -73,6 +76,36 @@ impl AdditionalTrayController {
     pub fn specs(&self) -> &[AdditionalTrayIconSpec] {
         &self.specs
     }
+}
+
+struct WindowsDisplayTrayProvider;
+
+#[cfg(windows)]
+impl TrayProviderFactory for WindowsDisplayTrayProvider {
+    fn start(
+        &self,
+        running: Arc<AtomicBool>,
+        daemon_ui_url: String,
+        spec: AdditionalTrayIconSpec,
+    ) -> Result<WindowsDisplayTrayHandle, String> {
+        WindowsDisplayTrayHandle::start(running, daemon_ui_url, spec)
+    }
+}
+
+#[cfg(windows)]
+fn provider_factory(provider: &str) -> Option<&'static dyn TrayProviderFactory> {
+    match provider {
+        "windows-display" => Some(&WINDOWS_DISPLAY_TRAY_PROVIDER),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+static WINDOWS_DISPLAY_TRAY_PROVIDER: WindowsDisplayTrayProvider = WindowsDisplayTrayProvider;
+
+#[cfg(not(windows))]
+fn provider_factory(_provider: &str) -> Option<&'static dyn TrayProviderFactory> {
+    None
 }
 
 fn collect_specs(registry: &Registry) -> Vec<AdditionalTrayIconSpec> {
@@ -202,6 +235,7 @@ mod windows_impl {
         config_path: PathBuf,
         status_path: PathBuf,
         legacy_path: PathBuf,
+        state_store: ExtensionStateStore,
         status: DisplayStatus,
         resolution_presets: Vec<ResolutionPreset>,
         icon_pinned_dark: HICON,
@@ -238,6 +272,7 @@ mod windows_impl {
         let config_path = extension_config_path(&spec.extension_id)?;
         let status_path = extension_status_path(&spec.extension_id)?;
         let legacy_path = extension_legacy_data_path(&spec.extension_id)?;
+        let state_store = ExtensionStateStore::for_current_user().map_err(|err| err.to_string())?;
         let mut state = WindowsDisplayTrayState {
             hwnd: ptr::null_mut(),
             extension_id: spec.extension_id.clone(),
@@ -246,6 +281,7 @@ mod windows_impl {
             config_path,
             status_path,
             legacy_path,
+            state_store,
             status: DisplayStatus::default(),
             resolution_presets: DisplayStatus::default().available_resolutions,
             icon_pinned_dark: create_pin_icon(true, true).unwrap_or_else(default_icon),
@@ -548,13 +584,19 @@ mod windows_impl {
         action_id: &str,
         overrides: Value,
     ) -> Result<(), String> {
-        let mut config = load_saved_data_file(&state.config_path, Some(&state.legacy_path));
+        let mut config = state
+            .state_store
+            .load_path_or_legacy(&state.config_path, Some(&state.legacy_path))
+            .map_err(|err| err.to_string())?;
         merge_object(&mut config, &overrides);
-        save_data_file(&state.config_path, &config);
+        write_json_object(&state.config_path, &config).map_err(|err| err.to_string())?;
         let result = windows_display::execute_action(action_id, &config)?;
-        let mut status = load_saved_data_file(&state.status_path, Some(&state.legacy_path));
+        let mut status = state
+            .state_store
+            .load_path_or_legacy(&state.status_path, Some(&state.legacy_path))
+            .map_err(|err| err.to_string())?;
         update_status_snapshot(&mut status, action_id, &result, true, None);
-        save_data_file(&state.status_path, &status);
+        write_json_object(&state.status_path, &status).map_err(|err| err.to_string())?;
         state.status = parse_status(&result);
         state.resolution_presets = resolve_resolution_presets(&config, &state.status);
         if action_id == "set-scale"
@@ -576,13 +618,19 @@ mod windows_impl {
     }
 
     fn refresh_status(state: &mut WindowsDisplayTrayState) -> Result<(), String> {
-        let config = load_saved_data_file(&state.config_path, Some(&state.legacy_path));
+        let config = state
+            .state_store
+            .load_path_or_legacy(&state.config_path, Some(&state.legacy_path))
+            .map_err(|err| err.to_string())?;
         let result = windows_display::execute_action("status", &config)?;
         state.status = parse_status(&result);
         state.resolution_presets = resolve_resolution_presets(&config, &state.status);
-        let mut status = load_saved_data_file(&state.status_path, Some(&state.legacy_path));
+        let mut status = state
+            .state_store
+            .load_path_or_legacy(&state.status_path, Some(&state.legacy_path))
+            .map_err(|err| err.to_string())?;
         update_status_snapshot(&mut status, "status", &result, true, None);
-        save_data_file(&state.status_path, &status);
+        write_json_object(&state.status_path, &status).map_err(|err| err.to_string())?;
         Ok(())
     }
 
@@ -707,35 +755,6 @@ mod windows_impl {
             return status.available_resolutions.clone();
         }
         default_resolution_presets()
-    }
-
-    fn load_data_file(path: &PathBuf) -> Value {
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-            .filter(Value::is_object)
-            .unwrap_or_else(|| serde_json::json!({}))
-    }
-
-    fn load_saved_data_file(path: &PathBuf, legacy_path: Option<&PathBuf>) -> Value {
-        if path.exists() {
-            return load_data_file(path);
-        }
-        if let Some(legacy_path) = legacy_path {
-            if legacy_path.exists() {
-                return load_data_file(legacy_path);
-            }
-        }
-        serde_json::json!({})
-    }
-
-    fn save_data_file(path: &PathBuf, value: &Value) {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if let Ok(raw) = serde_json::to_string_pretty(value) {
-            let _ = fs::write(path, raw);
-        }
     }
 
     fn merge_object(target: &mut Value, source: &Value) {

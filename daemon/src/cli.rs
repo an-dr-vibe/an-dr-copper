@@ -2,15 +2,22 @@ use crate::config_ui::{self, UiOpenOptions};
 use crate::daemon::{
     self as daemon_runtime, DaemonConfig, IpcRequest, DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS,
 };
-use crate::descriptor::{Descriptor, Permission};
+use crate::descriptor::Descriptor;
+use crate::execution::ExecutionEngine;
 use crate::extension::{default_extensions_dir, load_runtime_registry};
+use crate::host_extensions::HostExtensionRegistry;
+use crate::runtime::DryRunRuntime;
 use crate::schema::parse_and_validate;
+use crate::state_store::ExtensionStateStore;
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use thiserror::Error;
+
+#[cfg(test)]
+use crate::descriptor::Permission;
 
 #[derive(Debug, Error)]
 pub enum CliError {
@@ -334,37 +341,36 @@ fn cmd_trigger(dir: &Path, id: &str, action: Option<&str>) -> Result<(), CliErro
     let ext = registry
         .get(id)
         .ok_or_else(|| CliError::Message(format!("extension '{}' not found", id)))?;
-    let selected_action = if let Some(action_id) = action {
-        ext.descriptor
-            .actions
-            .iter()
-            .find(|a| a.id == action_id)
-            .ok_or_else(|| {
-                CliError::Message(format!(
-                    "action '{}' not found in extension '{}'",
-                    action_id, id
-                ))
-            })?
-    } else {
-        ext.descriptor.actions.first().ok_or_else(|| {
-            CliError::Message(format!("extension '{}' contains no executable actions", id))
-        })?
-    };
+    let runtime = DryRunRuntime;
+    let store = ExtensionStateStore::for_current_user()?;
+    let host_extensions = HostExtensionRegistry::new();
+    let engine = ExecutionEngine::new(&runtime, &host_extensions, &store);
+    let prepared = engine
+        .prepare_trigger(ext, action)
+        .map_err(CliError::Message)?;
 
     println!(
         "Trigger dry-run: extension='{}' action='{}'",
-        ext.descriptor.id, selected_action.id
+        prepared.extension_id, prepared.action_id
     );
-    println!(
-        "Permissions: {}",
-        format_permissions(&ext.descriptor.permissions)
-    );
+    println!("Permissions: {}", prepared.permissions.join(","));
     println!("Script:");
-    println!("{}", selected_action.script);
-    if let Some(count) =
-        daemon_runtime::maybe_increment_session_counter(&ext.descriptor.id, &selected_action.id)?
+    println!("{}", prepared.script);
+    if let Some(count) = prepared
+        .extras
+        .get("sessionCount")
+        .and_then(|value| value.as_u64())
     {
         println!("Session counter: {count}");
+    }
+    if let Some(host_execution) = prepared.extras.get("hostExecution") {
+        println!("Host execution:");
+        println!(
+            "{}",
+            serde_json::to_string_pretty(host_execution).map_err(|err| CliError::Message(
+                format!("failed to render host execution: {err}")
+            ))?
+        );
     }
     Ok(())
 }
@@ -428,6 +434,7 @@ fn print_ipc_response(response: daemon_runtime::IpcResponse) -> Result<(), CliEr
     Ok(())
 }
 
+#[cfg(test)]
 fn format_permissions(perms: &[Permission]) -> String {
     if perms.is_empty() {
         return "none".to_string();

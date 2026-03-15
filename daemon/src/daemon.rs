@@ -1,13 +1,16 @@
 use crate::config_ui::{start_daemon_ui_server, DEFAULT_DAEMON_UI_BIND};
-use crate::descriptor::Permission;
+use crate::control_plane::ControlPlaneAuth;
+use crate::execution::{permissions_as_strings, ExecutionEngine};
 use crate::extension::{
     core_extensions_dir, default_extensions_dir, load_runtime_registry, Registry,
 };
+use crate::host_extensions::HostExtensionRegistry;
+use crate::runtime::DryRunRuntime;
+use crate::state_store::ExtensionStateStore;
 use crate::tray::TrayController;
 use crate::tray_extension::AdditionalTrayController;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsString;
-use std::fs;
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -15,16 +18,24 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use thiserror::Error;
+
+#[cfg(test)]
+use crate::host_extensions::{
+    DESKTOP_TORRENT_ORGANIZER_ID, SESSION_COUNTER_ID, WINDOWS_DISPLAY_MANAGER_ID,
+};
+#[cfg(test)]
+use std::ffi::OsString;
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:4765";
 pub const DEFAULT_RELOAD_INTERVAL_MS: u64 = 3_000;
-const DESKTOP_TORRENT_ORGANIZER_ID: &str = "desktop-torrent-organizer";
-const SESSION_COUNTER_ID: &str = "session-counter";
+#[cfg(test)]
 const SESSION_COUNTER_INCREMENT_ACTION: &str = "increment";
-const WINDOWS_DISPLAY_MANAGER_ID: &str = "windows-display-manager";
-
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     pub extensions_dir: PathBuf,
@@ -100,9 +111,13 @@ struct DaemonState {
     user_extensions_dir: PathBuf,
     core_extensions_dir: Option<PathBuf>,
     registry: Registry,
-    last_torrent_poll: Option<Instant>,
+    auth_token: Option<String>,
+    state_store: ExtensionStateStore,
+    host_extensions: HostExtensionRegistry,
+    last_background_poll: BTreeMap<String, Instant>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 struct TorrentMonitorConfig {
     enabled: bool,
@@ -111,6 +126,7 @@ struct TorrentMonitorConfig {
     torrents_folder: PathBuf,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 struct TorrentMoveReport {
     found: u64,
@@ -125,7 +141,10 @@ impl DaemonState {
             user_extensions_dir: user_extensions_dir.to_path_buf(),
             core_extensions_dir: core_extensions_dir(),
             registry,
-            last_torrent_poll: None,
+            auth_token: None,
+            state_store: ExtensionStateStore::for_current_user()?,
+            host_extensions: HostExtensionRegistry::new(),
+            last_background_poll: BTreeMap::new(),
         })
     }
 
@@ -153,26 +172,22 @@ impl DaemonState {
     }
 
     fn tick_background_tasks(&mut self) {
-        if let Err(err) = self.tick_torrent_monitor() {
-            eprintln!("desktop torrent monitor error: {err}");
-        }
-    }
-
-    fn tick_torrent_monitor(&mut self) -> Result<(), String> {
-        let config = load_torrent_monitor_config().map_err(|err| err.to_string())?;
-        if !config.enabled {
-            return Ok(());
-        }
-        if let Some(last) = self.last_torrent_poll {
-            if last.elapsed() < config.poll_interval {
-                return Ok(());
+        for extension_id in self.host_extensions.background_extension_ids() {
+            let last_run = self.last_background_poll.get(*extension_id).copied();
+            match self
+                .host_extensions
+                .tick_background(extension_id, &self.state_store, last_run)
+            {
+                Ok(true) => {
+                    self.last_background_poll
+                        .insert((*extension_id).to_string(), Instant::now());
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    eprintln!("background task error for {extension_id}: {err}");
+                }
             }
         }
-        self.last_torrent_poll = Some(Instant::now());
-
-        let report = run_torrent_move(&config).map_err(|err| err.to_string())?;
-        write_desktop_torrent_status(&config, report).map_err(|err| err.to_string())?;
-        Ok(())
     }
 }
 
@@ -187,12 +202,15 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     .map_err(|e| DaemonError::SignalHandler(e.to_string()))?;
 
     let mut state = DaemonState::load(&config.extensions_dir)?;
+    let auth = ControlPlaneAuth::ensure_persisted()?;
+    state.auth_token = Some(auth.token().to_string());
     let daemon_ui_bind = std::env::var("COPPERD_DAEMON_UI_BIND")
         .unwrap_or_else(|_| DEFAULT_DAEMON_UI_BIND.to_string());
     let daemon_ui = start_daemon_ui_server(
         config.extensions_dir.clone(),
         daemon_ui_bind,
         Arc::clone(&running),
+        auth.clone(),
     )
     .map_err(|err| DaemonError::Protocol(format!("failed to start daemon UI server: {err}")))?;
     let disable_tray = std::env::var("COPPERD_DISABLE_TRAY")
@@ -278,7 +296,14 @@ fn is_would_block_daemon(err: &DaemonError) -> bool {
 
 pub fn send_request(bind_addr: &str, request: &IpcRequest) -> Result<IpcResponse, DaemonError> {
     let mut stream = TcpStream::connect(bind_addr)?;
-    let payload = format!("{}\n", serde_json::to_string(request)?);
+    let auth_token = ControlPlaneAuth::load_persisted_token()?;
+    let payload = format!(
+        "{}\n",
+        serde_json::to_string(&AuthenticatedIpcRequestRef {
+            request,
+            token: auth_token.as_deref(),
+        })?
+    );
     stream.write_all(payload.as_bytes())?;
     stream.flush()?;
 
@@ -293,6 +318,22 @@ pub fn send_request(bind_addr: &str, request: &IpcRequest) -> Result<IpcResponse
 
     let response: IpcResponse = serde_json::from_str(response_line.trim())?;
     Ok(response)
+}
+
+#[derive(Debug, Serialize)]
+struct AuthenticatedIpcRequestRef<'a> {
+    #[serde(flatten)]
+    request: &'a IpcRequest,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "token")]
+    token: Option<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthenticatedIpcRequest {
+    #[serde(flatten)]
+    request: IpcRequest,
+    #[serde(default, rename = "token")]
+    token: Option<String>,
 }
 
 fn handle_connection(
@@ -313,8 +354,18 @@ fn handle_connection(
         }
     }
 
-    let response = match serde_json::from_str::<IpcRequest>(request_line.trim()) {
-        Ok(request) => handle_request(state, request, running),
+    let response = match serde_json::from_str::<AuthenticatedIpcRequest>(request_line.trim()) {
+        Ok(request) => {
+            if let Some(expected) = state.auth_token.as_deref() {
+                if request.token.as_deref() != Some(expected) {
+                    IpcResponse::err("unauthorized request")
+                } else {
+                    handle_request(state, request.request, running)
+                }
+            } else {
+                handle_request(state, request.request, running)
+            }
+        }
         Err(err) => IpcResponse::err(format!("invalid request: {err}")),
     };
 
@@ -407,56 +458,13 @@ fn trigger_payload(
         .registry
         .get(id)
         .ok_or_else(|| format!("extension '{id}' not found"))?;
-    let selected_action = if let Some(action_id) = action {
-        ext.descriptor
-            .actions
-            .iter()
-            .find(|candidate| candidate.id == action_id)
-            .ok_or_else(|| format!("action '{action_id}' not found in extension '{id}'"))?
-    } else {
-        ext.descriptor
-            .actions
-            .first()
-            .ok_or_else(|| format!("extension '{id}' contains no executable actions"))?
-    };
-
-    let mut payload = serde_json::json!({
-        "extensionId": ext.descriptor.id,
-        "actionId": selected_action.id,
-        "permissions": permissions_as_strings(&ext.descriptor.permissions),
-        "script": selected_action.script,
-        "mainTsPath": ext.main_ts_path.display().to_string(),
-    });
-
-    if let Some(count) = maybe_increment_session_counter(&ext.descriptor.id, &selected_action.id)
-        .map_err(|err| format!("failed to update session counter status: {err}"))?
-    {
-        payload["sessionCount"] = serde_json::json!(count);
-    }
-
-    if let Some(execution) =
-        maybe_execute_windows_display_action(&ext.descriptor.id, &selected_action.id)
-            .map_err(|err| format!("failed to execute windows display action: {err}"))?
-    {
-        payload["hostExecution"] = execution;
-    }
-
-    Ok(payload)
+    let runtime = DryRunRuntime;
+    let engine = ExecutionEngine::new(&runtime, &state.host_extensions, &state.state_store);
+    let prepared = engine.prepare_trigger(ext, action)?;
+    serde_json::to_value(prepared).map_err(|err| err.to_string())
 }
 
-fn permissions_as_strings(permissions: &[Permission]) -> Vec<&'static str> {
-    permissions
-        .iter()
-        .map(|permission| match permission {
-            Permission::Fs => "fs",
-            Permission::Shell => "shell",
-            Permission::Network => "network",
-            Permission::Store => "store",
-            Permission::Ui => "ui",
-        })
-        .collect()
-}
-
+#[cfg(test)]
 pub fn maybe_increment_session_counter(
     extension_id: &str,
     action_id: &str,
@@ -465,6 +473,7 @@ pub fn maybe_increment_session_counter(
     maybe_increment_session_counter_in(&data_root, extension_id, action_id)
 }
 
+#[cfg(test)]
 fn maybe_increment_session_counter_in(
     data_root: &Path,
     extension_id: &str,
@@ -487,36 +496,7 @@ fn maybe_increment_session_counter_in(
     Ok(Some(next))
 }
 
-fn maybe_execute_windows_display_action(
-    extension_id: &str,
-    action_id: &str,
-) -> Result<Option<serde_json::Value>, std::io::Error> {
-    if extension_id != WINDOWS_DISPLAY_MANAGER_ID {
-        return Ok(None);
-    }
-
-    let data_root = copper_data_root()?;
-    maybe_execute_windows_display_action_in(&data_root, action_id)
-}
-
-fn maybe_execute_windows_display_action_in(
-    data_root: &Path,
-    action_id: &str,
-) -> Result<Option<serde_json::Value>, std::io::Error> {
-    execute_windows_display_action_in(data_root, action_id).map(Some)
-}
-
-pub(crate) fn execute_windows_display_action_in(
-    data_root: &Path,
-    action_id: &str,
-) -> Result<serde_json::Value, std::io::Error> {
-    execute_windows_display_action_with_runner_in(
-        data_root,
-        action_id,
-        crate::api::windows_display::execute_action,
-    )
-}
-
+#[cfg(test)]
 fn execute_windows_display_action_with_runner_in<F>(
     data_root: &Path,
     action_id: &str,
@@ -580,11 +560,13 @@ where
     Ok(execution)
 }
 
+#[cfg(test)]
 fn load_torrent_monitor_config() -> Result<TorrentMonitorConfig, std::io::Error> {
     let data_root = copper_data_root()?;
     load_torrent_monitor_config_from(&data_root)
 }
 
+#[cfg(test)]
 fn load_torrent_monitor_config_from(
     data_root: &Path,
 ) -> Result<TorrentMonitorConfig, std::io::Error> {
@@ -620,6 +602,7 @@ fn load_torrent_monitor_config_from(
     })
 }
 
+#[cfg(test)]
 fn run_torrent_move(config: &TorrentMonitorConfig) -> Result<TorrentMoveReport, std::io::Error> {
     fs::create_dir_all(&config.torrents_folder)?;
 
@@ -663,6 +646,7 @@ fn run_torrent_move(config: &TorrentMonitorConfig) -> Result<TorrentMoveReport, 
     Ok(report)
 }
 
+#[cfg(test)]
 fn next_available_destination(target_dir: &Path, file_name: OsString) -> PathBuf {
     let original = target_dir.join(&file_name);
     if !original.exists() {
@@ -690,6 +674,7 @@ fn next_available_destination(target_dir: &Path, file_name: OsString) -> PathBuf
     ))
 }
 
+#[cfg(test)]
 fn split_name_and_extension(name: &str) -> (&str, &str) {
     match name.rsplit_once('.') {
         Some((base, ext)) if !base.is_empty() => (base, ext),
@@ -697,14 +682,7 @@ fn split_name_and_extension(name: &str) -> (&str, &str) {
     }
 }
 
-fn write_desktop_torrent_status(
-    config: &TorrentMonitorConfig,
-    report: TorrentMoveReport,
-) -> Result<(), std::io::Error> {
-    let data_root = copper_data_root()?;
-    write_desktop_torrent_status_in(&data_root, config, report)
-}
-
+#[cfg(test)]
 fn write_desktop_torrent_status_in(
     data_root: &Path,
     config: &TorrentMonitorConfig,
@@ -729,6 +707,7 @@ fn write_desktop_torrent_status_in(
     write_json_object(&path, &status)
 }
 
+#[cfg(test)]
 fn expand_home(raw: &str) -> PathBuf {
     if let Some(stripped) = raw.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
@@ -743,6 +722,7 @@ fn expand_home(raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
+#[cfg(test)]
 fn copper_data_root() -> Result<PathBuf, std::io::Error> {
     let home = dirs::home_dir().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "home directory not available")
@@ -750,22 +730,27 @@ fn copper_data_root() -> Result<PathBuf, std::io::Error> {
     Ok(copper_data_root_from_home(&home))
 }
 
+#[cfg(test)]
 fn copper_data_root_from_home(home: &Path) -> PathBuf {
     home.join(".Copper").join("extensions")
 }
 
+#[cfg(test)]
 fn extension_config_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
     data_root.join(extension_id).join("config.json")
 }
 
+#[cfg(test)]
 fn extension_status_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
     data_root.join(extension_id).join("status.json")
 }
 
+#[cfg(test)]
 fn extension_legacy_data_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
     data_root.join(extension_id).join("data.json")
 }
 
+#[cfg(test)]
 fn load_extension_config_object(
     data_root: &Path,
     extension_id: &str,
@@ -781,6 +766,7 @@ fn load_extension_config_object(
     Ok(serde_json::json!({}))
 }
 
+#[cfg(test)]
 fn read_json_object(path: &Path) -> Result<serde_json::Value, std::io::Error> {
     if !path.exists() {
         return Ok(serde_json::json!({}));
@@ -795,6 +781,7 @@ fn read_json_object(path: &Path) -> Result<serde_json::Value, std::io::Error> {
     })
 }
 
+#[cfg(test)]
 fn write_json_object(path: &Path, value: &serde_json::Value) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -802,6 +789,7 @@ fn write_json_object(path: &Path, value: &serde_json::Value) -> Result<(), std::
     fs::write(path, serde_json::to_string_pretty(value)?)
 }
 
+#[cfg(test)]
 fn unix_now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1385,6 +1373,38 @@ mod tests {
         let response = client.join().expect("join");
         assert!(response.contains("\"ok\":false"));
         assert!(response.contains("invalid request"));
+    }
+
+    #[test]
+    fn handle_connection_rejects_missing_control_plane_token() {
+        let temp = tempdir().expect("tempdir");
+        write_extension(temp.path(), "alpha-ext");
+        let mut state = DaemonState::load(temp.path()).expect("state");
+        state.auth_token = Some("test-token".to_string());
+        let running = AtomicBool::new(true);
+        let addr = free_addr();
+        let listener = TcpListener::bind(&addr).expect("bind");
+
+        let client = std::thread::spawn({
+            let addr = addr.clone();
+            move || {
+                let mut stream = TcpStream::connect(&addr).expect("connect");
+                std::io::Write::write_all(&mut stream, br#"{"op":"health"}"#)
+                    .expect("write request");
+                std::io::Write::write_all(&mut stream, b"\n").expect("newline");
+                std::io::Write::flush(&mut stream).expect("flush");
+                let mut response = String::new();
+                stream.read_to_string(&mut response).expect("read response");
+                response
+            }
+        });
+
+        let (stream, _) = listener.accept().expect("accept");
+        handle_connection(stream, &mut state, &running).expect("handle connection");
+
+        let response = client.join().expect("join");
+        assert!(response.contains("\"ok\":false"));
+        assert!(response.contains("unauthorized request"));
     }
 
     #[test]

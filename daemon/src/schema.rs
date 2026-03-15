@@ -1,8 +1,10 @@
 use crate::descriptor::{Descriptor, SUPPORTED_SCHEMA_URL};
 use jsonschema::JSONSchema;
+use std::sync::OnceLock;
 use thiserror::Error;
 
 static SCHEMA_JSON: &str = include_str!("../../schemas/extension/1.0.0/descriptor.schema.json");
+static VALIDATOR: OnceLock<JSONSchema> = OnceLock::new();
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -18,11 +20,16 @@ pub enum ValidationError {
     InvalidVersion(String),
 }
 
-pub fn validator() -> Result<JSONSchema, ValidationError> {
+pub fn validator() -> Result<&'static JSONSchema, ValidationError> {
+    if let Some(validator) = VALIDATOR.get() {
+        return Ok(validator);
+    }
+
     let schema_value: serde_json::Value =
         serde_json::from_str(SCHEMA_JSON).map_err(ValidationError::InvalidJson)?;
-    JSONSchema::compile(&schema_value)
-        .map_err(|e| ValidationError::SchemaCompilation(e.to_string()))
+    let compiled = JSONSchema::compile(&schema_value)
+        .map_err(|e| ValidationError::SchemaCompilation(e.to_string()))?;
+    Ok(VALIDATOR.get_or_init(|| compiled))
 }
 
 pub fn parse_and_validate(raw: &str) -> Result<Descriptor, ValidationError> {

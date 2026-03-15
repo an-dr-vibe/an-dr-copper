@@ -18,7 +18,7 @@ Two-process target model (same intent as original architecture):
 
 Current implementation status:
 
-- Implemented: always-on daemon, extension registry loading, periodic hot-reload, IPC control plane, descriptor validation, trigger preparation, skeleton generation, local config UI (`ui open`), tray menu shortcut for desktop torrent extension config.
+- Implemented: always-on daemon, extension registry loading, periodic hot-reload, authenticated IPC control plane, descriptor validation, trigger preparation, skeleton generation, local config UI (`ui open`), tray menu shortcut for desktop torrent extension config.
 - Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with Obsidian-style per-extension pages, separate Settings/Status views, and manifest-driven settings sections.
 - Planned: embedded `deno_core` runtime execution, richer tray/hotkey integration, on-demand Tauri UI renderer.
 
@@ -27,14 +27,16 @@ Current implementation status:
 Daemon capabilities:
 
 - Binds to TCP IPC endpoint (default `127.0.0.1:4765`).
+- Requires a daemon-generated control-plane token for daemon IPC requests and daemon-hosted UI routes other than the initial HTML shell.
 - Loads extensions from merged roots:
   - executable-adjacent `extensions/`, parent `extensions/`, and workspace `extensions/` when present during local source runs (legacy `core-extensions/` still supported)
   - user directory `~/.Copper/extensions`
   - user extensions override same-id core extensions
 - Validates extension manifests against versioned schema.
 - Periodically reloads extension registry (hot-reload behavior).
-- Runs background polling tasks for core extensions (currently `desktop-torrent-organizer` file polling).
-- Executes host-native actions for `windows-display-manager` through daemon API bridges (taskbar auto-hide, display resolution, scale).
+- Routes trigger preparation through a single `ExecutionEngine`, which combines the runtime adapter, host extension registry, and shared state store.
+- Runs host-native background tasks through `HostExtensionRegistry` instead of daemon-local extension ID branching.
+- Executes host-native actions for built-in extensions through `HostExtensionRegistry` capability handlers.
 - Exposes manifest-driven additional tray icon API in daemon (`tray_extension`) so extensions can declare dedicated tray icons through descriptor metadata.
 - Current implementation includes a `tray.provider = "windows-display"` host tray provider used by `windows-display-manager` for left-click toggle and right-click action menu behavior.
 - Handles IPC operations:
@@ -48,6 +50,7 @@ Daemon capabilities:
 - Persists runtime status per extension in `~/.Copper/extensions/<extension-id>/status.json`.
   - Legacy `data.json` is still read as a fallback during migration.
   - Includes action execution snapshots for host-native extensions (for example `windows-display-manager`).
+- Uses a shared `ExtensionStateStore` for daemon, config UI, and tray persistence access.
 - Config UI can save-and-apply host-native extension settings when the manifest declares `settings.applyActions`.
 
 This restores the daemon as the center of system lifecycle.
@@ -78,6 +81,10 @@ Type contract for AI generation:
 |  |- src/
 |  |  |- api/        # host-side API module stubs (fs/shell/ui/notify/store)
 |  |  |- runtime/    # runtime adapter abstraction
+|  |  |- execution.rs        # shared trigger preparation and execution orchestration
+|  |  |- host_extensions.rs  # built-in host capability registry
+|  |  |- control_plane.rs    # control-plane auth token lifecycle
+|  |  |- state_store.rs      # shared config/status persistence service
 |  |  |- tray.rs     # tray controller placeholder
 |  |  |- daemon.rs   # long-running daemon + IPC
 |  |  |- cli.rs      # CLI and daemon control commands
@@ -145,6 +152,7 @@ Release packaging:
 - `deno_core` is not embedded yet (dry-run/runtime adapter layer is in place).
 - On-demand Tauri renderer is not wired yet.
 - Global hotkey behavior is not wired yet.
+- Some shipped extensions are still intentionally host-native or hybrid rather than purely TypeScript-executed; that ownership is now centralized in `host_extensions.rs`.
 
 These gaps are additive roadmap work and do not change the daemon-first core architecture.
 
