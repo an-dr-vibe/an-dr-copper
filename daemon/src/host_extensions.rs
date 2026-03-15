@@ -197,6 +197,12 @@ impl HostExtensionHandler for WindowsDisplayHandler {
     }
 
     fn dynamic_options(&self, config: &Value) -> Result<Value, std::io::Error> {
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = config;
+            return Ok(serde_json::json!({}));
+        }
+
         let status =
             windows_display::execute_action("status", config).map_err(std::io::Error::other)?;
         let presets = status
@@ -537,6 +543,20 @@ mod tests {
         } else {
             let err = result.expect_err("non windows");
             assert_eq!(err.kind(), std::io::ErrorKind::Other);
+        }
+    }
+
+    #[test]
+    fn windows_display_dynamic_options_degrade_off_windows() {
+        let registry = HostExtensionRegistry::new();
+        let options = registry
+            .dynamic_options(WINDOWS_DISPLAY_MANAGER_ID, &serde_json::json!({}))
+            .expect("dynamic options");
+
+        if cfg!(target_os = "windows") {
+            assert!(options.get("trayResolutionPresets").is_some());
+        } else {
+            assert_eq!(options, serde_json::json!({}));
         }
     }
 
