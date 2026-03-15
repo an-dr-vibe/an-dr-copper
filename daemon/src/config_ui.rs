@@ -1,8 +1,10 @@
+use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
 use crate::descriptor::Descriptor;
 use crate::extension::{core_extensions_dir, load_runtime_registry, runtime_extension_roots};
+use crate::host_extensions::HostExtensionRegistry;
+use crate::state_store::{merge_json_object, ExtensionStateStore};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -14,6 +16,9 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use thiserror::Error;
+
+#[cfg(test)]
+use std::fs;
 
 const DEFAULT_UI_BIND: &str = "127.0.0.1:0";
 pub const DEFAULT_DAEMON_UI_BIND: &str = "127.0.0.1:4766";
@@ -61,6 +66,7 @@ enum HttpMethod {
 struct HttpRequest {
     method: HttpMethod,
     path: String,
+    headers: HashMap<String, String>,
     body: Vec<u8>,
 }
 
@@ -115,6 +121,16 @@ impl HttpResponse {
                 .unwrap_or_else(|_| b"{\"error\":\"not found\"}".to_vec()),
         }
     }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        let payload = serde_json::json!({ "error": message.into() });
+        Self {
+            status: 403,
+            content_type: "application/json; charset=utf-8",
+            body: serde_json::to_vec_pretty(&payload)
+                .unwrap_or_else(|_| b"{\"error\":\"forbidden\"}".to_vec()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +141,10 @@ struct UiServerState {
     user_extensions_dir: PathBuf,
     core_extensions_dir: Option<PathBuf>,
     runtime_extension_roots: Vec<PathBuf>,
-    data_root: PathBuf,
+    state_store: ExtensionStateStore,
+    host_extensions: HostExtensionRegistry,
+    auth_token: String,
+    origin: String,
     allow_close: bool,
 }
 
@@ -138,6 +157,7 @@ pub fn start_daemon_ui_server(
     extensions_dir: PathBuf,
     bind_addr: String,
     running: Arc<AtomicBool>,
+    auth: ControlPlaneAuth,
 ) -> Result<PersistentUiServer, UiConfigError> {
     let listener = TcpListener::bind(&bind_addr)?;
     listener.set_nonblocking(true)?;
@@ -149,7 +169,13 @@ pub fn start_daemon_ui_server(
         while running.load(Ordering::Relaxed) {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    let state = match build_ui_state(&extensions_dir, None, false) {
+                    let state = match build_ui_state(
+                        &extensions_dir,
+                        None,
+                        false,
+                        auth.clone(),
+                        format!("http://{}", local_addr),
+                    ) {
                         Ok(state) => state,
                         Err(err) => {
                             eprintln!("failed to refresh UI state: {err}");
@@ -184,6 +210,8 @@ fn build_ui_state(
     extensions_dir: &Path,
     selected_extension_id: Option<&str>,
     allow_close: bool,
+    auth: ControlPlaneAuth,
+    origin: String,
 ) -> Result<UiServerState, UiConfigError> {
     let registry = load_runtime_registry(extensions_dir)?;
     let mut descriptors = registry
@@ -202,8 +230,6 @@ fn build_ui_state(
             return Err(UiConfigError::ExtensionNotFound(selected.to_string()));
         }
         selected.to_string()
-    } else if extension_ids.contains("desktop-torrent-organizer") {
-        "desktop-torrent-organizer".to_string()
     } else {
         descriptors
             .first()
@@ -211,8 +237,8 @@ fn build_ui_state(
             .unwrap_or_default()
     };
 
-    let data_root = copper_data_root()?;
-    fs::create_dir_all(&data_root)?;
+    let state_store = ExtensionStateStore::for_current_user()?;
+    state_store.ensure_root()?;
 
     Ok(UiServerState {
         selected_extension_id,
@@ -221,7 +247,10 @@ fn build_ui_state(
         user_extensions_dir: extensions_dir.to_path_buf(),
         core_extensions_dir: core_extensions_dir(),
         runtime_extension_roots: runtime_extension_roots(extensions_dir),
-        data_root,
+        state_store,
+        host_extensions: HostExtensionRegistry::new(),
+        auth_token: auth.token().to_string(),
+        origin,
         allow_close,
     })
 }
@@ -231,12 +260,13 @@ pub fn open_extension_config(
     extension_id: &str,
     options: UiOpenOptions,
 ) -> Result<String, UiConfigError> {
-    let state = build_ui_state(extensions_dir, Some(extension_id), true)?;
+    let auth = ControlPlaneAuth::ephemeral();
 
     let listener = TcpListener::bind(&options.bind_addr)?;
     listener.set_nonblocking(true)?;
     let local_addr = listener.local_addr()?;
     let url = format!("http://{}", local_addr);
+    let state = build_ui_state(extensions_dir, Some(extension_id), true, auth, url.clone())?;
 
     if options.open_browser {
         open_in_browser(&url)?;
@@ -272,6 +302,15 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
         }
     };
 
+    let requires_auth = !(request.method == HttpMethod::Get && request.path == "/");
+    if requires_auth && !request_is_authorized(&request, state) {
+        write_response(
+            &mut stream,
+            HttpResponse::forbidden("missing or invalid control-plane token"),
+        )?;
+        return Ok(false);
+    }
+
     let mut stop_after = false;
     let response = if request.method == HttpMethod::Get && request.path == "/" {
         HttpResponse::ok_html(render_html(state))
@@ -281,11 +320,14 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
             "descriptors": state.descriptors,
         }))?
     } else if request.method == HttpMethod::Get && request.path == "/config/core" {
-        HttpResponse::ok_json(&load_config(&core_data_path_for(&state.data_root))?)?
+        HttpResponse::ok_json(&state.state_store.load_path_or_legacy(
+            &state.state_store.core_config_path(),
+            Some(&state.state_store.legacy_path("copper-core")),
+        )?)?
     } else if request.method == HttpMethod::Post && request.path == "/config/core" {
         match parse_json_object(&request.body) {
             Ok(value) => {
-                store_config(&core_data_path_for(&state.data_root), &value)?;
+                merge_json_object(&state.state_store.core_config_path(), &value)?;
                 HttpResponse::ok_json(&serde_json::json!({ "ok": true }))?
             }
             Err(err) => HttpResponse::bad_request(err.to_string()),
@@ -299,23 +341,44 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
         }
     } else if request.method == HttpMethod::Get && request.path == "/info/core" {
         HttpResponse::ok_json(&build_core_info(state))?
+    } else if let Some(extension_id) = request.path.strip_prefix("/apply/extension/") {
+        if request.method != HttpMethod::Post || !state.extension_ids.contains(extension_id) {
+            HttpResponse::not_found()
+        } else {
+            let descriptor = state
+                .descriptors
+                .iter()
+                .find(|descriptor| descriptor.id == extension_id)
+                .ok_or_else(|| UiConfigError::ExtensionNotFound(extension_id.to_string()))?;
+            match apply_extension_settings(state, descriptor) {
+                Ok(result) => HttpResponse::ok_json(&result)?,
+                Err(err) => HttpResponse::bad_request(err.to_string()),
+            }
+        }
     } else if let Some(extension_id) = request.path.strip_prefix("/info/extension/") {
         if !state.extension_ids.contains(extension_id) {
             HttpResponse::not_found()
         } else {
-            let path = extension_data_path_for(&state.data_root, extension_id);
-            HttpResponse::ok_json(&load_config(&path)?)?
+            let descriptor = state
+                .descriptors
+                .iter()
+                .find(|descriptor| descriptor.id == extension_id)
+                .ok_or_else(|| UiConfigError::ExtensionNotFound(extension_id.to_string()))?;
+            HttpResponse::ok_json(&build_extension_info(state, descriptor)?)?
         }
     } else if let Some(extension_id) = request.path.strip_prefix("/config/extension/") {
         if !state.extension_ids.contains(extension_id) {
             HttpResponse::not_found()
         } else {
-            let path = extension_data_path_for(&state.data_root, extension_id);
+            let path = state.state_store.config_path(extension_id);
             match request.method {
-                HttpMethod::Get => HttpResponse::ok_json(&load_config(&path)?)?,
+                HttpMethod::Get => HttpResponse::ok_json(&state.state_store.load_path_or_legacy(
+                    &path,
+                    Some(&state.state_store.legacy_path(extension_id)),
+                )?)?,
                 HttpMethod::Post => match parse_json_object(&request.body) {
                     Ok(value) => {
-                        store_config(&path, &value)?;
+                        merge_json_object(&path, &value)?;
                         HttpResponse::ok_json(&serde_json::json!({ "ok": true }))?
                     }
                     Err(err) => HttpResponse::bad_request(err.to_string()),
@@ -328,6 +391,25 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
 
     write_response(&mut stream, response)?;
     Ok(stop_after)
+}
+
+fn request_is_authorized(request: &HttpRequest, state: &UiServerState) -> bool {
+    let token_matches = request
+        .headers
+        .get(UI_AUTH_HEADER)
+        .map(|value| value == &state.auth_token)
+        .unwrap_or(false);
+    if !token_matches {
+        return false;
+    }
+
+    if request.method == HttpMethod::Post {
+        if let Some(origin) = request.headers.get("origin") {
+            return origin == &state.origin;
+        }
+    }
+
+    true
 }
 
 fn parse_json_object(raw: &[u8]) -> Result<Value, UiConfigError> {
@@ -399,7 +481,12 @@ fn parse_request(stream: TcpStream) -> Result<HttpRequest, UiConfigError> {
         Vec::new()
     };
 
-    Ok(HttpRequest { method, path, body })
+    Ok(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
 }
 
 fn read_chunked_body<R: BufRead>(reader: &mut R) -> Result<Vec<u8>, UiConfigError> {
@@ -470,21 +557,22 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) -> Result<(), 
     Ok(())
 }
 
-fn copper_data_root() -> Result<PathBuf, UiConfigError> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        UiConfigError::Request("cannot resolve home directory for extension storage".to_string())
-    })?;
-    Ok(home.join(".Copper").join("extensions"))
-}
-
+#[cfg(test)]
 fn core_data_path_for(data_root: &Path) -> PathBuf {
-    extension_data_path_for(data_root, "copper-core")
+    extension_config_path_for(data_root, "copper-core")
 }
 
-fn extension_data_path_for(data_root: &Path, extension_id: &str) -> PathBuf {
-    data_root.join(extension_id).join("data.json")
+#[cfg(test)]
+fn extension_config_path_for(data_root: &Path, extension_id: &str) -> PathBuf {
+    data_root.join(extension_id).join("config.json")
 }
 
+#[cfg(test)]
+fn extension_status_path_for(data_root: &Path, extension_id: &str) -> PathBuf {
+    data_root.join(extension_id).join("status.json")
+}
+
+#[cfg(test)]
 fn load_config(path: &Path) -> Result<Value, UiConfigError> {
     if !path.exists() {
         return Ok(serde_json::json!({}));
@@ -498,6 +586,7 @@ fn load_config(path: &Path) -> Result<Value, UiConfigError> {
     })
 }
 
+#[cfg(test)]
 fn store_config(path: &Path, value: &Value) -> Result<(), UiConfigError> {
     let mut merged = load_config(path)?;
     if let (Some(target), Some(source)) = (merged.as_object_mut(), value.as_object()) {
@@ -544,8 +633,8 @@ fn build_core_info(state: &UiServerState) -> Value {
             .iter()
             .map(|path| path.display().to_string())
             .collect::<Vec<_>>(),
-        "dataRoot": state.data_root.display().to_string(),
-        "coreDataPath": core_data_path_for(&state.data_root).display().to_string()
+        "dataRoot": state.state_store.data_root().display().to_string(),
+        "coreDataPath": state.state_store.core_config_path().display().to_string()
     })
 }
 
@@ -581,11 +670,94 @@ pub fn open_url_in_browser(url: &str) -> Result<(), UiConfigError> {
     open_in_browser(url)
 }
 
+fn build_extension_info(
+    state: &UiServerState,
+    descriptor: &Descriptor,
+) -> Result<Value, UiConfigError> {
+    let config = state.state_store.load_config(&descriptor.id)?;
+    let status = state.state_store.load_status(&descriptor.id)?;
+    let commands = descriptor
+        .actions
+        .iter()
+        .map(|action| {
+            serde_json::json!({
+                "id": action.id,
+                "label": action.label,
+                "description": action.description,
+            })
+        })
+        .collect::<Vec<_>>();
+    let dynamic_options = state
+        .host_extensions
+        .dynamic_options(&descriptor.id, &config)?;
+
+    Ok(serde_json::json!({
+        "extensionId": descriptor.id,
+        "name": descriptor.name,
+        "status": status,
+        "statusMeta": descriptor
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.status.clone()),
+        "applyActions": descriptor
+            .settings
+            .as_ref()
+            .map(|settings| settings.apply_actions.clone())
+            .unwrap_or_default(),
+        "commands": commands,
+        "dynamicOptions": dynamic_options,
+    }))
+}
+
+fn apply_extension_settings(
+    state: &UiServerState,
+    descriptor: &Descriptor,
+) -> Result<Value, UiConfigError> {
+    let apply_actions = descriptor
+        .settings
+        .as_ref()
+        .map(|settings| settings.apply_actions.clone())
+        .unwrap_or_default();
+    if apply_actions.is_empty() {
+        return Err(UiConfigError::Request(format!(
+            "extension '{}' does not declare settings apply actions",
+            descriptor.id
+        )));
+    }
+
+    let executions = state
+        .host_extensions
+        .apply_settings(&descriptor.id, &state.state_store, &apply_actions)?
+        .into_iter()
+        .map(|execution| {
+            serde_json::json!({
+                "actionId": execution.action_id,
+                "result": execution.result,
+            })
+        })
+        .collect::<Vec<_>>();
+    if executions.is_empty() {
+        return Err(UiConfigError::Request(format!(
+            "extension '{}' does not support settings apply actions in the host",
+            descriptor.id
+        )));
+    }
+
+    let status = state.state_store.load_status(&descriptor.id)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "extensionId": descriptor.id,
+        "executions": executions,
+        "status": status,
+    }))
+}
+
 fn render_html(state: &UiServerState) -> String {
     let model = serde_json::json!({
         "selectedExtensionId": state.selected_extension_id,
         "descriptors": state.descriptors,
         "allowClose": state.allow_close,
+        "authToken": state.auth_token,
     });
     let model_inline = serde_json::to_string(&model).unwrap_or_else(|_| "{}".to_string());
 
@@ -598,46 +770,68 @@ fn render_html(state: &UiServerState) -> String {
   <title>Copper Settings</title>
   <style>
     :root {{
-      --bg:#16181d; --panel:#20232a; --panel2:#1b1e24; --line:#3a3f4b; --text:#e7e9ee; --muted:#a6acb9; --accent:#7aa2f7;
+      --bg:#14161a; --panel:#1d2026; --panel2:#181b20; --panel3:#111319; --line:#303540; --text:#e6e9ef; --muted:#9aa3b2; --accent:#7aa2f7; --accent-soft:rgba(122,162,247,.14);
     }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; background:var(--bg); color:var(--text); font-family:Segoe UI, Arial, sans-serif; }}
     .layout {{ display:grid; grid-template-columns:280px 1fr; min-height:100vh; }}
-    .sidebar {{ background:var(--panel2); border-right:1px solid var(--line); padding:14px; }}
-    .main {{ padding:20px; }}
-    .title {{ font-size:18px; font-weight:700; margin:4px 0 12px; }}
+    .sidebar {{ background:var(--panel2); border-right:1px solid var(--line); padding:18px 14px; }}
+    .main {{ padding:28px; max-width:980px; width:100%; }}
+    .title {{ font-size:18px; font-weight:700; margin:4px 0 4px; }}
+    .subtitle {{ color:var(--muted); font-size:13px; margin:0 0 18px; }}
     .nav-btn {{
       width:100%; text-align:left; border:1px solid var(--line); background:transparent; color:var(--text);
-      padding:10px 12px; margin-bottom:8px; border-radius:8px; cursor:pointer;
+      padding:12px; margin-bottom:8px; border-radius:10px; cursor:pointer;
     }}
-    .nav-btn.active {{ background:rgba(122,162,247,.2); border-color:var(--accent); }}
-    .section-title {{ font-size:22px; margin:0 0 6px; }}
-    .section-sub {{ color:var(--muted); margin:0 0 14px; }}
-    .card {{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }}
+    .nav-btn.active {{ background:var(--accent-soft); border-color:var(--accent); }}
+    .nav-name {{ display:block; font-weight:600; }}
+    .nav-meta {{ display:block; color:var(--muted); font-size:12px; margin-top:3px; }}
+    .page-eyebrow {{ color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-size:12px; margin-bottom:10px; }}
+    .page-title {{ font-size:30px; line-height:1.15; margin:0 0 8px; }}
+    .page-sub {{ color:var(--muted); margin:0 0 18px; max-width:720px; }}
+    .tab-row {{ display:flex; gap:8px; margin:0 0 20px; flex-wrap:wrap; }}
+    .tab-btn {{
+      border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--muted);
+      padding:8px 14px; cursor:pointer; font-size:13px; font-weight:600;
+    }}
+    .tab-btn.active {{ color:var(--text); border-color:var(--accent); background:var(--accent-soft); }}
+    .card {{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px; }}
+    .card-title {{ font-size:18px; font-weight:700; margin:0 0 6px; }}
+    .card-sub {{ color:var(--muted); margin:0 0 14px; font-size:14px; }}
     label {{ display:block; font-weight:600; margin:10px 0 6px; }}
+    .field-help {{ color:var(--muted); font-size:13px; margin:0 0 8px; }}
     input, select {{
-      width:100%; border:1px solid var(--line); border-radius:8px; background:#111319; color:var(--text);
+      width:100%; border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text);
       padding:10px;
     }}
-    .actions {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }}
-    .chip {{ border:1px solid var(--line); border-radius:999px; padding:6px 10px; color:var(--muted); }}
-    .btn-row {{ display:flex; gap:10px; margin-top:14px; }}
+    .btn-row {{ display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }}
     button {{
-      border:1px solid var(--line); border-radius:8px; background:#111319; color:var(--text); padding:10px 14px; cursor:pointer;
+      border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text); padding:10px 14px; cursor:pointer;
     }}
     button.primary {{ background:var(--accent); border-color:transparent; color:#0b1020; font-weight:700; }}
-    .status {{ color:var(--muted); margin-top:8px; min-height:20px; }}
-    pre.info {{
-      margin:8px 0 0;
-      border:1px solid var(--line);
-      border-radius:8px;
-      background:#111319;
-      color:var(--text);
-      padding:10px;
-      max-height:280px;
-      overflow:auto;
-      white-space:pre-wrap;
-      word-break:break-word;
+    button[hidden] {{ display:none; }}
+    .status-msg {{ color:var(--muted); margin-top:8px; min-height:20px; }}
+    .empty {{ color:var(--muted); font-style:italic; }}
+    .kv-list {{ display:grid; grid-template-columns:minmax(180px, 240px) 1fr; gap:10px 16px; }}
+    .kv-key {{ color:var(--muted); }}
+    .kv-value {{ word-break:break-word; }}
+    .command-list {{ display:grid; gap:10px; }}
+    .command-item {{ border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--panel3); }}
+    .command-title {{ font-weight:700; margin:0 0 4px; }}
+    .command-meta {{ color:var(--muted); font-size:12px; margin:0 0 6px; }}
+    .command-desc {{ color:var(--text); margin:0; font-size:14px; }}
+    .mono {{ font-family:Consolas, monospace; }}
+    .checkbox-list {{ display:grid; gap:8px; }}
+    .checkbox-item {{
+      display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line);
+      border-radius:10px; background:var(--panel3);
+    }}
+    .checkbox-item input {{ width:auto; margin-top:3px; }}
+    @media (max-width: 900px) {{
+      .layout {{ grid-template-columns:1fr; }}
+      .sidebar {{ border-right:none; border-bottom:1px solid var(--line); }}
+      .main {{ padding:20px; }}
+      .kv-list {{ grid-template-columns:1fr; }}
     }}
   </style>
 </head>
@@ -645,27 +839,21 @@ fn render_html(state: &UiServerState) -> String {
   <div class="layout">
     <aside class="sidebar">
       <div class="title">Settings</div>
+      <p class="subtitle">Per-extension pages with separate status.</p>
       <div id="nav"></div>
     </aside>
     <main class="main">
-      <h1 class="section-title" id="sectionTitle">Copper</h1>
-      <p class="section-sub" id="sectionSub">Core Copper configuration</p>
-      <div class="card">
-        <div id="form"></div>
-        <div class="btn-row">
-          <button class="primary" id="saveBtn">Save Section</button>
-          <button id="closeBtn">Close UI Server</button>
-        </div>
-        <div class="status" id="status"></div>
+      <div class="page-eyebrow" id="pageEyebrow">Extension</div>
+      <h1 class="page-title" id="pageTitle">Copper</h1>
+      <p class="page-sub" id="pageSub">Core Copper configuration</p>
+      <div class="tab-row" id="tabs"></div>
+      <section id="settingsView"></section>
+      <section id="statusView" hidden></section>
+      <div class="btn-row">
+        <button class="primary" id="saveBtn">Save settings</button>
+        <button id="closeBtn">Close UI Server</button>
       </div>
-      <div class="card">
-        <strong>Actions</strong>
-        <div class="actions" id="actions"></div>
-      </div>
-      <div class="card">
-        <strong>Info</strong>
-        <pre class="info" id="info">Loading...</pre>
-      </div>
+      <div class="status-msg" id="statusMsg"></div>
     </main>
   </div>
 
@@ -673,29 +861,115 @@ fn render_html(state: &UiServerState) -> String {
     const model = {model_inline};
     const descriptors = model.descriptors || [];
     const byId = Object.fromEntries(descriptors.map(d => [d.id, d]));
-    let currentSection = model.selectedExtensionId ? `ext:${{model.selectedExtensionId}}` : 'core';
+    let currentSection = (() => {{
+      const defaultSection = model.selectedExtensionId ? `ext:${{model.selectedExtensionId}}` : 'core';
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get('section');
+      if (!requested) {{
+        return defaultSection;
+      }}
+      if (requested === 'core') {{
+        return 'core';
+      }}
+      if (requested.startsWith('ext:')) {{
+        const id = requested.slice(4);
+        if (byId[id]) {{
+          return requested;
+        }}
+      }}
+      return defaultSection;
+    }})();
+    let currentTab = (() => {{
+      const params = new URLSearchParams(window.location.search);
+      return params.get('tab') === 'status' ? 'status' : 'settings';
+    }})();
 
     const navEl = document.getElementById('nav');
-    const formEl = document.getElementById('form');
-    const actionsEl = document.getElementById('actions');
-    const infoEl = document.getElementById('info');
-    const statusEl = document.getElementById('status');
+    const settingsViewEl = document.getElementById('settingsView');
+    const statusViewEl = document.getElementById('statusView');
+    const statusMsgEl = document.getElementById('statusMsg');
     const closeBtn = document.getElementById('closeBtn');
-    const sectionTitleEl = document.getElementById('sectionTitle');
-    const sectionSubEl = document.getElementById('sectionSub');
+    const pageEyebrowEl = document.getElementById('pageEyebrow');
+    const pageTitleEl = document.getElementById('pageTitle');
+    const pageSubEl = document.getElementById('pageSub');
+    const tabsEl = document.getElementById('tabs');
+    const saveBtn = document.getElementById('saveBtn');
+
+    function currentDescriptor() {{
+      return currentSection.startsWith('ext:') ? byId[currentSection.slice(4)] : null;
+    }}
 
     if (!model.allowClose && closeBtn) {{
       closeBtn.style.display = 'none';
     }}
 
-    function setStatus(msg) {{ statusEl.textContent = msg; }}
+    function setStatus(msg) {{
+      statusMsgEl.textContent = msg;
+    }}
+
+    function updateUrl() {{
+      const params = new URLSearchParams();
+      params.set('section', currentSection);
+      params.set('tab', currentTab);
+      window.history.replaceState(null, '', `${{window.location.pathname}}?${{params.toString()}}`);
+    }}
+
+    function humanizeKey(value) {{
+      return String(value || '')
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/[-_]/g, ' ')
+        .replace(/^./, ch => ch.toUpperCase());
+    }}
+
+    function formatValue(value, format) {{
+      if (value === null || value === undefined || value === '') return 'Not set';
+      if (format === 'date-time' && typeof value === 'number') {{
+        return new Date(value * 1000).toLocaleString();
+      }}
+      if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    }}
+
+    function createCard(title, description) {{
+      const card = document.createElement('section');
+      card.className = 'card';
+      const heading = document.createElement('h2');
+      heading.className = 'card-title';
+      heading.textContent = title;
+      card.appendChild(heading);
+      if (description) {{
+        const desc = document.createElement('p');
+        desc.className = 'card-sub';
+        desc.textContent = description;
+        card.appendChild(desc);
+      }}
+      return card;
+    }}
+
+    function getByPath(target, path) {{
+      return String(path || '')
+        .split('.')
+        .filter(Boolean)
+        .reduce((value, key) => (value && value[key] !== undefined ? value[key] : undefined), target);
+    }}
+
+    function resolveInputOptions(input, info) {{
+      const inline = Array.isArray(input.options) ? input.options : [];
+      if (inline.length > 0) return inline.map(String);
+      const sourced = input.optionsSource ? getByPath(info, input.optionsSource) : undefined;
+      return Array.isArray(sourced) ? sourced.map(String) : [];
+    }}
 
     function createNavButton(key, label) {{
       const btn = document.createElement('button');
       btn.className = 'nav-btn' + (key === currentSection ? ' active' : '');
-      btn.textContent = label;
+      const isCore = key === 'core';
+      btn.innerHTML = `<span class="nav-name">${{label}}</span><span class="nav-meta">${{isCore ? 'Core settings' : 'Extension settings'}}</span>`;
       btn.addEventListener('click', () => {{
         currentSection = key;
+        currentTab = 'settings';
+        updateUrl();
         renderNav();
         renderSection().catch(err => setStatus('Load failed: ' + err));
       }});
@@ -708,20 +982,58 @@ fn render_html(state: &UiServerState) -> String {
       descriptors.forEach(d => navEl.appendChild(createNavButton(`ext:${{d.id}}`, d.name)));
     }}
 
-    function createInput(input, value) {{
+    function createInput(input, value, info) {{
       const wrapper = document.createElement('div');
       const label = document.createElement('label');
-      label.textContent = input.label + ' (' + input.id + ')';
+      label.textContent = input.label;
       wrapper.appendChild(label);
+      if (input.description) {{
+        const help = document.createElement('div');
+        help.className = 'field-help';
+        help.textContent = input.description;
+        wrapper.appendChild(help);
+      }}
 
       let control;
       if (input.type === 'boolean') {{
         control = document.createElement('select');
-        control.innerHTML = '<option value="true">true</option><option value="false">false</option>';
+        control.innerHTML = '<option value="true">Enabled</option><option value="false">Disabled</option>';
         control.value = String(value ?? input.default ?? false);
+      }} else if (input.type === 'multi-select') {{
+        const options = resolveInputOptions(input, info);
+        const selected = Array.isArray(value)
+          ? value.map(String)
+          : Array.isArray(input.default)
+            ? input.default.map(String)
+            : [];
+        const selectedSet = new Set(selected);
+        control = document.createElement('div');
+        control.className = 'checkbox-list';
+        if (options.length === 0) {{
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = 'No options available right now.';
+          control.appendChild(empty);
+        }} else {{
+          options.forEach(opt => {{
+            const item = document.createElement('label');
+            item.className = 'checkbox-item';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = selectedSet.has(opt);
+            checkbox.dataset.inputId = input.id;
+            checkbox.dataset.inputType = input.type;
+            checkbox.dataset.optionValue = opt;
+            const text = document.createElement('span');
+            text.textContent = opt;
+            item.appendChild(checkbox);
+            item.appendChild(text);
+            control.appendChild(item);
+          }});
+        }}
       }} else if (input.type === 'select') {{
         control = document.createElement('select');
-        (input.options || []).forEach(opt => {{
+        resolveInputOptions(input, info).forEach(opt => {{
           const o = document.createElement('option');
           o.value = opt;
           o.textContent = opt;
@@ -734,58 +1046,186 @@ fn render_html(state: &UiServerState) -> String {
         control.value = String(value ?? input.default ?? '');
       }}
 
-      control.dataset.inputId = input.id;
-      control.dataset.inputType = input.type;
+      if (input.type !== 'multi-select') {{
+        control.dataset.inputId = input.id;
+        control.dataset.inputType = input.type;
+      }}
       wrapper.appendChild(control);
       return wrapper;
     }}
 
+    function inferSections(inputs, descriptor) {{
+      const byInputId = Object.fromEntries((inputs || []).map(input => [input.id, input]));
+      const declared = (((descriptor || {{}}).settings || {{}}).sections || []);
+      const used = new Set();
+      const sections = [];
+
+      declared.forEach(section => {{
+        const inputDefs = (section.inputs || []).map(id => byInputId[id]).filter(Boolean);
+        inputDefs.forEach(input => used.add(input.id));
+        if (inputDefs.length > 0) {{
+          sections.push({{
+            id: section.id,
+            title: section.title,
+            description: section.description || '',
+            inputDefs
+          }});
+        }}
+      }});
+
+      const remaining = (inputs || []).filter(input => !used.has(input.id));
+      if (sections.length === 0 && remaining.length > 0) {{
+        return [{{ id: 'settings', title: 'Settings', description: '', inputDefs: remaining }}];
+      }}
+      if (remaining.length > 0) {{
+        sections.push({{ id: 'other', title: 'Other settings', description: '', inputDefs: remaining }});
+      }}
+      return sections;
+    }}
+
+    function renderKeyValueCard(target, title, description, rows) {{
+      const card = createCard(title, description);
+      if (!rows.length) {{
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'Nothing to show yet.';
+        card.appendChild(empty);
+      }} else {{
+        const list = document.createElement('div');
+        list.className = 'kv-list';
+        rows.forEach(row => {{
+          const keyEl = document.createElement('div');
+          keyEl.className = 'kv-key';
+          keyEl.textContent = row.label;
+          const valueEl = document.createElement('div');
+          valueEl.className = 'kv-value' + (row.format === 'path' || row.mono ? ' mono' : '');
+          valueEl.textContent = formatValue(row.value, row.format);
+          list.appendChild(keyEl);
+          list.appendChild(valueEl);
+        }});
+        card.appendChild(list);
+      }}
+      target.appendChild(card);
+    }}
+
+    function renderCommands(target, commands) {{
+      const card = createCard('Commands', 'Manual operations exposed by this extension.');
+      if (!commands.length) {{
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'This extension does not expose any manual commands.';
+        card.appendChild(empty);
+      }} else {{
+        const list = document.createElement('div');
+        list.className = 'command-list';
+        commands.forEach(command => {{
+          const item = document.createElement('div');
+          item.className = 'command-item';
+          item.innerHTML =
+            `<div class="command-title">${{command.label || command.id}}</div>` +
+            `<div class="command-meta mono">${{command.id}}</div>` +
+            `<p class="command-desc">${{command.description || 'No description provided.'}}</p>`;
+          list.appendChild(item);
+        }});
+        card.appendChild(list);
+      }}
+      target.appendChild(card);
+    }}
+
+    function renderTabs() {{
+      tabsEl.innerHTML = '';
+      [['settings', 'Settings'], ['status', 'Status']].forEach(([id, label]) => {{
+        const btn = document.createElement('button');
+        btn.className = 'tab-btn' + (currentTab === id ? ' active' : '');
+        btn.textContent = label;
+        btn.addEventListener('click', () => {{
+          currentTab = id;
+          updateUrl();
+          renderTabs();
+          toggleViews();
+        }});
+        tabsEl.appendChild(btn);
+      }});
+    }}
+
+    function toggleViews() {{
+      const showSettings = currentTab === 'settings';
+      settingsViewEl.hidden = !showSettings;
+      statusViewEl.hidden = showSettings;
+      saveBtn.hidden = !showSettings;
+    }}
+
     async function loadJson(url) {{
-      const res = await fetch(url);
+      const res = await fetch(url, {{
+        headers: {{ '{UI_AUTH_HEADER}': model.authToken }}
+      }});
       if (!res.ok) {{
         throw new Error((await res.text()) || ('HTTP ' + res.status));
       }}
       return await res.json();
     }}
 
-    async function renderInfo() {{
-      const target = currentSection === 'core'
-        ? '/info/core'
-        : '/info/extension/' + encodeURIComponent(currentSection.slice(4));
-      const info = await loadJson(target);
-      infoEl.textContent = JSON.stringify(info, null, 2);
-    }}
-
     async function renderSection() {{
-      formEl.innerHTML = '';
-      actionsEl.innerHTML = '';
+      settingsViewEl.innerHTML = '';
+      statusViewEl.innerHTML = '';
       setStatus('');
+      renderTabs();
+      toggleViews();
 
       function coreFieldDefs() {{
         return [
-          {{ id: 'userExtensionsDir', label: 'User extensions directory', type: 'text', default: '~/.Copper/extensions' }},
-          {{ id: 'uiTheme', label: 'UI Theme', type: 'text', default: 'obsidian' }},
-          {{ id: 'startupExtension', label: 'Startup extension id', type: 'text', default: model.selectedExtensionId || '' }}
+          {{
+            id: 'userExtensionsDir',
+            label: 'User extensions directory',
+            description: 'Folder where user-installed extensions are discovered.',
+            type: 'text',
+            default: '~/.Copper/extensions'
+          }},
+          {{
+            id: 'uiTheme',
+            label: 'UI theme',
+            description: 'Name of the preferred host settings theme.',
+            type: 'text',
+            default: 'obsidian'
+          }},
+          {{
+            id: 'startupExtension',
+            label: 'Startup extension id',
+            description: 'Extension page selected when the settings UI opens.',
+            type: 'text',
+            default: model.selectedExtensionId || ''
+          }}
         ];
       }}
 
+      const configTarget = currentSection === 'core'
+        ? '/config/core'
+        : '/config/extension/' + encodeURIComponent(currentSection.slice(4));
+      const infoTarget = currentSection === 'core'
+        ? '/info/core'
+        : '/info/extension/' + encodeURIComponent(currentSection.slice(4));
+      const [config, info] = await Promise.all([loadJson(configTarget), loadJson(infoTarget)]);
+
       if (currentSection === 'core') {{
-        sectionTitleEl.textContent = 'Copper';
-        sectionSubEl.textContent = 'Core Copper configuration (separate from extension settings)';
-        const config = await loadJson('/config/core');
+        pageEyebrowEl.textContent = 'Core';
+        pageTitleEl.textContent = 'Copper';
+        pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
+        saveBtn.textContent = 'Save settings';
 
-        const fields = coreFieldDefs();
-
-        fields.forEach(field => {{
-          const row = createInput(field, config[field.id]);
-          formEl.appendChild(row);
+        const settingsCard = createCard('Settings', 'Core Copper configuration.');
+        coreFieldDefs().forEach(field => {{
+          settingsCard.appendChild(createInput(field, config[field.id], info));
         }});
+        settingsViewEl.appendChild(settingsCard);
 
-        const chip = document.createElement('div');
-        chip.className = 'chip';
-        chip.textContent = 'Core settings are stored in a dedicated section';
-        actionsEl.appendChild(chip);
-        await renderInfo();
+        const coreRows = [
+          {{ label: 'Selected extension', value: info.selectedExtensionId || 'Not set' }},
+          {{ label: 'Extensions loaded', value: info.extensionsLoaded ?? 0 }},
+          {{ label: 'User extensions directory', value: info.userExtensionsDir, format: 'path', mono: true }},
+          {{ label: 'Core extensions directory', value: info.coreExtensionsDir || 'Not available', format: 'path', mono: true }},
+          {{ label: 'Runtime extension roots', value: (info.runtimeExtensionRoots || []).join(', '), format: 'path', mono: true }}
+        ];
+        renderKeyValueCard(statusViewEl, 'Status', 'Current Copper environment information.', coreRows);
         return;
       }}
 
@@ -795,36 +1235,50 @@ fn render_html(state: &UiServerState) -> String {
         throw new Error('Unknown extension section: ' + extensionId);
       }}
 
-      sectionTitleEl.textContent = descriptor.name;
-      sectionSubEl.textContent = `Extension id: ${{descriptor.id}}`;
+      const settingsMeta = descriptor.settings || {{}};
+      const applyActions = Array.isArray(settingsMeta.applyActions) ? settingsMeta.applyActions : [];
+      pageEyebrowEl.textContent = 'Extension';
+      pageTitleEl.textContent = settingsMeta.title || descriptor.name;
+      pageSubEl.textContent =
+        settingsMeta.description ||
+        'Configure this extension on one page and review its latest runtime status separately.';
+      saveBtn.textContent = applyActions.length > 0 ? 'Save and apply' : 'Save settings';
 
-      const config = await loadJson('/config/extension/' + encodeURIComponent(extensionId));
+      const sections = inferSections(descriptor.inputs || [], descriptor);
+      if (sections.length === 0) {{
+        const emptyCard = createCard('Settings', 'This extension does not expose editable settings yet.');
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No configurable fields were declared in the manifest.';
+        emptyCard.appendChild(empty);
+        settingsViewEl.appendChild(emptyCard);
+      }} else {{
+        sections.forEach(section => {{
+          const card = createCard(section.title, section.description);
+          section.inputDefs.forEach(input => {{
+            card.appendChild(createInput(input, config[input.id], info));
+          }});
+          settingsViewEl.appendChild(card);
+        }});
+      }}
 
-      const actionLabel = document.createElement('label');
-      actionLabel.textContent = 'Action';
-      formEl.appendChild(actionLabel);
-      const actionSelect = document.createElement('select');
-      actionSelect.id = 'actionSelect';
-      (descriptor.actions || []).forEach(action => {{
-        const opt = document.createElement('option');
-        opt.value = action.id;
-        opt.textContent = action.label + ' (' + action.id + ')';
-        actionSelect.appendChild(opt);
-      }});
-      actionSelect.value = config.action || ((descriptor.actions && descriptor.actions[0] && descriptor.actions[0].id) || '');
-      formEl.appendChild(actionSelect);
-
-      (descriptor.inputs || []).forEach(input => {{
-        formEl.appendChild(createInput(input, config[input.id]));
-      }});
-
-      (descriptor.actions || []).forEach(action => {{
-        const chip = document.createElement('div');
-        chip.className = 'chip';
-        chip.textContent = action.id + ': ' + action.label;
-        actionsEl.appendChild(chip);
-      }});
-      await renderInfo();
+      const statusMeta = (info && info.statusMeta) || ((settingsMeta || {{}}).status) || {{}};
+      const status = (info && info.status) || {{}};
+      const fieldDefs = (statusMeta.fields && statusMeta.fields.length)
+        ? statusMeta.fields
+        : Object.keys(status).sort().map(key => ({{ key, label: humanizeKey(key) }}));
+      const statusRows = fieldDefs.map(field => ({{
+        label: field.label || humanizeKey(field.key),
+        value: status[field.key],
+        format: field.format
+      }}));
+      renderKeyValueCard(
+        statusViewEl,
+        (statusMeta && statusMeta.title) || 'Recent status',
+        (statusMeta && statusMeta.description) || 'Latest runtime values reported by the daemon for this extension.',
+        statusRows
+      );
+      renderCommands(statusViewEl, (info && info.commands) || []);
     }}
 
     function collectCurrentPayload() {{
@@ -840,28 +1294,26 @@ fn render_html(state: &UiServerState) -> String {
         }}
       }};
 
-      if (currentSection.startsWith('ext:')) {{
-        const extensionId = currentSection.slice(4);
-        const descriptor = byId[extensionId];
-        const actionSelect = document.getElementById('actionSelect');
-        const defaultAction =
-          (descriptor && descriptor.actions && descriptor.actions[0] && descriptor.actions[0].id) || '';
-        if (actionSelect) {{
-          addKey('action', actionSelect.value, defaultAction);
-        }}
-      }} else {{
+      if (!currentSection.startsWith('ext:')) {{
         const coreDefaults = {{
           userExtensionsDir: '~/.Copper/extensions',
           uiTheme: 'obsidian',
           startupExtension: model.selectedExtensionId || ''
         }};
-        const controls = formEl.querySelectorAll('[data-input-id]');
+        const controls = settingsViewEl.querySelectorAll('[data-input-id]');
+        const handled = new Set();
         controls.forEach(ctrl => {{
           const id = ctrl.dataset.inputId;
+          if (handled.has(id)) return;
+          handled.add(id);
           const type = ctrl.dataset.inputType;
           let value;
           if (type === 'boolean') {{
             value = ctrl.value === 'true';
+          }} else if (type === 'multi-select') {{
+            value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
+              .filter(option => option.checked)
+              .map(option => option.dataset.optionValue);
           }} else if (type === 'number') {{
             value = ctrl.value === '' ? null : Number(ctrl.value);
           }} else {{
@@ -873,19 +1325,26 @@ fn render_html(state: &UiServerState) -> String {
         return payload;
       }}
 
-      const controls = formEl.querySelectorAll('[data-input-id]');
+      const controls = settingsViewEl.querySelectorAll('[data-input-id]');
       const extensionId = currentSection.slice(4);
       const descriptor = byId[extensionId];
       const inputDefaults = {{}};
       (descriptor && descriptor.inputs ? descriptor.inputs : []).forEach(input => {{
         inputDefaults[input.id] = input.default;
       }});
+      const handled = new Set();
       controls.forEach(ctrl => {{
         const id = ctrl.dataset.inputId;
+        if (handled.has(id)) return;
+        handled.add(id);
         const type = ctrl.dataset.inputType;
         let value;
         if (type === 'boolean') {{
           value = ctrl.value === 'true';
+        }} else if (type === 'multi-select') {{
+          value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
+            .filter(option => option.checked)
+            .map(option => option.dataset.optionValue);
         }} else if (type === 'number') {{
           value = ctrl.value === '' ? null : Number(ctrl.value);
         }} else {{
@@ -897,21 +1356,44 @@ fn render_html(state: &UiServerState) -> String {
       return payload;
     }}
 
-    document.getElementById('saveBtn').addEventListener('click', async () => {{
+    saveBtn.addEventListener('click', async () => {{
       try {{
         const payload = collectCurrentPayload();
+        const descriptor = currentDescriptor();
+        const applyActions = Array.isArray(descriptor && descriptor.settings && descriptor.settings.applyActions)
+          ? descriptor.settings.applyActions
+          : [];
         const target = currentSection === 'core'
           ? '/config/core'
           : '/config/extension/' + encodeURIComponent(currentSection.slice(4));
         const res = await fetch(target, {{
           method: 'POST',
-          headers: {{ 'content-type': 'application/json' }},
+          headers: {{
+            'content-type': 'application/json',
+            '{UI_AUTH_HEADER}': model.authToken
+          }},
           body: JSON.stringify(payload)
         }});
         if (!res.ok) {{
           throw new Error(await res.text());
         }}
-        setStatus('Section saved successfully.');
+        if (descriptor && applyActions.length > 0) {{
+          const applyRes = await fetch(
+            '/apply/extension/' + encodeURIComponent(descriptor.id),
+            {{
+              method: 'POST',
+              headers: {{ '{UI_AUTH_HEADER}': model.authToken }}
+            }}
+          );
+          if (!applyRes.ok) {{
+            throw new Error('settings were saved, but apply failed: ' + await applyRes.text());
+          }}
+          await renderSection();
+          setStatus('Settings saved and applied to the current system.');
+        }} else {{
+          await renderSection();
+          setStatus('Settings saved successfully.');
+        }}
       }} catch (err) {{
         setStatus('Save failed: ' + err);
       }}
@@ -920,7 +1402,10 @@ fn render_html(state: &UiServerState) -> String {
     if (closeBtn) {{
       closeBtn.addEventListener('click', async () => {{
         try {{
-          await fetch('/close', {{ method: 'POST' }});
+          await fetch('/close', {{
+            method: 'POST',
+            headers: {{ '{UI_AUTH_HEADER}': model.authToken }}
+          }});
           setStatus('UI server closed. You can close this tab.');
         }} catch (err) {{
           setStatus('Close failed: ' + err);
@@ -928,6 +1413,7 @@ fn render_html(state: &UiServerState) -> String {
       }});
     }}
 
+    updateUrl();
     renderNav();
     renderSection().catch(err => setStatus('Load failed: ' + err));
   </script>
@@ -940,11 +1426,18 @@ fn render_html(state: &UiServerState) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_core_info, build_ui_state, core_data_path_for, extension_data_path_for, load_config,
-        parse_json_object, parse_request, read_chunked_body, render_html, start_daemon_ui_server,
-        store_config, write_response, HttpMethod, HttpResponse, UiConfigError, UiOpenOptions,
+        build_core_info, build_ui_state, core_data_path_for, extension_config_path_for,
+        extension_status_path_for, load_config, parse_json_object, parse_request,
+        read_chunked_body, render_html, start_daemon_ui_server, store_config, write_response,
+        HttpMethod, HttpResponse, UiConfigError, UiOpenOptions,
     };
-    use crate::descriptor::{Action, Descriptor, InputField, InputType, UiDescriptor};
+    use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
+    use crate::descriptor::{
+        Action, Descriptor, InputField, InputType, SettingsDescriptor, SettingsSection,
+        StatusDescriptor, StatusField, StatusFieldFormat, UiDescriptor,
+    };
+    use crate::host_extensions::HostExtensionRegistry;
+    use crate::state_store::ExtensionStateStore;
     use std::collections::HashSet;
     use std::fs;
     use std::io::{BufReader, Cursor, Read};
@@ -972,12 +1465,15 @@ mod tests {
                 id: "desktopFolder".to_string(),
                 field_type: InputType::FolderPicker,
                 label: "Desktop folder".to_string(),
+                description: Some("Folder that Copper scans for incoming .torrent files.".to_string()),
                 default: serde_json::json!("~/Desktop"),
                 options: vec![],
+                options_source: None,
             }],
             actions: vec![Action {
                 id: "move-torrents".to_string(),
                 label: "Move .torrent files".to_string(),
+                description: Some("Run the organizer immediately using the saved settings.".to_string()),
                 script: "Move .torrent files".to_string(),
             }],
             ui: Some(UiDescriptor {
@@ -985,6 +1481,34 @@ mod tests {
                 source: None,
                 on_select: None,
             }),
+            settings: Some(SettingsDescriptor {
+                title: Some("Desktop Torrent Organizer".to_string()),
+                description: Some(
+                    "Configure how Copper watches the desktop and review the latest monitor status."
+                        .to_string(),
+                ),
+                apply_actions: vec![],
+                sections: vec![SettingsSection {
+                    id: "monitor".to_string(),
+                    title: "Monitor".to_string(),
+                    description: Some(
+                        "Settings used by the background desktop torrent watcher.".to_string(),
+                    ),
+                    inputs: vec!["desktopFolder".to_string()],
+                }],
+                status: Some(StatusDescriptor {
+                    title: Some("Current status".to_string()),
+                    description: Some(
+                        "Latest runtime values reported by the daemon.".to_string(),
+                    ),
+                    fields: vec![StatusField {
+                        key: "lastScanUnix".to_string(),
+                        label: "Last scan".to_string(),
+                        format: Some(StatusFieldFormat::DateTime),
+                    }],
+                }),
+            }),
+            tray: None,
         }
     }
 
@@ -1000,9 +1524,20 @@ mod tests {
                 PathBuf::from("C:/tmp/copper-core"),
                 PathBuf::from("C:/tmp/copper-user"),
             ],
-            data_root: PathBuf::from("C:/tmp/copper-user"),
+            state_store: ExtensionStateStore::new(PathBuf::from("C:/tmp/.Copper/extensions")),
+            host_extensions: HostExtensionRegistry::new(),
+            auth_token: "test-auth-token".to_string(),
+            origin: "http://127.0.0.1:4766".to_string(),
             allow_close: true,
         }
+    }
+
+    fn test_origin() -> String {
+        "http://127.0.0.1:4766".to_string()
+    }
+
+    fn test_auth() -> ControlPlaneAuth {
+        ControlPlaneAuth::ephemeral()
     }
 
     #[test]
@@ -1057,8 +1592,14 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let descriptor = sample_descriptor();
         write_extension(temp.path(), &descriptor);
-        let err =
-            build_ui_state(temp.path(), Some("missing-extension"), true).expect_err("must fail");
+        let err = build_ui_state(
+            temp.path(),
+            Some("missing-extension"),
+            true,
+            test_auth(),
+            test_origin(),
+        )
+        .expect_err("must fail");
         match err {
             UiConfigError::ExtensionNotFound(id) => assert_eq!(id, "missing-extension"),
             other => panic!("unexpected error: {other}"),
@@ -1072,20 +1613,31 @@ mod tests {
         descriptor.id = "alpha-ext".to_string();
         descriptor.name = "Alpha Extension".to_string();
         write_extension(temp.path(), &descriptor);
-        let state = build_ui_state(temp.path(), None, true).expect("build state");
+        let state = build_ui_state(temp.path(), None, true, test_auth(), test_origin())
+            .expect("build state");
         assert!(state.extension_ids.contains(&state.selected_extension_id));
-        if state.extension_ids.contains("desktop-torrent-organizer") {
-            assert_eq!(state.selected_extension_id, "desktop-torrent-organizer");
-        } else {
-            assert_eq!(state.selected_extension_id, "alpha-ext");
-        }
+        assert_eq!(state.selected_extension_id, "alpha-ext");
     }
 
     fn http_request(addr: &str, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+        http_request_with_headers(addr, method, path, &[], body)
+    }
+
+    fn http_request_with_headers(
+        addr: &str,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<&str>,
+    ) -> (u16, String) {
         let payload = body.unwrap_or("");
         let mut stream = TcpStream::connect(addr).expect("connect");
+        let header_block = headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect::<String>();
         let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{header_block}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
             payload.len(),
             payload
         );
@@ -1105,26 +1657,41 @@ mod tests {
         (status, body)
     }
 
+    fn extract_auth_token(html: &str) -> String {
+        html.split("\"authToken\":\"")
+            .nth(1)
+            .and_then(|tail| tail.split('"').next())
+            .map(str::to_string)
+            .expect("auth token in html")
+    }
+
     #[test]
-    fn render_html_contains_sectioned_settings_layout() {
+    fn render_html_contains_extension_pages_and_status_view() {
         let html = render_html(&sample_state());
         assert!(html.contains("Settings"));
         assert!(html.contains("Copper"));
         assert!(html.contains("Desktop Torrent Organizer"));
-        assert!(html.contains("Save Section"));
-        assert!(html.contains("Info"));
+        assert!(html.contains("Save settings"));
+        assert!(html.contains("Status"));
+        assert!(html.contains("Commands"));
+        assert!(html.contains("Recent status"));
+        assert!(html.contains("URLSearchParams(window.location.search)"));
     }
 
     #[test]
-    fn config_paths_are_sectioned() {
+    fn config_and_status_paths_are_separated() {
         let root = PathBuf::from("C:/tmp/copper-user");
         assert_eq!(
             core_data_path_for(&root),
-            root.join("copper-core").join("data.json")
+            root.join("copper-core").join("config.json")
         );
         assert_eq!(
-            extension_data_path_for(&root, "desktop-torrent-organizer"),
-            root.join("desktop-torrent-organizer").join("data.json")
+            extension_config_path_for(&root, "desktop-torrent-organizer"),
+            root.join("desktop-torrent-organizer").join("config.json")
+        );
+        assert_eq!(
+            extension_status_path_for(&root, "desktop-torrent-organizer"),
+            root.join("desktop-torrent-organizer").join("status.json")
         );
     }
 
@@ -1168,26 +1735,30 @@ mod tests {
     }
 
     #[test]
-    fn store_config_merges_and_removes_keys() {
+    fn store_config_merges_and_removes_keys_without_touching_status() {
         let temp = tempdir().expect("tempdir");
         let path = temp
             .path()
             .join("desktop-torrent-organizer")
-            .join("data.json");
+            .join("config.json");
+        let status_path = temp
+            .path()
+            .join("desktop-torrent-organizer")
+            .join("status.json");
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(
             &path,
             r#"{
               "desktopFolder":"~/Desktop",
-              "action":"move-torrents",
-              "lastScanUnix":1
+              "obsoleteAction":"move-torrents"
             }"#,
         )
         .expect("seed data");
+        fs::write(&status_path, r#"{ "lastScanUnix": 1 }"#).expect("seed status");
 
         let update = serde_json::json!({
             "desktopFolder": "D:/Desktop",
-            "__remove": ["action"]
+            "__remove": ["obsoleteAction"]
         });
         store_config(&path, &update).expect("store config");
 
@@ -1196,8 +1767,10 @@ mod tests {
             stored.get("desktopFolder").and_then(|v| v.as_str()),
             Some("D:/Desktop")
         );
-        assert!(stored.get("action").is_none());
-        assert_eq!(stored.get("lastScanUnix").and_then(|v| v.as_u64()), Some(1));
+        assert!(stored.get("obsoleteAction").is_none());
+
+        let status = load_config(&status_path).expect("load status");
+        assert_eq!(status.get("lastScanUnix").and_then(|v| v.as_u64()), Some(1));
     }
 
     fn parse_over_loopback(raw_request: &'static str) -> super::HttpRequest {
@@ -1356,7 +1929,7 @@ mod tests {
     #[test]
     fn store_config_replaces_with_non_object_payload_and_creates_parent() {
         let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("nested").join("data.json");
+        let path = temp.path().join("nested").join("config.json");
         store_config(&path, &serde_json::json!("raw-string")).expect("store non-object");
         let raw = fs::read_to_string(&path).expect("read file");
         assert!(raw.contains("raw-string"));
@@ -1396,84 +1969,141 @@ mod tests {
         write_extension(temp.path(), &descriptor);
 
         let running = Arc::new(AtomicBool::new(true));
+        let auth = ControlPlaneAuth::ephemeral();
+        let token = auth.token().to_string();
         let server = start_daemon_ui_server(
             temp.path().to_path_buf(),
             "127.0.0.1:0".to_string(),
             Arc::clone(&running),
+            auth,
         )
         .expect("start daemon ui");
         let addr = parse_http_url(&server.url);
+        let auth_headers = [(UI_AUTH_HEADER, token.as_str())];
 
         let (status_root, body_root) = http_request(&addr, "GET", "/", None);
         assert_eq!(status_root, 200);
         assert!(body_root.contains("Copper Settings"));
 
-        let (status_descriptor, body_descriptor) = http_request(&addr, "GET", "/descriptor", None);
+        let (status_descriptor, body_descriptor) =
+            http_request_with_headers(&addr, "GET", "/descriptor", &auth_headers, None);
         assert_eq!(status_descriptor, 200);
         assert!(body_descriptor.contains("desktop-torrent-organizer"));
 
-        let (status_core_get, body_core_get) = http_request(&addr, "GET", "/config/core", None);
+        let (status_core_get, body_core_get) =
+            http_request_with_headers(&addr, "GET", "/config/core", &auth_headers, None);
         assert_eq!(status_core_get, 200);
         assert!(body_core_get.contains("{"));
 
-        let (status_core_post, body_core_post) = http_request(
+        let (status_core_post, body_core_post) = http_request_with_headers(
             &addr,
             "POST",
             "/config/core",
+            &auth_headers,
             Some(r#"{"uiTheme":"obsidian"}"#),
         );
         assert_eq!(status_core_post, 200);
         assert!(body_core_post.contains("\"ok\": true"));
 
-        let (status_core_bad, body_core_bad) =
-            http_request(&addr, "POST", "/config/core", Some(r#"["not-object"]"#));
+        let (status_core_bad, body_core_bad) = http_request_with_headers(
+            &addr,
+            "POST",
+            "/config/core",
+            &auth_headers,
+            Some(r#"["not-object"]"#),
+        );
         assert_eq!(status_core_bad, 400);
         assert!(body_core_bad.contains("JSON object"));
 
-        let (status_info_core, body_info_core) = http_request(&addr, "GET", "/info/core", None);
+        let (status_info_core, body_info_core) =
+            http_request_with_headers(&addr, "GET", "/info/core", &auth_headers, None);
         assert_eq!(status_info_core, 200);
         assert!(body_info_core.contains("runtimeExtensionRoots"));
 
         let ext_path = "/config/extension/desktop-torrent-organizer";
-        let (status_ext_get, _) = http_request(&addr, "GET", ext_path, None);
+        let (status_ext_get, _) =
+            http_request_with_headers(&addr, "GET", ext_path, &auth_headers, None);
         assert_eq!(status_ext_get, 200);
 
-        let (status_ext_post, body_ext_post) = http_request(
+        let (status_ext_post, body_ext_post) = http_request_with_headers(
             &addr,
             "POST",
             ext_path,
-            Some(r#"{"action":"move-torrents"}"#),
+            &auth_headers,
+            Some(r#"{"desktopFolder":"D:/Desktop"}"#),
         );
         assert_eq!(status_ext_post, 200);
         assert!(body_ext_post.contains("\"ok\": true"));
 
-        let (status_info_ext, body_info_ext) = http_request(
+        let (status_info_ext, body_info_ext) = http_request_with_headers(
             &addr,
             "GET",
             "/info/extension/desktop-torrent-organizer",
+            &auth_headers,
             None,
         );
         assert_eq!(status_info_ext, 200);
-        assert!(body_info_ext.contains("move-torrents"));
+        assert!(body_info_ext.contains("\"commands\""));
 
-        let (status_missing_ext_get, _) =
-            http_request(&addr, "GET", "/config/extension/missing", None);
+        let (status_missing_ext_get, _) = http_request_with_headers(
+            &addr,
+            "GET",
+            "/config/extension/missing",
+            &auth_headers,
+            None,
+        );
         assert_eq!(status_missing_ext_get, 404);
 
-        let (status_missing_ext_post, _) = http_request(
+        let (status_missing_ext_post, _) = http_request_with_headers(
             &addr,
             "POST",
             "/config/extension/missing",
+            &auth_headers,
             Some(r#"{"x":1}"#),
         );
         assert_eq!(status_missing_ext_post, 404);
 
-        let (status_close, body_close) = http_request(&addr, "POST", "/close", Some("{}"));
+        let (status_close, body_close) =
+            http_request_with_headers(&addr, "POST", "/close", &auth_headers, Some("{}"));
         assert_eq!(status_close, 400);
         assert!(body_close.contains("close is disabled"));
 
-        let (status_not_found, _) = http_request(&addr, "GET", "/does-not-exist", None);
+        let (status_not_found, _) =
+            http_request_with_headers(&addr, "GET", "/does-not-exist", &auth_headers, None);
         assert_eq!(status_not_found, 404);
+
+        running.store(false, Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(80));
+    }
+
+    #[test]
+    fn daemon_ui_server_rejects_unauthorized_routes() {
+        let temp = tempdir().expect("tempdir");
+        let descriptor = sample_descriptor();
+        write_extension(temp.path(), &descriptor);
+
+        let running = Arc::new(AtomicBool::new(true));
+        let server = start_daemon_ui_server(
+            temp.path().to_path_buf(),
+            "127.0.0.1:0".to_string(),
+            Arc::clone(&running),
+            ControlPlaneAuth::ephemeral(),
+        )
+        .expect("start daemon ui");
+        let addr = parse_http_url(&server.url);
+
+        let (status_descriptor, body_descriptor) = http_request(&addr, "GET", "/descriptor", None);
+        assert_eq!(status_descriptor, 403);
+        assert!(body_descriptor.contains("control-plane token"));
+
+        let (status_post, body_post) = http_request(
+            &addr,
+            "POST",
+            "/config/core",
+            Some(r#"{"uiTheme":"obsidian"}"#),
+        );
+        assert_eq!(status_post, 403);
+        assert!(body_post.contains("control-plane token"));
 
         running.store(false, Ordering::Relaxed);
         std::thread::sleep(Duration::from_millis(80));
@@ -1514,7 +2144,11 @@ mod tests {
         }
         assert!(up, "config UI should accept connections");
 
-        let (status_close, _) = http_request(&bind, "POST", "/close", Some("{}"));
+        let (_, root_body) = http_request(&bind, "GET", "/", None);
+        let token = extract_auth_token(&root_body);
+        let auth_headers = [(UI_AUTH_HEADER, token.as_str())];
+        let (status_close, _) =
+            http_request_with_headers(&bind, "POST", "/close", &auth_headers, Some("{}"));
         assert_eq!(status_close, 204);
 
         let url = handle

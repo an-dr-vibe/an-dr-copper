@@ -35,6 +35,8 @@ pwsh -NoProfile -Command "$s=Invoke-RestMethod 'https://raw.githubusercontent.co
 ./scripts/daemon.ps1 -Action list
 # config UI is always available while daemon runs:
 # http://127.0.0.1:4766
+# Windows-only: `windows-display-manager` registers an additional tray icon.
+# Left click toggles taskbar auto-hide. Right click opens resolution/scale/settings/exit menu.
 ./target/release/copperd.exe ui open --extension desktop-torrent-organizer
 ./scripts/daemon.ps1 -Action shutdown
 ```
@@ -59,7 +61,11 @@ Release output is written to `dist/release` and includes:
 cargo run -p copperd -- verify --extensions-dir ./extensions
 cargo run -p copperd -- trigger session-counter --extensions-dir ./extensions
 cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents --extensions-dir ./extensions
+cargo run -p copperd -- daemon trigger windows-display-manager --action status --bind-addr 127.0.0.1:4765
+cargo run -p copperd -- daemon trigger windows-display-manager --action set-resolution --bind-addr 127.0.0.1:4765
 ```
+
+`windows-display-manager` is a Windows-only host extension. On non-Windows hosts, trigger execution returns a platform support error.
 
 ## 6. Generate main.ts from manifest
 

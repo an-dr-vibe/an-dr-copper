@@ -1,12 +1,16 @@
 use crate::config_ui::{start_daemon_ui_server, DEFAULT_DAEMON_UI_BIND};
-use crate::descriptor::Permission;
+use crate::control_plane::ControlPlaneAuth;
+use crate::execution::{permissions_as_strings, ExecutionEngine};
 use crate::extension::{
     core_extensions_dir, default_extensions_dir, load_runtime_registry, Registry,
 };
+use crate::host_extensions::HostExtensionRegistry;
+use crate::runtime::DryRunRuntime;
+use crate::state_store::ExtensionStateStore;
 use crate::tray::TrayController;
+use crate::tray_extension::AdditionalTrayController;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsString;
-use std::fs;
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -14,15 +18,24 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use thiserror::Error;
+
+#[cfg(test)]
+use crate::host_extensions::{
+    DESKTOP_TORRENT_ORGANIZER_ID, SESSION_COUNTER_ID, WINDOWS_DISPLAY_MANAGER_ID,
+};
+#[cfg(test)]
+use std::ffi::OsString;
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:4765";
 pub const DEFAULT_RELOAD_INTERVAL_MS: u64 = 3_000;
-const DESKTOP_TORRENT_ORGANIZER_ID: &str = "desktop-torrent-organizer";
-const SESSION_COUNTER_ID: &str = "session-counter";
+#[cfg(test)]
 const SESSION_COUNTER_INCREMENT_ACTION: &str = "increment";
-
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     pub extensions_dir: PathBuf,
@@ -98,9 +111,13 @@ struct DaemonState {
     user_extensions_dir: PathBuf,
     core_extensions_dir: Option<PathBuf>,
     registry: Registry,
-    last_torrent_poll: Option<Instant>,
+    auth_token: Option<String>,
+    state_store: ExtensionStateStore,
+    host_extensions: HostExtensionRegistry,
+    last_background_poll: BTreeMap<String, Instant>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 struct TorrentMonitorConfig {
     enabled: bool,
@@ -109,6 +126,7 @@ struct TorrentMonitorConfig {
     torrents_folder: PathBuf,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 struct TorrentMoveReport {
     found: u64,
@@ -123,7 +141,10 @@ impl DaemonState {
             user_extensions_dir: user_extensions_dir.to_path_buf(),
             core_extensions_dir: core_extensions_dir(),
             registry,
-            last_torrent_poll: None,
+            auth_token: None,
+            state_store: ExtensionStateStore::for_current_user()?,
+            host_extensions: HostExtensionRegistry::new(),
+            last_background_poll: BTreeMap::new(),
         })
     }
 
@@ -151,26 +172,22 @@ impl DaemonState {
     }
 
     fn tick_background_tasks(&mut self) {
-        if let Err(err) = self.tick_torrent_monitor() {
-            eprintln!("desktop torrent monitor error: {err}");
-        }
-    }
-
-    fn tick_torrent_monitor(&mut self) -> Result<(), String> {
-        let config = load_torrent_monitor_config().map_err(|err| err.to_string())?;
-        if !config.enabled {
-            return Ok(());
-        }
-        if let Some(last) = self.last_torrent_poll {
-            if last.elapsed() < config.poll_interval {
-                return Ok(());
+        for extension_id in self.host_extensions.background_extension_ids() {
+            let last_run = self.last_background_poll.get(*extension_id).copied();
+            match self
+                .host_extensions
+                .tick_background(extension_id, &self.state_store, last_run)
+            {
+                Ok(true) => {
+                    self.last_background_poll
+                        .insert((*extension_id).to_string(), Instant::now());
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    eprintln!("background task error for {extension_id}: {err}");
+                }
             }
         }
-        self.last_torrent_poll = Some(Instant::now());
-
-        let report = run_torrent_move(&config).map_err(|err| err.to_string())?;
-        write_desktop_torrent_status(&config, report).map_err(|err| err.to_string())?;
-        Ok(())
     }
 }
 
@@ -185,12 +202,15 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     .map_err(|e| DaemonError::SignalHandler(e.to_string()))?;
 
     let mut state = DaemonState::load(&config.extensions_dir)?;
+    let auth = ControlPlaneAuth::ensure_persisted()?;
+    state.auth_token = Some(auth.token().to_string());
     let daemon_ui_bind = std::env::var("COPPERD_DAEMON_UI_BIND")
         .unwrap_or_else(|_| DEFAULT_DAEMON_UI_BIND.to_string());
     let daemon_ui = start_daemon_ui_server(
         config.extensions_dir.clone(),
         daemon_ui_bind,
         Arc::clone(&running),
+        auth.clone(),
     )
     .map_err(|err| DaemonError::Protocol(format!("failed to start daemon UI server: {err}")))?;
     let disable_tray = std::env::var("COPPERD_DISABLE_TRAY")
@@ -208,9 +228,25 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
         )
     };
+    let additional_trays = if disable_tray {
+        None
+    } else {
+        Some(
+            AdditionalTrayController::initialize(
+                Arc::clone(&running),
+                daemon_ui.url.clone(),
+                &state.registry,
+            )
+            .map_err(|err| DaemonError::Tray(err.to_string()))?,
+        )
+    };
+    let additional_tray_count = additional_trays
+        .as_ref()
+        .map(|controller| controller.specs().len())
+        .unwrap_or(0);
 
     println!(
-        "Daemon started on {} (user extensions: {}, core extensions: {}, config UI: {})",
+        "Daemon started on {} (user extensions: {}, core extensions: {}, config UI: {}, additional tray icons: {})",
         config.bind_addr,
         config.extensions_dir.display(),
         state
@@ -218,7 +254,8 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "<not found>".to_string()),
-        daemon_ui.url
+        daemon_ui.url,
+        additional_tray_count
     );
 
     let mut last_reload = Instant::now();
@@ -259,7 +296,14 @@ fn is_would_block_daemon(err: &DaemonError) -> bool {
 
 pub fn send_request(bind_addr: &str, request: &IpcRequest) -> Result<IpcResponse, DaemonError> {
     let mut stream = TcpStream::connect(bind_addr)?;
-    let payload = format!("{}\n", serde_json::to_string(request)?);
+    let auth_token = ControlPlaneAuth::load_persisted_token()?;
+    let payload = format!(
+        "{}\n",
+        serde_json::to_string(&AuthenticatedIpcRequestRef {
+            request,
+            token: auth_token.as_deref(),
+        })?
+    );
     stream.write_all(payload.as_bytes())?;
     stream.flush()?;
 
@@ -274,6 +318,22 @@ pub fn send_request(bind_addr: &str, request: &IpcRequest) -> Result<IpcResponse
 
     let response: IpcResponse = serde_json::from_str(response_line.trim())?;
     Ok(response)
+}
+
+#[derive(Debug, Serialize)]
+struct AuthenticatedIpcRequestRef<'a> {
+    #[serde(flatten)]
+    request: &'a IpcRequest,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "token")]
+    token: Option<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthenticatedIpcRequest {
+    #[serde(flatten)]
+    request: IpcRequest,
+    #[serde(default, rename = "token")]
+    token: Option<String>,
 }
 
 fn handle_connection(
@@ -294,8 +354,18 @@ fn handle_connection(
         }
     }
 
-    let response = match serde_json::from_str::<IpcRequest>(request_line.trim()) {
-        Ok(request) => handle_request(state, request, running),
+    let response = match serde_json::from_str::<AuthenticatedIpcRequest>(request_line.trim()) {
+        Ok(request) => {
+            if let Some(expected) = state.auth_token.as_deref() {
+                if request.token.as_deref() != Some(expected) {
+                    IpcResponse::err("unauthorized request")
+                } else {
+                    handle_request(state, request.request, running)
+                }
+            } else {
+                handle_request(state, request.request, running)
+            }
+        }
         Err(err) => IpcResponse::err(format!("invalid request: {err}")),
     };
 
@@ -388,49 +458,13 @@ fn trigger_payload(
         .registry
         .get(id)
         .ok_or_else(|| format!("extension '{id}' not found"))?;
-    let selected_action = if let Some(action_id) = action {
-        ext.descriptor
-            .actions
-            .iter()
-            .find(|candidate| candidate.id == action_id)
-            .ok_or_else(|| format!("action '{action_id}' not found in extension '{id}'"))?
-    } else {
-        ext.descriptor
-            .actions
-            .first()
-            .ok_or_else(|| format!("extension '{id}' contains no executable actions"))?
-    };
-
-    let mut payload = serde_json::json!({
-        "extensionId": ext.descriptor.id,
-        "actionId": selected_action.id,
-        "permissions": permissions_as_strings(&ext.descriptor.permissions),
-        "script": selected_action.script,
-        "mainTsPath": ext.main_ts_path.display().to_string(),
-    });
-
-    if let Some(count) = maybe_increment_session_counter(&ext.descriptor.id, &selected_action.id)
-        .map_err(|err| format!("failed to update session counter status: {err}"))?
-    {
-        payload["sessionCount"] = serde_json::json!(count);
-    }
-
-    Ok(payload)
+    let runtime = DryRunRuntime;
+    let engine = ExecutionEngine::new(&runtime, &state.host_extensions, &state.state_store);
+    let prepared = engine.prepare_trigger(ext, action)?;
+    serde_json::to_value(prepared).map_err(|err| err.to_string())
 }
 
-fn permissions_as_strings(permissions: &[Permission]) -> Vec<&'static str> {
-    permissions
-        .iter()
-        .map(|permission| match permission {
-            Permission::Fs => "fs",
-            Permission::Shell => "shell",
-            Permission::Network => "network",
-            Permission::Store => "store",
-            Permission::Ui => "ui",
-        })
-        .collect()
-}
-
+#[cfg(test)]
 pub fn maybe_increment_session_counter(
     extension_id: &str,
     action_id: &str,
@@ -439,6 +473,7 @@ pub fn maybe_increment_session_counter(
     maybe_increment_session_counter_in(&data_root, extension_id, action_id)
 }
 
+#[cfg(test)]
 fn maybe_increment_session_counter_in(
     data_root: &Path,
     extension_id: &str,
@@ -449,7 +484,7 @@ fn maybe_increment_session_counter_in(
     }
 
     fs::create_dir_all(data_root)?;
-    let path = extension_data_path_in(data_root, SESSION_COUNTER_ID);
+    let path = extension_status_path_in(data_root, SESSION_COUNTER_ID);
 
     let mut status = read_json_object(&path)?;
     let current = status.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -461,16 +496,81 @@ fn maybe_increment_session_counter_in(
     Ok(Some(next))
 }
 
+#[cfg(test)]
+fn execute_windows_display_action_with_runner_in<F>(
+    data_root: &Path,
+    action_id: &str,
+    runner: F,
+) -> Result<serde_json::Value, std::io::Error>
+where
+    F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value, String>,
+{
+    fs::create_dir_all(data_root)?;
+    let config = load_extension_config_object(data_root, WINDOWS_DISPLAY_MANAGER_ID)?;
+    let path = extension_status_path_in(data_root, WINDOWS_DISPLAY_MANAGER_ID);
+    let mut state = read_json_object(&path)?;
+    let execution = match runner(action_id, &config) {
+        Ok(value) => value,
+        Err(err) => {
+            let message = err.clone();
+            if let Some(map) = state.as_object_mut() {
+                map.insert("lastActionId".to_string(), serde_json::json!(action_id));
+                map.insert(
+                    "lastActionUnix".to_string(),
+                    serde_json::json!(unix_now_secs()),
+                );
+                map.insert("lastActionOk".to_string(), serde_json::json!(false));
+                map.insert("lastError".to_string(), serde_json::json!(err));
+            }
+            write_json_object(&path, &state)?;
+            return Err(std::io::Error::other(message));
+        }
+    };
+
+    if let Some(map) = state.as_object_mut() {
+        map.insert("lastActionId".to_string(), serde_json::json!(action_id));
+        map.insert(
+            "lastActionUnix".to_string(),
+            serde_json::json!(unix_now_secs()),
+        );
+        map.insert("lastActionOk".to_string(), serde_json::json!(true));
+        map.remove("lastError");
+        map.insert("lastResult".to_string(), execution.clone());
+
+        if let Some(taskbar_auto_hide) = execution.get("taskbarAutoHide") {
+            map.insert("taskbarAutoHide".to_string(), taskbar_auto_hide.clone());
+        }
+        if let Some(scale_current) = execution.get("scale").and_then(|v| v.get("currentPercent")) {
+            map.insert("scalePercent".to_string(), scale_current.clone());
+        }
+        if let Some(resolution) = execution.get("resolution") {
+            if let Some(width) = resolution.get("width") {
+                map.insert("resolutionWidth".to_string(), width.clone());
+            }
+            if let Some(height) = resolution.get("height") {
+                map.insert("resolutionHeight".to_string(), height.clone());
+            }
+            if let Some(refresh_rate) = resolution.get("refreshRate") {
+                map.insert("refreshRate".to_string(), refresh_rate.clone());
+            }
+        }
+    }
+
+    write_json_object(&path, &state)?;
+    Ok(execution)
+}
+
+#[cfg(test)]
 fn load_torrent_monitor_config() -> Result<TorrentMonitorConfig, std::io::Error> {
     let data_root = copper_data_root()?;
     load_torrent_monitor_config_from(&data_root)
 }
 
+#[cfg(test)]
 fn load_torrent_monitor_config_from(
     data_root: &Path,
 ) -> Result<TorrentMonitorConfig, std::io::Error> {
-    let path = extension_data_path_in(data_root, DESKTOP_TORRENT_ORGANIZER_ID);
-    let config = read_json_object(&path)?;
+    let config = load_extension_config_object(data_root, DESKTOP_TORRENT_ORGANIZER_ID)?;
 
     let enabled = config
         .get("autoRun")
@@ -502,6 +602,7 @@ fn load_torrent_monitor_config_from(
     })
 }
 
+#[cfg(test)]
 fn run_torrent_move(config: &TorrentMonitorConfig) -> Result<TorrentMoveReport, std::io::Error> {
     fs::create_dir_all(&config.torrents_folder)?;
 
@@ -545,6 +646,7 @@ fn run_torrent_move(config: &TorrentMonitorConfig) -> Result<TorrentMoveReport, 
     Ok(report)
 }
 
+#[cfg(test)]
 fn next_available_destination(target_dir: &Path, file_name: OsString) -> PathBuf {
     let original = target_dir.join(&file_name);
     if !original.exists() {
@@ -572,6 +674,7 @@ fn next_available_destination(target_dir: &Path, file_name: OsString) -> PathBuf
     ))
 }
 
+#[cfg(test)]
 fn split_name_and_extension(name: &str) -> (&str, &str) {
     match name.rsplit_once('.') {
         Some((base, ext)) if !base.is_empty() => (base, ext),
@@ -579,21 +682,14 @@ fn split_name_and_extension(name: &str) -> (&str, &str) {
     }
 }
 
-fn write_desktop_torrent_status(
-    config: &TorrentMonitorConfig,
-    report: TorrentMoveReport,
-) -> Result<(), std::io::Error> {
-    let data_root = copper_data_root()?;
-    write_desktop_torrent_status_in(&data_root, config, report)
-}
-
+#[cfg(test)]
 fn write_desktop_torrent_status_in(
     data_root: &Path,
     config: &TorrentMonitorConfig,
     report: TorrentMoveReport,
 ) -> Result<(), std::io::Error> {
     fs::create_dir_all(data_root)?;
-    let path = extension_data_path_in(data_root, DESKTOP_TORRENT_ORGANIZER_ID);
+    let path = extension_status_path_in(data_root, DESKTOP_TORRENT_ORGANIZER_ID);
 
     let mut status = read_json_object(&path)?;
     status["autoRun"] = serde_json::json!(config.enabled);
@@ -611,6 +707,7 @@ fn write_desktop_torrent_status_in(
     write_json_object(&path, &status)
 }
 
+#[cfg(test)]
 fn expand_home(raw: &str) -> PathBuf {
     if let Some(stripped) = raw.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
@@ -625,6 +722,7 @@ fn expand_home(raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
+#[cfg(test)]
 fn copper_data_root() -> Result<PathBuf, std::io::Error> {
     let home = dirs::home_dir().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "home directory not available")
@@ -632,14 +730,43 @@ fn copper_data_root() -> Result<PathBuf, std::io::Error> {
     Ok(copper_data_root_from_home(&home))
 }
 
+#[cfg(test)]
 fn copper_data_root_from_home(home: &Path) -> PathBuf {
     home.join(".Copper").join("extensions")
 }
 
-fn extension_data_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
+#[cfg(test)]
+fn extension_config_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
+    data_root.join(extension_id).join("config.json")
+}
+
+#[cfg(test)]
+fn extension_status_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
+    data_root.join(extension_id).join("status.json")
+}
+
+#[cfg(test)]
+fn extension_legacy_data_path_in(data_root: &Path, extension_id: &str) -> PathBuf {
     data_root.join(extension_id).join("data.json")
 }
 
+#[cfg(test)]
+fn load_extension_config_object(
+    data_root: &Path,
+    extension_id: &str,
+) -> Result<serde_json::Value, std::io::Error> {
+    let config_path = extension_config_path_in(data_root, extension_id);
+    if config_path.exists() {
+        return read_json_object(&config_path);
+    }
+    let legacy_path = extension_legacy_data_path_in(data_root, extension_id);
+    if legacy_path.exists() {
+        return read_json_object(&legacy_path);
+    }
+    Ok(serde_json::json!({}))
+}
+
+#[cfg(test)]
 fn read_json_object(path: &Path) -> Result<serde_json::Value, std::io::Error> {
     if !path.exists() {
         return Ok(serde_json::json!({}));
@@ -654,6 +781,7 @@ fn read_json_object(path: &Path) -> Result<serde_json::Value, std::io::Error> {
     })
 }
 
+#[cfg(test)]
 fn write_json_object(path: &Path, value: &serde_json::Value) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -661,6 +789,7 @@ fn write_json_object(path: &Path, value: &serde_json::Value) -> Result<(), std::
     fs::write(path, serde_json::to_string_pretty(value)?)
 }
 
+#[cfg(test)]
 fn unix_now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -671,13 +800,15 @@ fn unix_now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        copper_data_root_from_home, expand_home, extension_data_path_in, handle_connection,
-        handle_request, is_would_block_daemon, is_would_block_io, load_torrent_monitor_config,
+        copper_data_root_from_home, execute_windows_display_action_with_runner_in, expand_home,
+        extension_config_path_in, extension_status_path_in, handle_connection, handle_request,
+        is_would_block_daemon, is_would_block_io, load_torrent_monitor_config,
         load_torrent_monitor_config_from, maybe_increment_session_counter,
         maybe_increment_session_counter_in, next_available_destination, read_json_object,
-        run_torrent_move, send_request, split_name_and_extension, write_desktop_torrent_status_in,
-        write_json_object, DaemonConfig, DaemonError, DaemonState, IpcRequest,
-        TorrentMonitorConfig, DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS,
+        run_torrent_move, send_request, split_name_and_extension, trigger_payload,
+        write_desktop_torrent_status_in, write_json_object, DaemonConfig, DaemonError, DaemonState,
+        IpcRequest, TorrentMonitorConfig, DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS,
+        WINDOWS_DISPLAY_MANAGER_ID,
     };
     use std::fs;
     use std::io::{self, Read};
@@ -709,6 +840,32 @@ mod tests {
                     ]
                 }}"#
             ),
+        )
+        .expect("write descriptor");
+        fs::write(
+            ext.join("main.ts"),
+            "export default function(){ return {}; }",
+        )
+        .expect("write main.ts");
+    }
+
+    fn write_windows_display_extension(root: &Path) {
+        let ext = root.join("windows-display-manager");
+        fs::create_dir_all(&ext).expect("create extension directory");
+        fs::write(
+            ext.join("manifest.json"),
+            r#"{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "windows-display-manager",
+                "name": "Windows Display Manager",
+                "version": "1.0.0",
+                "trigger": "windows-display",
+                "permissions": ["ui", "store"],
+                "actions": [
+                    { "id": "status", "label": "Status", "script": "status" },
+                    { "id": "toggle-taskbar-autohide", "label": "Toggle", "script": "toggle" }
+                ]
+            }"#,
         )
         .expect("write descriptor");
         fs::write(
@@ -961,12 +1118,17 @@ mod tests {
     }
 
     #[test]
-    fn extension_data_path_is_scoped_to_extension() {
+    fn extension_storage_paths_are_scoped_to_extension() {
         let root = PathBuf::from("C:/tmp/.Copper/extensions");
-        let path = extension_data_path_in(&root, "desktop-torrent-organizer");
+        let config_path = extension_config_path_in(&root, "desktop-torrent-organizer");
+        let status_path = extension_status_path_in(&root, "desktop-torrent-organizer");
         assert_eq!(
-            path,
-            root.join("desktop-torrent-organizer").join("data.json")
+            config_path,
+            root.join("desktop-torrent-organizer").join("config.json")
+        );
+        assert_eq!(
+            status_path,
+            root.join("desktop-torrent-organizer").join("status.json")
         );
     }
 
@@ -1086,7 +1248,7 @@ mod tests {
         };
 
         write_desktop_torrent_status_in(&data_root, &config, report).expect("write status");
-        let stored = read_json_object(&extension_data_path_in(
+        let stored = read_json_object(&extension_status_path_in(
             &data_root,
             "desktop-torrent-organizer",
         ))
@@ -1214,6 +1376,38 @@ mod tests {
     }
 
     #[test]
+    fn handle_connection_rejects_missing_control_plane_token() {
+        let temp = tempdir().expect("tempdir");
+        write_extension(temp.path(), "alpha-ext");
+        let mut state = DaemonState::load(temp.path()).expect("state");
+        state.auth_token = Some("test-token".to_string());
+        let running = AtomicBool::new(true);
+        let addr = free_addr();
+        let listener = TcpListener::bind(&addr).expect("bind");
+
+        let client = std::thread::spawn({
+            let addr = addr.clone();
+            move || {
+                let mut stream = TcpStream::connect(&addr).expect("connect");
+                std::io::Write::write_all(&mut stream, br#"{"op":"health"}"#)
+                    .expect("write request");
+                std::io::Write::write_all(&mut stream, b"\n").expect("newline");
+                std::io::Write::flush(&mut stream).expect("flush");
+                let mut response = String::new();
+                stream.read_to_string(&mut response).expect("read response");
+                response
+            }
+        });
+
+        let (stream, _) = listener.accept().expect("accept");
+        handle_connection(stream, &mut state, &running).expect("handle connection");
+
+        let response = client.join().expect("join");
+        assert!(response.contains("\"ok\":false"));
+        assert!(response.contains("unauthorized request"));
+    }
+
+    #[test]
     fn send_request_parses_successful_json_response() {
         let addr = free_addr();
         let listener = TcpListener::bind(&addr).expect("bind");
@@ -1297,6 +1491,123 @@ mod tests {
     }
 
     #[test]
+    fn trigger_payload_windows_display_status_reports_host_execution() {
+        let temp = tempdir().expect("tempdir");
+        write_windows_display_extension(temp.path());
+        let state = DaemonState::load(temp.path()).expect("state");
+
+        let result = trigger_payload(&state, "windows-display-manager", Some("status"));
+        if cfg!(target_os = "windows") {
+            let payload = result.expect("payload");
+            assert_eq!(
+                payload.get("extensionId").and_then(|v| v.as_str()),
+                Some("windows-display-manager")
+            );
+            assert_eq!(
+                payload.get("actionId").and_then(|v| v.as_str()),
+                Some("status")
+            );
+            assert!(
+                payload.get("hostExecution").is_some(),
+                "windows-display status action should include host execution payload"
+            );
+        } else {
+            let err = result.expect_err("non-windows should not support display manager");
+            assert!(err.contains("only supported on Windows"));
+        }
+    }
+
+    #[test]
+    fn windows_display_actions_apply_saved_config_instead_of_status_snapshot() {
+        let temp = tempdir().expect("tempdir");
+        let data_root = temp.path();
+        write_json_object(
+            &extension_config_path_in(data_root, WINDOWS_DISPLAY_MANAGER_ID),
+            &serde_json::json!({
+                "taskbarAutoHide": true,
+                "resolutionWidth": 2560,
+                "resolutionHeight": 1440,
+                "refreshRate": 144,
+                "scalePercent": 150
+            }),
+        )
+        .expect("write config");
+        write_json_object(
+            &extension_status_path_in(data_root, WINDOWS_DISPLAY_MANAGER_ID),
+            &serde_json::json!({
+                "taskbarAutoHide": false,
+                "resolutionWidth": 1920,
+                "resolutionHeight": 1080,
+                "refreshRate": 60,
+                "scalePercent": 100
+            }),
+        )
+        .expect("write status");
+
+        let execution = execute_windows_display_action_with_runner_in(
+            data_root,
+            "set-resolution",
+            |action_id, config| {
+                assert_eq!(action_id, "set-resolution");
+                assert_eq!(
+                    config.get("resolutionWidth").and_then(|v| v.as_i64()),
+                    Some(2560)
+                );
+                assert_eq!(
+                    config.get("resolutionHeight").and_then(|v| v.as_i64()),
+                    Some(1440)
+                );
+                assert_eq!(
+                    config.get("refreshRate").and_then(|v| v.as_i64()),
+                    Some(144)
+                );
+                Ok(serde_json::json!({
+                    "ok": true,
+                    "action": "set-resolution",
+                    "applied": true,
+                    "resolution": {
+                        "width": 2560,
+                        "height": 1440,
+                        "refreshRate": 144
+                    }
+                }))
+            },
+        )
+        .expect("execution");
+
+        assert_eq!(
+            execution.get("action").and_then(|value| value.as_str()),
+            Some("set-resolution")
+        );
+
+        let status = read_json_object(&extension_status_path_in(
+            data_root,
+            WINDOWS_DISPLAY_MANAGER_ID,
+        ))
+        .expect("read status");
+        assert_eq!(
+            status.get("lastActionOk").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            status
+                .get("resolutionWidth")
+                .and_then(|value| value.as_i64()),
+            Some(2560)
+        );
+        assert_eq!(
+            status
+                .get("resolutionHeight")
+                .and_then(|value| value.as_i64()),
+            Some(1440)
+        );
+        assert_eq!(
+            status.get("refreshRate").and_then(|value| value.as_i64()),
+            Some(144)
+        );
+    }
+
+    #[test]
     fn verify_request_errors_when_loaded_extension_loses_main_file() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
@@ -1374,11 +1685,59 @@ mod tests {
         };
 
         write_desktop_torrent_status_in(&data_root, &config, report).expect("write status");
-        let stored = read_json_object(&extension_data_path_in(
+        let stored = read_json_object(&extension_status_path_in(
             &data_root,
             "desktop-torrent-organizer",
         ))
         .expect("read status");
         assert!(stored.get("lastMoveUnix").is_none());
+    }
+
+    #[test]
+    fn load_torrent_monitor_config_prefers_config_file_and_falls_back_to_legacy_data_file() {
+        let temp = tempdir().expect("tempdir");
+        let data_root = temp.path().join(".Copper/extensions");
+        let ext_dir = data_root.join("desktop-torrent-organizer");
+        fs::create_dir_all(&ext_dir).expect("create extension dir");
+
+        fs::write(
+            ext_dir.join("data.json"),
+            r#"{
+                "desktopFolder": "D:/LegacyDesktop",
+                "torrentsFolder": "D:/LegacyDesktop/Torrents",
+                "autoRun": false,
+                "pollIntervalSeconds": 33
+            }"#,
+        )
+        .expect("write legacy data");
+
+        let legacy = load_torrent_monitor_config_from(&data_root).expect("load legacy");
+        assert_eq!(legacy.desktop_folder, PathBuf::from("D:/LegacyDesktop"));
+        assert_eq!(
+            legacy.torrents_folder,
+            PathBuf::from("D:/LegacyDesktop/Torrents")
+        );
+        assert!(!legacy.enabled);
+        assert_eq!(legacy.poll_interval.as_secs(), 33);
+
+        fs::write(
+            ext_dir.join("config.json"),
+            r#"{
+                "desktopFolder": "D:/ConfigDesktop",
+                "torrentsFolder": "D:/ConfigDesktop/Torrents",
+                "autoRun": true,
+                "pollIntervalSeconds": 9
+            }"#,
+        )
+        .expect("write config");
+
+        let config = load_torrent_monitor_config_from(&data_root).expect("load config");
+        assert_eq!(config.desktop_folder, PathBuf::from("D:/ConfigDesktop"));
+        assert_eq!(
+            config.torrents_folder,
+            PathBuf::from("D:/ConfigDesktop/Torrents")
+        );
+        assert!(config.enabled);
+        assert_eq!(config.poll_interval.as_secs(), 9);
     }
 }

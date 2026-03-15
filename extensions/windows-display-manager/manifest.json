@@ -1,0 +1,141 @@
+{
+  "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+  "id": "windows-display-manager",
+  "name": "Windows Display Manager",
+  "version": "1.0.0",
+  "trigger": "windows-display",
+  "permissions": ["ui", "store"],
+  "inputs": [
+    {
+      "id": "taskbarAutoHide",
+      "type": "boolean",
+      "label": "Taskbar auto-hide",
+      "description": "Hide the Windows taskbar until the pointer reaches the screen edge.",
+      "default": false
+    },
+    {
+      "id": "resolutionWidth",
+      "type": "number",
+      "label": "Resolution width",
+      "description": "Target display width in pixels.",
+      "default": 1920
+    },
+    {
+      "id": "resolutionHeight",
+      "type": "number",
+      "label": "Resolution height",
+      "description": "Target display height in pixels.",
+      "default": 1080
+    },
+    {
+      "id": "refreshRate",
+      "type": "number",
+      "label": "Refresh rate (Hz)",
+      "description": "Target display refresh rate in hertz.",
+      "default": 60
+    },
+    {
+      "id": "scalePercent",
+      "type": "number",
+      "label": "Display scale (%)",
+      "description": "Target Windows display scale percentage.",
+      "default": 100
+    },
+    {
+      "id": "trayResolutionPresets",
+      "type": "multi-select",
+      "label": "Tray resolution presets",
+      "description": "Select which detected resolutions appear in the tray menu.",
+      "default": ["1920x1080@60", "2560x1440@60"],
+      "optionsSource": "dynamicOptions.trayResolutionPresets"
+    }
+  ],
+  "actions": [
+    {
+      "id": "status",
+      "label": "Read taskbar and display status",
+      "description": "Query the current taskbar, resolution, and scaling values from the host.",
+      "script": "Query taskbar auto-hide, current resolution, and current scale from daemon host API."
+    },
+    {
+      "id": "toggle-taskbar-autohide",
+      "label": "Toggle taskbar auto-hide",
+      "description": "Flip the taskbar between pinned and auto-hide states.",
+      "script": "Toggle Windows taskbar auto-hide state and return updated status."
+    },
+    {
+      "id": "set-taskbar-autohide",
+      "label": "Set taskbar auto-hide",
+      "description": "Apply the saved taskbar auto-hide setting.",
+      "script": "Apply taskbarAutoHide from settings and return updated status."
+    },
+    {
+      "id": "set-resolution",
+      "label": "Set display resolution",
+      "description": "Apply the saved resolution and refresh rate values.",
+      "script": "Apply resolutionWidth, resolutionHeight, and refreshRate through daemon host API."
+    },
+    {
+      "id": "set-scale",
+      "label": "Set display scale",
+      "description": "Apply the saved display scale percentage.",
+      "script": "Apply scalePercent via daemon host API and return updated status."
+    }
+  ],
+  "settings": {
+    "title": "Display",
+    "description": "Configure taskbar behavior, resolution, and scale in one place.",
+    "applyActions": [
+      "set-taskbar-autohide",
+      "set-resolution",
+      "set-scale"
+    ],
+    "sections": [
+      {
+        "id": "taskbar",
+        "title": "Taskbar",
+        "description": "Saved taskbar preferences.",
+        "inputs": ["taskbarAutoHide"]
+      },
+      {
+        "id": "resolution",
+        "title": "Resolution",
+        "description": "Saved display resolution target.",
+        "inputs": ["resolutionWidth", "resolutionHeight", "refreshRate"]
+      },
+      {
+        "id": "scale",
+        "title": "Scale",
+        "description": "Saved display scaling target.",
+        "inputs": ["scalePercent"]
+      },
+      {
+        "id": "tray-menu",
+        "title": "Tray menu",
+        "description": "Choose which resolution presets appear in the tray shortcut menu.",
+        "inputs": ["trayResolutionPresets"]
+      }
+    ],
+    "status": {
+      "title": "Current status",
+      "description": "Latest values reported by the Windows host APIs.",
+      "fields": [
+        { "key": "lastActionUnix", "label": "Last updated", "format": "date-time" },
+        { "key": "lastActionId", "label": "Last command" },
+        { "key": "taskbarAutoHide", "label": "Taskbar auto-hide", "format": "boolean" },
+        { "key": "resolutionWidth", "label": "Resolution width" },
+        { "key": "resolutionHeight", "label": "Resolution height" },
+        { "key": "refreshRate", "label": "Refresh rate" },
+        { "key": "scalePercent", "label": "Scale percent" }
+      ]
+    }
+  },
+  "ui": {
+    "type": "form"
+  },
+  "tray": {
+    "provider": "windows-display",
+    "title": "Windows Display Manager",
+    "tooltip": "Taskbar and display shortcuts"
+  }
+}
