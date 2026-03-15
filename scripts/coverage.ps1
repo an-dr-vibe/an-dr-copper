@@ -57,11 +57,39 @@ function Is-DeclarationOnlyRustFile {
   return $true
 }
 
+function Get-RustSourceFiles {
+  param([string]$Root)
+
+  $ripgrep = Get-Command rg -ErrorAction SilentlyContinue
+  if ($ripgrep) {
+    return @(rg --files $Root -g "*.rs" | ForEach-Object { (Resolve-Path $_).Path })
+  }
+
+  return @(
+    Get-ChildItem -Path $Root -Recurse -Filter "*.rs" -File |
+      ForEach-Object { $_.FullName }
+  )
+}
+
+function Get-LcovSourceFiles {
+  param([string]$LcovFile)
+
+  $ripgrep = Get-Command rg -ErrorAction SilentlyContinue
+  if ($ripgrep) {
+    return @(rg '^SF:' $LcovFile | ForEach-Object { $_.Substring(3) })
+  }
+
+  return @(
+    Select-String -Path $LcovFile -Pattern '^SF:' |
+      ForEach-Object { $_.Line.Substring(3) }
+  )
+}
+
 function Assert-CoverageFileParity {
   param([string]$LcovFile)
 
-  $sourceFiles = rg --files daemon/src -g "*.rs" | ForEach-Object { (Resolve-Path $_).Path }
-  $coveredFiles = rg '^SF:' $LcovFile | ForEach-Object { $_.Substring(3) }
+  $sourceFiles = Get-RustSourceFiles "daemon/src"
+  $coveredFiles = Get-LcovSourceFiles $LcovFile
 
   $coveredSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $coveredFiles | ForEach-Object { [void]$coveredSet.Add($_) }
