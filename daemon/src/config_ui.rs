@@ -634,7 +634,6 @@ fn store_config(path: &Path, value: &Value) -> Result<(), UiConfigError> {
 
 fn build_core_info(state: &UiServerState) -> Value {
     serde_json::json!({
-        "selectedExtensionId": state.selected_extension_id,
         "extensionsLoaded": state.descriptors.len(),
         "hostPlatform": current_platform().as_str(),
         "userExtensionsDir": state.user_extensions_dir.display().to_string(),
@@ -876,6 +875,12 @@ fn render_html(state: &UiServerState) -> String {
     .command-help-list li {{ margin:0 0 4px; }}
     .mono {{ font-family:Consolas, monospace; }}
     .checkbox-list {{ display:grid; gap:8px; }}
+    .toggle-control {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
+    .toggle-group {{ display:inline-flex; gap:8px; }}
+    .toggle-btn {{ background:var(--panel3); border:1px solid var(--line); color:var(--muted); }}
+    .toggle-btn.active-enable {{ background:#1f4b2f; border-color:#3d8b5c; color:#e7fff0; }}
+    .toggle-btn.active-disable {{ background:#4a2222; border-color:#a25555; color:#ffecec; }}
+    .toggle-state {{ color:var(--muted); font-size:13px; }}
     .checkbox-item {{
       display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line);
       border-radius:10px; background:var(--panel3);
@@ -1053,6 +1058,52 @@ fn render_html(state: &UiServerState) -> String {
         control = document.createElement('select');
         control.innerHTML = '<option value="true">Enabled</option><option value="false">Disabled</option>';
         control.value = String(value ?? input.default ?? false);
+      }} else if (input.type === 'extension-toggle') {{
+        const currentValue = String(value ?? input.default ?? false);
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.value = currentValue;
+        hidden.dataset.inputId = input.id;
+        hidden.dataset.inputType = input.type;
+
+        control = document.createElement('div');
+        control.className = 'toggle-control';
+
+        const buttonGroup = document.createElement('div');
+        buttonGroup.className = 'toggle-group';
+        const enableBtn = document.createElement('button');
+        enableBtn.type = 'button';
+        enableBtn.className = 'toggle-btn';
+        enableBtn.textContent = 'Enable';
+        const disableBtn = document.createElement('button');
+        disableBtn.type = 'button';
+        disableBtn.className = 'toggle-btn';
+        disableBtn.textContent = 'Disable';
+        const stateText = document.createElement('span');
+        stateText.className = 'toggle-state';
+
+        const updateToggleUi = () => {{
+          const enabled = hidden.value === 'true';
+          enableBtn.className = 'toggle-btn' + (enabled ? ' active-enable' : '');
+          disableBtn.className = 'toggle-btn' + (!enabled ? ' active-disable' : '');
+          stateText.textContent = enabled ? 'Currently enabled' : 'Currently disabled';
+        }};
+
+        enableBtn.addEventListener('click', () => {{
+          hidden.value = 'true';
+          updateToggleUi();
+        }});
+        disableBtn.addEventListener('click', () => {{
+          hidden.value = 'false';
+          updateToggleUi();
+        }});
+
+        buttonGroup.appendChild(enableBtn);
+        buttonGroup.appendChild(disableBtn);
+        control.appendChild(buttonGroup);
+        control.appendChild(stateText);
+        control.appendChild(hidden);
+        updateToggleUi();
       }} else if (input.type === 'multi-select') {{
         const options = resolveInputOptions(input, info);
         const selected = Array.isArray(value)
@@ -1100,7 +1151,7 @@ fn render_html(state: &UiServerState) -> String {
         control.value = String(value ?? input.default ?? '');
       }}
 
-      if (input.type !== 'multi-select') {{
+      if (input.type !== 'multi-select' && input.type !== 'extension-toggle') {{
         control.dataset.inputId = input.id;
         control.dataset.inputType = input.type;
       }}
@@ -1259,9 +1310,9 @@ fn render_html(state: &UiServerState) -> String {
             : 'windows, macos, linux';
           return {{
             id: 'extensionEnabled:' + descriptor.id,
-            label: 'Enable ' + descriptor.name,
+            label: descriptor.name,
             description: 'Supported platforms: ' + platforms,
-            type: 'boolean',
+            type: 'extension-toggle',
             default: !disabledExtensions.has(descriptor.id)
           }};
         }});
@@ -1352,7 +1403,6 @@ fn render_html(state: &UiServerState) -> String {
         }});
 
         const coreRows = [
-          {{ label: 'Selected extension', value: info.selectedExtensionId || 'Not set' }},
           {{ label: 'Extensions loaded', value: info.extensionsLoaded ?? 0 }},
           {{ label: 'Host platform', value: info.hostPlatform || 'unknown' }},
           {{ label: 'Launch at login', value: config.autoStart ?? false, format: 'boolean' }},
@@ -1448,7 +1498,7 @@ fn render_html(state: &UiServerState) -> String {
           handled.add(id);
           const type = ctrl.dataset.inputType;
           let value;
-          if (type === 'boolean') {{
+          if (type === 'boolean' || type === 'extension-toggle') {{
             value = ctrl.value === 'true';
           }} else if (type === 'multi-select') {{
             value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
@@ -1487,7 +1537,7 @@ fn render_html(state: &UiServerState) -> String {
         handled.add(id);
         const type = ctrl.dataset.inputType;
         let value;
-        if (type === 'boolean') {{
+        if (type === 'boolean' || type === 'extension-toggle') {{
           value = ctrl.value === 'true';
         }} else if (type === 'multi-select') {{
           value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
@@ -1894,6 +1944,10 @@ mod tests {
         assert_eq!(
             info.get("hostPlatform").and_then(|v| v.as_str()),
             Some(super::current_platform().as_str())
+        );
+        assert!(
+            info.get("selectedExtensionId").is_none(),
+            "core status should not expose the currently selected extension"
         );
     }
 
