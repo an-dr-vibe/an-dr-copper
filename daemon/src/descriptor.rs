@@ -26,6 +26,24 @@ pub enum InputType {
     MultiSelect,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Windows,
+    Macos,
+    Linux,
+}
+
+impl Platform {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Windows => "windows",
+            Self::Macos => "macos",
+            Self::Linux => "linux",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InputField {
     pub id: String,
@@ -130,6 +148,8 @@ pub struct Descriptor {
     pub name: String,
     pub version: String,
     pub trigger: String,
+    #[serde(default)]
+    pub platforms: Vec<Platform>,
     #[serde(default)]
     pub permissions: Vec<Permission>,
     #[serde(default)]

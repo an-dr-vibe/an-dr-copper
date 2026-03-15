@@ -11,6 +11,11 @@
     "name": { "type": "string", "minLength": 1 },
     "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "trigger": { "type": "string", "minLength": 1 },
+    "platforms": {
+      "type": "array",
+      "items": { "enum": ["windows", "macos", "linux"] },
+      "uniqueItems": true
+    },
     "permissions": {
       "type": "array",
       "items": { "enum": ["fs", "shell", "network", "store", "ui"] },

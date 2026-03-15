@@ -281,4 +281,55 @@ mod tests {
             Some("Taskbar and display shortcuts")
         );
     }
+
+    #[test]
+    fn accepts_optional_platform_restrictions() {
+        let raw = format!(
+            r#"{{
+                "$schema": "{SUPPORTED_SCHEMA_URL}",
+                "id": "windows-only",
+                "name": "Windows Only",
+                "version": "1.0.0",
+                "trigger": "windows-only",
+                "platforms": ["windows"],
+                "actions": [
+                    {{
+                        "id": "run",
+                        "label": "Run",
+                        "script": "return;"
+                    }}
+                ]
+            }}"#
+        );
+
+        let descriptor = parse_and_validate(&raw).expect("descriptor should pass validation");
+        assert_eq!(descriptor.platforms.len(), 1);
+        assert_eq!(descriptor.platforms[0].as_str(), "windows");
+    }
+
+    #[test]
+    fn rejects_unknown_platform_values() {
+        let raw = format!(
+            r#"{{
+                "$schema": "{SUPPORTED_SCHEMA_URL}",
+                "id": "alien-only",
+                "name": "Alien Only",
+                "version": "1.0.0",
+                "trigger": "alien-only",
+                "platforms": ["haiku"],
+                "actions": [
+                    {{
+                        "id": "run",
+                        "label": "Run",
+                        "script": "return;"
+                    }}
+                ]
+            }}"#
+        );
+
+        let error = parse_and_validate(&raw).expect_err("invalid platform should fail");
+        assert!(error
+            .to_string()
+            .contains("descriptor schema validation failed"));
+    }
 }

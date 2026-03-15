@@ -1,4 +1,5 @@
-use crate::descriptor::{Descriptor, Permission};
+use crate::core_config::{load_core_config, CoreConfig};
+use crate::descriptor::{Descriptor, Permission, Platform};
 use crate::schema::{parse_and_validate, ValidationError};
 use std::collections::BTreeMap;
 use std::fs;
@@ -91,6 +92,13 @@ impl Registry {
     pub fn get(&self, id: &str) -> Option<&Extension> {
         self.entries.get(id)
     }
+
+    pub fn filter_for_runtime(mut self, core_config: &CoreConfig, platform: Platform) -> Self {
+        self.entries.retain(|extension_id, extension| {
+            core_config.is_extension_enabled(extension_id) && supports_platform(extension, platform)
+        });
+        self
+    }
 }
 
 pub fn default_extensions_dir() -> PathBuf {
@@ -131,6 +139,12 @@ pub fn runtime_extension_roots(user_extensions_dir: &Path) -> Vec<PathBuf> {
 }
 
 pub fn load_runtime_registry(user_extensions_dir: &Path) -> Result<Registry, ExtensionError> {
+    let registry = load_discoverable_registry(user_extensions_dir)?;
+    let core_config = load_core_config()?;
+    Ok(registry.filter_for_runtime(&core_config, current_platform()))
+}
+
+pub fn load_discoverable_registry(user_extensions_dir: &Path) -> Result<Registry, ExtensionError> {
     let roots = runtime_extension_roots(user_extensions_dir);
     Registry::load_from_dirs(roots.iter().map(PathBuf::as_path))
 }
@@ -142,14 +156,21 @@ fn core_extensions_dir_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
 }
 
 fn core_extension_roots_from_exe_dir(exe_dir: &Path) -> Vec<PathBuf> {
-    let candidates = [
-        exe_dir.join("extensions"),
-        exe_dir.join("..").join("extensions"),
-        exe_dir.join("..").join("..").join("extensions"),
-        // Backward compatibility for older bundles:
-        exe_dir.join("core-extensions"),
-        exe_dir.join("..").join("core-extensions"),
-    ];
+    let parent = exe_dir.parent();
+    let grandparent = parent.and_then(Path::parent);
+    let mut candidates = Vec::with_capacity(5);
+    candidates.push(exe_dir.join("extensions"));
+    if let Some(parent) = parent {
+        candidates.push(parent.join("extensions"));
+    }
+    if let Some(grandparent) = grandparent {
+        candidates.push(grandparent.join("extensions"));
+    }
+    // Backward compatibility for older bundles:
+    candidates.push(exe_dir.join("core-extensions"));
+    if let Some(parent) = parent {
+        candidates.push(parent.join("core-extensions"));
+    }
 
     let mut roots = Vec::new();
     for candidate in candidates {
@@ -168,15 +189,31 @@ pub fn check_permission(ext: &Extension, permission: Permission) -> bool {
     ext.descriptor.permissions.contains(&permission)
 }
 
+pub fn current_platform() -> Platform {
+    if cfg!(target_os = "windows") {
+        Platform::Windows
+    } else if cfg!(target_os = "macos") {
+        Platform::Macos
+    } else {
+        Platform::Linux
+    }
+}
+
+fn supports_platform(extension: &Extension, platform: Platform) -> bool {
+    extension.descriptor.platforms.is_empty() || extension.descriptor.platforms.contains(&platform)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         check_permission, core_extension_roots_from_exe_dir, core_extensions_dir_from_exe_dir,
-        runtime_extension_roots, ExtensionError, Registry,
+        current_platform, runtime_extension_roots, ExtensionError, Registry,
     };
-    use crate::descriptor::Permission;
+    use crate::core_config::CoreConfig;
+    use crate::descriptor::{Permission, Platform};
+    use std::collections::BTreeSet;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
     #[test]
@@ -326,7 +363,10 @@ mod tests {
         let exe_dir = temp.path().join("bin").join("target");
         fs::create_dir_all(temp.path().join("bin").join("extensions")).expect("extensions dir");
         let detected = core_extensions_dir_from_exe_dir(&exe_dir);
-        assert_eq!(detected, Some(exe_dir.join("..").join("extensions")));
+        assert_eq!(
+            detected.as_deref().map(normalize_path),
+            Some(normalize_path(&temp.path().join("bin").join("extensions")))
+        );
     }
 
     #[test]
@@ -409,5 +449,87 @@ mod tests {
             Registry::load_from_dirs(roots.iter().map(PathBuf::as_path)).expect("registry");
         let extension = registry.get("same-id").expect("extension");
         assert_eq!(extension.descriptor.name, "Workspace Extension");
+    }
+
+    #[test]
+    fn filter_for_runtime_skips_disabled_extensions() {
+        let temp = tempdir().expect("tempdir");
+        write_extension_with_platforms(temp.path(), "alpha-ext", &[]);
+        write_extension_with_platforms(temp.path(), "beta-ext", &[]);
+
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let filtered = registry.filter_for_runtime(
+            &CoreConfig {
+                disabled_extensions: BTreeSet::from(["beta-ext".to_string()]),
+            },
+            current_platform(),
+        );
+
+        assert!(filtered.get("alpha-ext").is_some());
+        assert!(filtered.get("beta-ext").is_none());
+    }
+
+    #[test]
+    fn filter_for_runtime_skips_platform_mismatches() {
+        let temp = tempdir().expect("tempdir");
+        write_extension_with_platforms(temp.path(), "current-ext", &[current_platform()]);
+        write_extension_with_platforms(temp.path(), "other-ext", &[other_platform()]);
+
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let filtered = registry.filter_for_runtime(&CoreConfig::default(), current_platform());
+
+        assert!(filtered.get("current-ext").is_some());
+        assert!(filtered.get("other-ext").is_none());
+    }
+
+    fn write_extension_with_platforms(root: &Path, id: &str, platforms: &[Platform]) {
+        let ext_dir = root.join(id);
+        fs::create_dir_all(&ext_dir).expect("create extension dir");
+        let platforms_json = if platforms.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\"platforms\": [{}],",
+                platforms
+                    .iter()
+                    .map(|platform| format!("\"{}\"", platform.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        fs::write(
+            ext_dir.join("manifest.json"),
+            format!(
+                r#"{{
+                    "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                    "id": "{id}",
+                    "name": "Test Extension",
+                    "version": "1.0.0",
+                    "trigger": "test",
+                    {platforms_json}
+                    "actions": [
+                        {{ "id": "run", "label": "Run", "script": "return;" }}
+                    ]
+                }}"#
+            ),
+        )
+        .expect("write descriptor");
+        fs::write(
+            ext_dir.join("main.ts"),
+            "export default function(){ return {}; }",
+        )
+        .expect("write main.ts");
+    }
+
+    fn other_platform() -> Platform {
+        match current_platform() {
+            Platform::Windows => Platform::Linux,
+            Platform::Macos => Platform::Windows,
+            Platform::Linux => Platform::Windows,
+        }
+    }
+
+    fn normalize_path(path: &Path) -> PathBuf {
+        fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
 }

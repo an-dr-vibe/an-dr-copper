@@ -106,6 +106,8 @@ Runtime extension roots:
 
 - Core extensions: executable-adjacent `extensions/` (shipped with release)
 - User extensions: `~/.Copper/extensions` (user-installed/custom)
+- Runtime activation respects optional manifest `platforms` restrictions (`windows`, `macos`, `linux`).
+- Core settings can disable specific extensions through `~/.Copper/extensions/copper-core/data.json` via `disabledExtensions`.
 
 Windows host extension note:
 - `windows-display-manager` executes taskbar/resolution/scale actions through daemon host APIs.

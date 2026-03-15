@@ -2,6 +2,7 @@ pub mod api;
 pub mod autostart;
 pub mod cli;
 pub mod config_ui;
+pub mod core_config;
 pub mod control_plane;
 pub mod daemon;
 pub mod descriptor;
