@@ -84,8 +84,11 @@ fn desktop_torrent_descriptor_matches_required_contract() {
         .map(|action| action.id.as_str())
         .collect::<Vec<_>>();
     assert!(action_ids.contains(&"move-torrents"));
-    assert!(action_ids.contains(&"add-extension"));
     assert!(action_ids.contains(&"show-config"));
+    assert!(
+        !action_ids.contains(&"add-extension"),
+        "package install should not live in the torrent organizer"
+    );
 
     let desktop_input = descriptor
         .inputs
@@ -118,6 +121,20 @@ fn desktop_torrent_descriptor_matches_required_contract() {
         .find(|input| input.id == "pollIntervalSeconds")
         .expect("pollIntervalSeconds input");
     assert_eq!(poll_input.default.as_u64(), Some(5));
+    assert!(
+        descriptor
+            .inputs
+            .iter()
+            .all(|input| input.id != "extensionPackage"),
+        "package install input should not live in the torrent organizer"
+    );
+    assert!(
+        descriptor
+            .inputs
+            .iter()
+            .all(|input| input.id != "extensionsInstallDir"),
+        "extension install directory should not live in the torrent organizer"
+    );
 
     let settings = descriptor
         .settings
@@ -133,6 +150,10 @@ fn desktop_torrent_descriptor_matches_required_contract() {
             .any(|section| section.id == "monitor"),
         "desktop torrent settings should define a monitor section"
     );
+    assert_eq!(settings.tabs.len(), 2);
+    assert_eq!(settings.tabs[0].id, "monitor");
+    assert_eq!(settings.tabs[0].sections, vec!["monitor"]);
+    assert!(settings.tabs[1].show_status);
     assert!(
         !settings
             .sections
@@ -169,8 +190,12 @@ fn desktop_torrent_main_enforces_torrent_only_moves_and_no_delete() {
         "extension must not delete files"
     );
     assert!(
-        main_ts.contains("extensionsInstallDir"),
-        "extension should support package install target directory"
+        !main_ts.contains("extensionsInstallDir"),
+        "torrent organizer should not own extension package install settings"
+    );
+    assert!(
+        !main_ts.contains("add-extension"),
+        "torrent organizer should not expose package install actions"
     );
 }
 
@@ -251,6 +276,10 @@ fn windows_display_manager_descriptor_matches_required_contract() {
         ],
         "windows display settings should declare which actions apply saved settings"
     );
+    assert_eq!(settings.tabs.len(), 4);
+    assert_eq!(settings.tabs[0].id, "taskbar");
+    assert_eq!(settings.tabs[1].sections, vec!["resolution", "scale"]);
+    assert!(settings.tabs[3].show_status);
     assert!(
         settings
             .sections

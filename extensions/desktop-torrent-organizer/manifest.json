@@ -33,19 +33,6 @@
       "label": "Poll interval (seconds)",
       "description": "How often the daemon scans the desktop for new .torrent files.",
       "default": 5
-    },
-    {
-      "id": "extensionPackage",
-      "type": "file-picker",
-      "label": "Extension package (.zip or .tar.gz)",
-      "description": "Package file used when installing an extension from this page."
-    },
-    {
-      "id": "extensionsInstallDir",
-      "type": "folder-picker",
-      "label": "Extensions install directory",
-      "description": "Target folder for installed extension packages.",
-      "default": "~/.Copper/extensions"
     }
   ],
   "actions": [
@@ -54,12 +41,6 @@
       "label": "Move .torrent files from Desktop to Torrents",
       "description": "Run the organizer immediately using the saved monitor settings.",
       "script": "Move .torrent files from desktopFolder to torrentsFolder and report summary."
-    },
-    {
-      "id": "add-extension",
-      "label": "Add extension package via UI input",
-      "description": "Install the selected extension package into the configured extensions directory.",
-      "script": "Install extensionPackage into extensionsInstallDir and persist install metadata."
     },
     {
       "id": "show-config",
@@ -71,6 +52,18 @@
   "settings": {
     "title": "Desktop Torrent Organizer",
     "description": "Configure how Copper watches the desktop for incoming .torrent files.",
+    "tabs": [
+      {
+        "id": "monitor",
+        "title": "Monitor",
+        "sections": ["monitor"]
+      },
+      {
+        "id": "activity",
+        "title": "Activity",
+        "showStatus": true
+      }
+    ],
     "sections": [
       {
         "id": "monitor",

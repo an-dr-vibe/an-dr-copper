@@ -15,6 +15,9 @@ use std::path::Path;
 use std::path::PathBuf;
 
 #[cfg(all(not(test), target_os = "windows"))]
+use std::os::windows::process::CommandExt;
+
+#[cfg(all(not(test), target_os = "windows"))]
 use std::process::Command;
 
 use thiserror::Error;
@@ -22,6 +25,8 @@ use thiserror::Error;
 pub const CORE_AUTO_START_KEY: &str = "autoStart";
 #[allow(dead_code)]
 const AUTOSTART_NAME: &str = "Copper";
+#[cfg(all(not(test), target_os = "windows"))]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoStartStatus {
@@ -70,7 +75,7 @@ pub fn sync_from_core_config(config: &Value) -> Result<AutoStartStatus, AutoStar
 #[cfg(all(not(test), target_os = "windows"))]
 fn register_current_exe() -> Result<(), AutoStartError> {
     let exe = windows_autostart_exe()?;
-    let output = Command::new("reg")
+    let output = reg_command()
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -91,7 +96,7 @@ fn register_current_exe() -> Result<(), AutoStartError> {
 
 #[cfg(all(not(test), target_os = "windows"))]
 fn unregister() -> Result<(), AutoStartError> {
-    let output = Command::new("reg")
+    let output = reg_command()
         .args([
             "delete",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -111,6 +116,13 @@ fn windows_autostart_exe() -> Result<String, AutoStartError> {
     let exe = std::env::current_exe().map_err(|_| AutoStartError::CurrentExeUnavailable)?;
     let launch_path = preferred_windows_launch_path(&exe);
     Ok(format!("\"{}\"", launch_path.display()))
+}
+
+#[cfg(all(not(test), target_os = "windows"))]
+fn reg_command() -> Command {
+    let mut command = Command::new("reg");
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
 }
 
 #[cfg(target_os = "windows")]

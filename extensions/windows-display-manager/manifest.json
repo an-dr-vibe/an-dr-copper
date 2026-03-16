@@ -90,6 +90,28 @@
       "set-resolution",
       "set-scale"
     ],
+    "tabs": [
+      {
+        "id": "taskbar",
+        "title": "Taskbar",
+        "sections": ["taskbar"]
+      },
+      {
+        "id": "display",
+        "title": "Display",
+        "sections": ["resolution", "scale"]
+      },
+      {
+        "id": "tray",
+        "title": "Tray",
+        "sections": ["tray-menu"]
+      },
+      {
+        "id": "status",
+        "title": "Status",
+        "showStatus": true
+      }
+    ],
     "sections": [
       {
         "id": "taskbar",

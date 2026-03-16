@@ -20,6 +20,7 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/daemon.ps1 -Action list
 # daemon also hosts config UI at:
 # http://127.0.0.1:4766
+# Windows: left click the main Copper tray icon to open the UI.
 # extension settings: ~/.Copper/extensions/<extension-id>/config.json
 # extension status:   ~/.Copper/extensions/<extension-id>/status.json
 ./scripts/daemon.ps1 -Action shutdown
@@ -111,6 +112,7 @@ Runtime extension roots:
 - Legacy `~/.Copper/extensions/copper-core/data.json` is still read as a fallback during migration.
 
 Windows host extension note:
+- On Windows, left click the main Copper tray icon to open the daemon-hosted UI. Right click opens the main tray menu.
 - `windows-display-manager` executes taskbar/resolution/scale actions through daemon host APIs.
 - Its settings page can save and immediately apply the configured taskbar, resolution, and scale values.
 - `windows-display-manager` also declares a tray icon through manifest `tray` metadata, which the daemon loads through its tray provider API.

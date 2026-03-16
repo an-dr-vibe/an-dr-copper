@@ -1,5 +1,6 @@
 use crate::autostart;
 use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
+use crate::core_config::{load_core_config, CoreConfig};
 use crate::descriptor::Descriptor;
 use crate::extension::{
     core_extensions_dir, current_platform, load_discoverable_registry, runtime_extension_roots,
@@ -12,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -143,6 +145,7 @@ impl HttpResponse {
 struct UiServerState {
     selected_extension_id: String,
     descriptors: Vec<Descriptor>,
+    discoverable_descriptors: Vec<Descriptor>,
     extension_ids: HashSet<String>,
     user_extensions_dir: PathBuf,
     core_extensions_dir: Option<PathBuf>,
@@ -222,11 +225,14 @@ fn build_ui_state(
     origin: String,
 ) -> Result<UiServerState, UiConfigError> {
     let registry = load_discoverable_registry(extensions_dir)?;
-    let mut descriptors = registry
+    let mut discoverable_descriptors = registry
         .list()
         .map(|extension| extension.descriptor.clone())
         .collect::<Vec<_>>();
-    descriptors.sort_by(|a, b| a.id.cmp(&b.id));
+    discoverable_descriptors.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let core_config = load_core_config()?;
+    let descriptors = visible_descriptors(&discoverable_descriptors, &core_config);
 
     let extension_ids = descriptors
         .iter()
@@ -251,6 +257,7 @@ fn build_ui_state(
     Ok(UiServerState {
         selected_extension_id,
         descriptors,
+        discoverable_descriptors,
         extension_ids,
         user_extensions_dir: extensions_dir.to_path_buf(),
         core_extensions_dir: core_extensions_dir(),
@@ -261,6 +268,27 @@ fn build_ui_state(
         origin,
         allow_close,
     })
+}
+
+fn visible_descriptors(
+    discoverable_descriptors: &[Descriptor],
+    core_config: &CoreConfig,
+) -> Vec<Descriptor> {
+    discoverable_descriptors
+        .iter()
+        .filter(|descriptor| core_config.is_extension_enabled(&descriptor.id))
+        .cloned()
+        .collect()
+}
+
+fn find_discoverable_descriptor<'a>(
+    state: &'a UiServerState,
+    extension_id: &str,
+) -> Option<&'a Descriptor> {
+    state
+        .discoverable_descriptors
+        .iter()
+        .find(|descriptor| descriptor.id == extension_id)
 }
 
 pub fn open_extension_config(
@@ -326,6 +354,7 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
         HttpResponse::ok_json(&serde_json::json!({
             "selectedExtensionId": state.selected_extension_id,
             "descriptors": state.descriptors,
+            "discoverableDescriptors": state.discoverable_descriptors,
         }))?
     } else if request.method == HttpMethod::Get && request.path == "/config/core" {
         HttpResponse::ok_json(&state.state_store.load_path_or_legacy(
@@ -369,15 +398,10 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
             }
         }
     } else if let Some(extension_id) = request.path.strip_prefix("/info/extension/") {
-        if !state.extension_ids.contains(extension_id) {
-            HttpResponse::not_found()
-        } else {
-            let descriptor = state
-                .descriptors
-                .iter()
-                .find(|descriptor| descriptor.id == extension_id)
-                .ok_or_else(|| UiConfigError::ExtensionNotFound(extension_id.to_string()))?;
+        if let Some(descriptor) = find_discoverable_descriptor(state, extension_id) {
             HttpResponse::ok_json(&build_extension_info(state, descriptor)?)?
+        } else {
+            HttpResponse::not_found()
         }
     } else if let Some(extension_id) = request.path.strip_prefix("/config/extension/") {
         if !state.extension_ids.contains(extension_id) {
@@ -659,10 +683,27 @@ fn apply_core_settings(config: &Value) -> Result<(), UiConfigError> {
 fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .status()
-            .map_err(|e| UiConfigError::Browser(e.to_string()))?;
+        use std::ptr;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let operation = wide_windows_string("open");
+        let target = wide_windows_string(url);
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                target.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        } as isize;
+        if result <= 32 {
+            return Err(UiConfigError::Browser(format!(
+                "ShellExecuteW failed with code {result}"
+            )));
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -682,6 +723,11 @@ fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wide_windows_string(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 pub fn open_url_in_browser(url: &str) -> Result<(), UiConfigError> {
@@ -806,6 +852,7 @@ fn render_html(state: &UiServerState) -> String {
     let model = serde_json::json!({
         "selectedExtensionId": state.selected_extension_id,
         "descriptors": state.descriptors,
+        "discoverableDescriptors": state.discoverable_descriptors,
         "allowClose": state.allow_close,
         "authToken": state.auth_token,
     });
@@ -859,7 +906,7 @@ fn render_html(state: &UiServerState) -> String {
       border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text); padding:10px 14px; cursor:pointer;
     }}
     button.primary {{ background:var(--accent); border-color:transparent; color:#0b1020; font-weight:700; }}
-    button[hidden] {{ display:none; }}
+    [hidden] {{ display:none !important; }}
     .status-msg {{ color:var(--muted); margin-top:8px; min-height:20px; }}
     .empty {{ color:var(--muted); font-style:italic; }}
     .kv-list {{ display:grid; grid-template-columns:minmax(180px, 240px) 1fr; gap:10px 16px; }}
@@ -881,6 +928,17 @@ fn render_html(state: &UiServerState) -> String {
     .toggle-btn.active-enable {{ background:#1f4b2f; border-color:#3d8b5c; color:#e7fff0; }}
     .toggle-btn.active-disable {{ background:#4a2222; border-color:#a25555; color:#ffecec; }}
     .toggle-state {{ color:var(--muted); font-size:13px; }}
+    .extension-list {{ display:grid; gap:12px; }}
+    .extension-card {{ border:1px solid var(--line); border-radius:12px; padding:14px; background:var(--panel3); }}
+    .extension-head {{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }}
+    .extension-name {{ font-weight:700; margin:0 0 4px; }}
+    .extension-id {{ color:var(--muted); font-size:12px; }}
+    .extension-meta {{ color:var(--muted); font-size:13px; margin:8px 0 0; }}
+    .extension-actions {{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px; }}
+    .mini-btn {{ padding:8px 12px; font-size:13px; }}
+    .mini-btn.active-enable {{ background:#1f4b2f; border-color:#3d8b5c; color:#e7fff0; }}
+    .mini-btn.active-disable {{ background:#4a2222; border-color:#a25555; color:#ffecec; }}
+    .command-panel {{ margin-top:12px; display:grid; gap:10px; }}
     .checkbox-item {{
       display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line);
       border-radius:10px; background:var(--panel3);
@@ -898,7 +956,7 @@ fn render_html(state: &UiServerState) -> String {
   <div class="layout">
     <aside class="sidebar">
       <div class="title">Settings</div>
-      <p class="subtitle">Per-extension pages with separate status.</p>
+      <p class="subtitle">Manifest-driven pages with optional tabs.</p>
       <div id="nav"></div>
     </aside>
     <main class="main">
@@ -906,8 +964,7 @@ fn render_html(state: &UiServerState) -> String {
       <h1 class="page-title" id="pageTitle">Copper</h1>
       <p class="page-sub" id="pageSub">Core Copper configuration</p>
       <div class="tab-row" id="tabs"></div>
-      <section id="settingsView"></section>
-      <section id="statusView" hidden></section>
+      <section id="contentView"></section>
       <div class="btn-row">
         <button class="primary" id="saveBtn">Save settings</button>
         <button id="closeBtn">Close UI Server</button>
@@ -918,8 +975,28 @@ fn render_html(state: &UiServerState) -> String {
 
   <script>
     const model = {model_inline};
-    const descriptors = model.descriptors || [];
-    const byId = Object.fromEntries(descriptors.map(d => [d.id, d]));
+    let descriptors = [];
+    let discoverableDescriptors = [];
+    let byId = {{}};
+
+    function replaceDescriptorModel(nextModel, syncSelection = true) {{
+      descriptors = Array.isArray(nextModel.descriptors) ? nextModel.descriptors : [];
+      discoverableDescriptors = Array.isArray(nextModel.discoverableDescriptors)
+        ? nextModel.discoverableDescriptors
+        : descriptors;
+      byId = Object.fromEntries(descriptors.map(d => [d.id, d]));
+      model.selectedExtensionId = nextModel.selectedExtensionId || '';
+      if (syncSelection && currentSection && currentSection.startsWith('ext:')) {{
+        const id = currentSection.slice(4);
+        if (!byId[id]) {{
+          currentSection = 'core';
+          currentTab = '';
+          updateUrl();
+        }}
+      }}
+    }}
+
+    replaceDescriptorModel(model, false);
     let currentSection = (() => {{
       const defaultSection = model.selectedExtensionId ? `ext:${{model.selectedExtensionId}}` : 'core';
       const params = new URLSearchParams(window.location.search);
@@ -940,12 +1017,11 @@ fn render_html(state: &UiServerState) -> String {
     }})();
     let currentTab = (() => {{
       const params = new URLSearchParams(window.location.search);
-      return params.get('tab') === 'status' ? 'status' : 'settings';
+      return params.get('tab') || '';
     }})();
 
     const navEl = document.getElementById('nav');
-    const settingsViewEl = document.getElementById('settingsView');
-    const statusViewEl = document.getElementById('statusView');
+    const contentViewEl = document.getElementById('contentView');
     const statusMsgEl = document.getElementById('statusMsg');
     const closeBtn = document.getElementById('closeBtn');
     const pageEyebrowEl = document.getElementById('pageEyebrow');
@@ -969,7 +1045,9 @@ fn render_html(state: &UiServerState) -> String {
     function updateUrl() {{
       const params = new URLSearchParams();
       params.set('section', currentSection);
-      params.set('tab', currentTab);
+      if (currentTab) {{
+        params.set('tab', currentTab);
+      }}
       window.history.replaceState(null, '', `${{window.location.pathname}}?${{params.toString()}}`);
     }}
 
@@ -1027,7 +1105,7 @@ fn render_html(state: &UiServerState) -> String {
       btn.innerHTML = `<span class="nav-name">${{label}}</span><span class="nav-meta">${{isCore ? 'Core settings' : 'Extension settings'}}</span>`;
       btn.addEventListener('click', () => {{
         currentSection = key;
-        currentTab = 'settings';
+        currentTab = '';
         updateUrl();
         renderNav();
         renderSection().catch(err => setStatus('Load failed: ' + err));
@@ -1211,11 +1289,12 @@ fn render_html(state: &UiServerState) -> String {
         card.appendChild(list);
       }}
       target.appendChild(card);
+      return card;
     }}
 
     function renderCommands(target, commands) {{
       if (!commands.length) {{
-        return;
+        return null;
       }}
       const card = createCard('Commands', 'Manual operations exposed by this extension and how to use them.');
       const list = document.createElement('div');
@@ -1260,29 +1339,85 @@ fn render_html(state: &UiServerState) -> String {
       }});
       card.appendChild(list);
       target.appendChild(card);
+      return card;
     }}
 
-    function renderTabs() {{
+    function normalizeTabSpec(tab, fallbackTitle) {{
+      return {{
+        id: String(tab.id || fallbackTitle || 'tab').trim(),
+        title: tab.title || fallbackTitle || 'Tab',
+        description: tab.description || '',
+        sections: Array.isArray(tab.sections) ? tab.sections.map(String) : [],
+        showStatus: Boolean(tab.showStatus)
+      }};
+    }}
+
+    function renderTabs(tabs) {{
       tabsEl.innerHTML = '';
-      [['settings', 'Settings'], ['status', 'Status']].forEach(([id, label]) => {{
+      tabsEl.hidden = !tabs.length;
+      tabs.forEach(tab => {{
         const btn = document.createElement('button');
-        btn.className = 'tab-btn' + (currentTab === id ? ' active' : '');
-        btn.textContent = label;
+        btn.className = 'tab-btn' + (currentTab === tab.id ? ' active' : '');
+        btn.textContent = tab.title;
         btn.addEventListener('click', () => {{
-          currentTab = id;
+          currentTab = tab.id;
           updateUrl();
-          renderTabs();
-          toggleViews();
+          renderTabs(tabs);
+          applyTabVisibility(tabs);
         }});
         tabsEl.appendChild(btn);
       }});
     }}
 
-    function toggleViews() {{
-      const showSettings = currentTab === 'settings';
-      settingsViewEl.hidden = !showSettings;
-      statusViewEl.hidden = showSettings;
-      saveBtn.hidden = !showSettings;
+    function applyTabVisibility(tabs) {{
+      const cards = Array.from(contentViewEl.querySelectorAll('[data-tab-id]'));
+      if (!tabs.length) {{
+        cards.forEach(card => {{
+          card.hidden = false;
+        }});
+        saveBtn.hidden = !contentViewEl.querySelector('[data-editable="true"]');
+        updateUrl();
+        return;
+      }}
+
+      const activeTab = tabs.find(tab => tab.id === currentTab) || tabs[0];
+      currentTab = activeTab.id;
+      cards.forEach(card => {{
+        card.hidden = card.dataset.tabId !== currentTab;
+      }});
+      saveBtn.hidden = !cards.some(card =>
+        card.dataset.tabId === currentTab && card.dataset.editable === 'true'
+      );
+      updateUrl();
+    }}
+
+    function appendCard(card, tabId, editable = false) {{
+      if (tabId) {{
+        card.dataset.tabId = tabId;
+      }}
+      if (editable) {{
+        card.dataset.editable = 'true';
+      }}
+      contentViewEl.appendChild(card);
+    }}
+
+    function createSettingsCard(section, config, info) {{
+      const card = createCard(section.title, section.description);
+      section.inputDefs.forEach(input => {{
+        card.appendChild(createInput(input, config[input.id], info));
+      }});
+      return card;
+    }}
+
+    function buildStatusRows(statusMeta, status) {{
+      const fieldDefs = (statusMeta.fields && statusMeta.fields.length)
+        ? statusMeta.fields
+        : Object.keys(status).sort().map(key => ({{ key, label: humanizeKey(key) }}));
+      return fieldDefs.map(field => ({{
+        label: field.label || humanizeKey(field.key),
+        value: status[field.key],
+        format: field.format
+      }}));
     }}
 
     async function loadJson(url) {{
@@ -1295,30 +1430,181 @@ fn render_html(state: &UiServerState) -> String {
       return await res.json();
     }}
 
+    async function refreshDescriptorModel() {{
+      replaceDescriptorModel(await loadJson('/descriptor'));
+    }}
+
+    let currentConfig = {{}};
+    let currentInfo = {{}};
+    let currentTabs = [];
+    const extensionInfoCache = new Map();
+
+    async function loadExtensionInfoCached(extensionId) {{
+      if (extensionInfoCache.has(extensionId)) {{
+        return extensionInfoCache.get(extensionId);
+      }}
+      const info = await loadJson('/info/extension/' + encodeURIComponent(extensionId));
+      extensionInfoCache.set(extensionId, info);
+      return info;
+    }}
+
+    async function toggleExtensionCommands(descriptor, panel, button) {{
+      const shouldExpand = button.dataset.expanded !== 'true';
+      if (!shouldExpand) {{
+        panel.hidden = true;
+        button.dataset.expanded = 'false';
+        button.textContent = 'See commands';
+        return;
+      }}
+
+      button.dataset.expanded = 'true';
+      button.textContent = 'Loading commands...';
+
+      if (panel.dataset.loading === 'true') {{
+        return;
+      }}
+
+      if (!panel.dataset.loaded) {{
+        panel.dataset.loading = 'true';
+        panel.innerHTML = '';
+        try {{
+          const info = await loadExtensionInfoCached(descriptor.id);
+          const commands = Array.isArray(info.commands) ? info.commands : [];
+          if (commands.length === 0) {{
+            const empty = document.createElement('div');
+            empty.className = 'empty';
+            empty.textContent = 'No user-facing commands are available for this extension.';
+            panel.appendChild(empty);
+          }} else {{
+            renderCommands(panel, commands);
+          }}
+          panel.dataset.loaded = 'true';
+        }} catch (err) {{
+          const failure = document.createElement('div');
+          failure.className = 'empty';
+          failure.textContent = 'Failed to load commands: ' + err;
+          panel.appendChild(failure);
+        }} finally {{
+          panel.dataset.loading = 'false';
+        }}
+      }}
+
+      const expanded = button.dataset.expanded === 'true';
+      panel.hidden = !expanded;
+      button.textContent = expanded ? 'Hide commands' : 'See commands';
+    }}
+
+    function createCoreExtensionCard(descriptor, enabled) {{
+      const card = document.createElement('div');
+      card.className = 'extension-card';
+
+      const hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.value = enabled ? 'true' : 'false';
+      hidden.dataset.inputId = 'extensionEnabled:' + descriptor.id;
+      hidden.dataset.inputType = 'extension-toggle';
+      card.appendChild(hidden);
+
+      const head = document.createElement('div');
+      head.className = 'extension-head';
+      const summary = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'extension-name';
+      title.textContent = descriptor.name;
+      const meta = document.createElement('div');
+      meta.className = 'extension-id mono';
+      meta.textContent = descriptor.id;
+      const description = document.createElement('div');
+      description.className = 'extension-meta';
+      const platforms = Array.isArray(descriptor.platforms) && descriptor.platforms.length > 0
+        ? descriptor.platforms.join(', ')
+        : 'windows, macos, linux';
+      description.textContent = `Platforms: ${{platforms}}`;
+      summary.appendChild(title);
+      summary.appendChild(meta);
+      summary.appendChild(description);
+
+      const actions = document.createElement('div');
+      actions.className = 'extension-actions';
+      const state = document.createElement('div');
+      state.className = 'toggle-state';
+      const enableBtn = document.createElement('button');
+      enableBtn.type = 'button';
+      enableBtn.className = 'mini-btn';
+      enableBtn.textContent = 'Enable';
+      const disableBtn = document.createElement('button');
+      disableBtn.type = 'button';
+      disableBtn.className = 'mini-btn';
+      disableBtn.textContent = 'Disable';
+      const commandsBtn = document.createElement('button');
+      commandsBtn.type = 'button';
+      commandsBtn.className = 'mini-btn';
+      commandsBtn.textContent = 'See commands';
+      const settingsBtn = document.createElement('button');
+      settingsBtn.type = 'button';
+      settingsBtn.className = 'mini-btn';
+      settingsBtn.textContent = 'Open settings';
+
+      const updateState = () => {{
+        const isEnabled = hidden.value === 'true';
+        enableBtn.className = 'mini-btn' + (isEnabled ? ' active-enable' : '');
+        disableBtn.className = 'mini-btn' + (!isEnabled ? ' active-disable' : '');
+        state.textContent = isEnabled ? 'Enabled in runtime' : 'Disabled in runtime';
+        settingsBtn.hidden = !isEnabled;
+      }};
+
+      enableBtn.addEventListener('click', () => {{
+        hidden.value = 'true';
+        updateState();
+      }});
+      disableBtn.addEventListener('click', () => {{
+        hidden.value = 'false';
+        updateState();
+      }});
+      settingsBtn.addEventListener('click', () => {{
+        currentSection = `ext:${{descriptor.id}}`;
+        currentTab = '';
+        updateUrl();
+        renderNav();
+        renderSection().catch(err => setStatus('Load failed: ' + err));
+      }});
+
+      const commandsPanel = document.createElement('div');
+      commandsPanel.className = 'command-panel';
+      commandsPanel.hidden = true;
+      commandsBtn.addEventListener('click', () => {{
+        toggleExtensionCommands(descriptor, commandsPanel, commandsBtn)
+          .catch(err => setStatus('Load failed: ' + err));
+      }});
+
+      actions.appendChild(enableBtn);
+      actions.appendChild(disableBtn);
+      actions.appendChild(settingsBtn);
+      actions.appendChild(commandsBtn);
+      actions.appendChild(state);
+      updateState();
+
+      head.appendChild(summary);
+      head.appendChild(actions);
+      card.appendChild(head);
+      card.appendChild(commandsPanel);
+      return card;
+    }}
+
     async function renderSection() {{
-      settingsViewEl.innerHTML = '';
-      statusViewEl.innerHTML = '';
+      contentViewEl.innerHTML = '';
       setStatus('');
-      renderTabs();
-      toggleViews();
 
       function coreSections(config) {{
         const disabledExtensions = new Set(Array.isArray(config.disabledExtensions) ? config.disabledExtensions : []);
-        const extensionFields = descriptors.map(descriptor => {{
-          const platforms = Array.isArray(descriptor.platforms) && descriptor.platforms.length > 0
-            ? descriptor.platforms.join(', ')
-            : 'windows, macos, linux';
-          return {{
-            id: 'extensionEnabled:' + descriptor.id,
-            label: descriptor.name,
-            description: 'Supported platforms: ' + platforms,
-            type: 'extension-toggle',
-            default: !disabledExtensions.has(descriptor.id)
-          }};
-        }});
+        const extensionItems = discoverableDescriptors.map(descriptor => ({{
+          descriptor,
+          enabled: !disabledExtensions.has(descriptor.id)
+        }}));
 
         return [
           {{
+            id: 'general',
             title: 'General',
             description: 'Core Copper configuration.',
             fields: [
@@ -1353,6 +1639,7 @@ fn render_html(state: &UiServerState) -> String {
             ]
           }},
           {{
+            id: 'package-install',
             title: 'Package install',
             description: 'Shared extension package installation inputs belong to Copper core settings, not to a torrent workflow extension.',
             fields: [
@@ -1373,9 +1660,10 @@ fn render_html(state: &UiServerState) -> String {
             ]
           }},
           {{
+            id: 'extensions',
             title: 'Extensions',
             description: 'Extensions can stay discoverable in the UI while being disabled for the active runtime.',
-            fields: extensionFields
+            items: extensionItems
           }}
         ];
       }}
@@ -1387,6 +1675,8 @@ fn render_html(state: &UiServerState) -> String {
         ? '/info/core'
         : '/info/extension/' + encodeURIComponent(currentSection.slice(4));
       const [config, info] = await Promise.all([loadJson(configTarget), loadJson(infoTarget)]);
+      currentConfig = config || {{}};
+      currentInfo = info || {{}};
 
       if (currentSection === 'core') {{
         pageEyebrowEl.textContent = 'Core';
@@ -1394,14 +1684,7 @@ fn render_html(state: &UiServerState) -> String {
         pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
         saveBtn.textContent = 'Save settings';
 
-        coreSections(config).forEach(section => {{
-          const settingsCard = createCard(section.title, section.description);
-          section.fields.forEach(field => {{
-            settingsCard.appendChild(createInput(field, config[field.id], info));
-          }});
-          settingsViewEl.appendChild(settingsCard);
-        }});
-
+        const sections = coreSections(config);
         const coreRows = [
           {{ label: 'Extensions loaded', value: info.extensionsLoaded ?? 0 }},
           {{ label: 'Host platform', value: info.hostPlatform || 'unknown' }},
@@ -1410,7 +1693,55 @@ fn render_html(state: &UiServerState) -> String {
           {{ label: 'Core extensions directory', value: info.coreExtensionsDir || 'Not available', format: 'path', mono: true }},
           {{ label: 'Runtime extension roots', value: (info.runtimeExtensionRoots || []).join(', '), format: 'path', mono: true }}
         ];
-        renderKeyValueCard(statusViewEl, 'Status', 'Current Copper environment information.', coreRows);
+
+        currentTabs = [
+          {{ id: 'general', title: 'General' }},
+          {{ id: 'package-install', title: 'Package Install' }},
+          {{ id: 'extensions', title: 'Extensions' }}
+        ];
+        const generalSection = sections.find(section => section.id === 'general');
+        if (generalSection) {{
+          const card = createCard(generalSection.title, generalSection.description);
+          generalSection.fields.forEach(field => {{
+            card.appendChild(createInput(field, config[field.id], info));
+          }});
+          appendCard(card, 'general', true);
+        }}
+        const generalStatusHost = document.createElement('div');
+        renderKeyValueCard(
+          generalStatusHost,
+          'Environment',
+          'Current Copper environment information.',
+          coreRows
+        );
+        appendCard(generalStatusHost.firstElementChild, 'general', false);
+
+        sections
+          .filter(section => section.id !== 'general')
+          .forEach(section => {{
+            if (section.id === 'extensions') {{
+              const card = createCard(section.title, section.description);
+              const list = document.createElement('div');
+              list.className = 'extension-list';
+              (section.items || []).forEach(item => {{
+                list.appendChild(createCoreExtensionCard(item.descriptor, item.enabled));
+              }});
+              card.appendChild(list);
+              appendCard(card, section.id, true);
+              return;
+            }}
+            const card = createCard(section.title, section.description);
+            section.fields.forEach(field => {{
+              card.appendChild(createInput(field, config[field.id], info));
+            }});
+            appendCard(card, section.id, true);
+          }});
+
+        if (!currentTabs.some(tab => tab.id === currentTab)) {{
+          currentTab = currentTabs[0].id;
+        }}
+        renderTabs(currentTabs);
+        applyTabVisibility(currentTabs);
         return;
       }}
 
@@ -1426,44 +1757,83 @@ fn render_html(state: &UiServerState) -> String {
       pageTitleEl.textContent = settingsMeta.title || descriptor.name;
       pageSubEl.textContent =
         settingsMeta.description ||
-        'Configure this extension on one page and review its latest runtime status separately.';
+        'Configure this extension in a user-friendly workspace.';
       saveBtn.textContent = applyActions.length > 0 ? 'Save and apply' : 'Save settings';
 
       const sections = inferSections(descriptor.inputs || [], descriptor);
-      if (sections.length === 0) {{
-        const emptyCard = createCard('Settings', 'This extension does not expose editable settings yet.');
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = 'No configurable fields were declared in the manifest.';
-        emptyCard.appendChild(empty);
-        settingsViewEl.appendChild(emptyCard);
-      }} else {{
-        sections.forEach(section => {{
-          const card = createCard(section.title, section.description);
-          section.inputDefs.forEach(input => {{
-            card.appendChild(createInput(input, config[input.id], info));
-          }});
-          settingsViewEl.appendChild(card);
-        }});
-      }}
-
       const statusMeta = (info && info.statusMeta) || ((settingsMeta || {{}}).status) || {{}};
       const status = (info && info.status) || {{}};
-      const fieldDefs = (statusMeta.fields && statusMeta.fields.length)
-        ? statusMeta.fields
-        : Object.keys(status).sort().map(key => ({{ key, label: humanizeKey(key) }}));
-      const statusRows = fieldDefs.map(field => ({{
-        label: field.label || humanizeKey(field.key),
-        value: status[field.key],
-        format: field.format
+      const statusRows = buildStatusRows(statusMeta, status);
+      const declaredTabs = Array.isArray(settingsMeta.tabs)
+        ? settingsMeta.tabs.map(tab => normalizeTabSpec(tab, 'Tab')).filter(tab => tab.id)
+        : [];
+      const sectionToTab = new Map();
+      declaredTabs.forEach(tab => {{
+        tab.sections.forEach(sectionId => {{
+          if (!sectionToTab.has(sectionId)) {{
+            sectionToTab.set(sectionId, tab.id);
+          }}
+        }});
+      }});
+
+      currentTabs = declaredTabs.map(tab => ({{
+        id: tab.id,
+        title: tab.title,
+        description: tab.description || ''
       }}));
-      renderKeyValueCard(
-        statusViewEl,
-        (statusMeta && statusMeta.title) || 'Recent status',
-        (statusMeta && statusMeta.description) || 'Latest runtime values reported by the daemon for this extension.',
-        statusRows
-      );
-      renderCommands(statusViewEl, (info && info.commands) || []);
+
+      if (!declaredTabs.length) {{
+        if (sections.length === 0) {{
+          const emptyCard = createCard('Settings', 'This extension does not expose editable settings yet.');
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = 'No configurable fields were declared in the manifest.';
+          emptyCard.appendChild(empty);
+          appendCard(emptyCard, '', false);
+        }} else {{
+          sections.forEach(section => {{
+            appendCard(createSettingsCard(section, config, info), '', true);
+          }});
+        }}
+        if (statusRows.length > 0) {{
+          const statusHost = document.createElement('div');
+          renderKeyValueCard(
+            statusHost,
+            statusMeta.title || 'Recent status',
+            statusMeta.description || 'Latest runtime values reported by the daemon for this extension.',
+            statusRows
+          );
+          appendCard(statusHost.firstElementChild, '', false);
+        }}
+        currentTab = '';
+        renderTabs([]);
+        applyTabVisibility([]);
+        return;
+      }}
+
+      const fallbackTabId = declaredTabs[0].id;
+      sections.forEach(section => {{
+        const tabId = sectionToTab.get(section.id) || fallbackTabId;
+        appendCard(createSettingsCard(section, config, info), tabId, true);
+      }});
+
+      const statusTab = declaredTabs.find(tab => tab.showStatus);
+      if (statusRows.length > 0) {{
+        const statusHost = document.createElement('div');
+        renderKeyValueCard(
+            statusHost,
+            statusMeta.title || 'Recent status',
+            statusMeta.description || 'Latest runtime values reported by the daemon for this extension.',
+            statusRows
+        );
+        appendCard(statusHost.firstElementChild, statusTab ? statusTab.id : fallbackTabId, false);
+      }}
+
+      if (!currentTabs.some(tab => tab.id === currentTab)) {{
+        currentTab = currentTabs[0].id;
+      }}
+      renderTabs(currentTabs);
+      applyTabVisibility(currentTabs);
     }}
 
     function collectCurrentPayload() {{
@@ -1479,6 +1849,34 @@ fn render_html(state: &UiServerState) -> String {
         }}
       }};
 
+      const readControlValues = root => {{
+        const values = new Map();
+        const controls = root.querySelectorAll('[data-input-id]');
+        const handled = new Set();
+        controls.forEach(ctrl => {{
+          const id = ctrl.dataset.inputId;
+          if (handled.has(id)) return;
+          handled.add(id);
+          const type = ctrl.dataset.inputType;
+          let value;
+          if (type === 'boolean' || type === 'extension-toggle') {{
+            value = ctrl.value === 'true';
+          }} else if (type === 'multi-select') {{
+            value = Array.from(root.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
+              .filter(option => option.checked)
+              .map(option => option.dataset.optionValue);
+          }} else if (type === 'number') {{
+            value = ctrl.value === '' ? null : Number(ctrl.value);
+          }} else {{
+            value = ctrl.value;
+          }}
+          values.set(id, value);
+        }});
+        return values;
+      }};
+
+      const visibleValues = readControlValues(contentViewEl);
+
       if (!currentSection.startsWith('ext:')) {{
         const coreDefaults = {{
           userExtensionsDir: '~/.Copper/extensions',
@@ -1489,65 +1887,42 @@ fn render_html(state: &UiServerState) -> String {
           extensionPackage: '',
           extensionsInstallDir: '~/.Copper/extensions'
         }};
-        const controls = settingsViewEl.querySelectorAll('[data-input-id]');
-        const handled = new Set();
-        const disabledExtensions = [];
-        controls.forEach(ctrl => {{
-          const id = ctrl.dataset.inputId;
-          if (handled.has(id)) return;
-          handled.add(id);
-          const type = ctrl.dataset.inputType;
-          let value;
-          if (type === 'boolean' || type === 'extension-toggle') {{
-            value = ctrl.value === 'true';
-          }} else if (type === 'multi-select') {{
-            value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
-              .filter(option => option.checked)
-              .map(option => option.dataset.optionValue);
-          }} else if (type === 'number') {{
-            value = ctrl.value === '' ? null : Number(ctrl.value);
-          }} else {{
-            value = ctrl.value;
-          }}
-          if (id.startsWith('extensionEnabled:')) {{
-            if (!value) {{
-              disabledExtensions.push(id.slice('extensionEnabled:'.length));
-            }}
-            return;
-          }}
+        Object.keys(coreDefaults).forEach(id => {{
+          if (id === 'disabledExtensions') return;
+          const value = visibleValues.has(id)
+            ? visibleValues.get(id)
+            : (currentConfig[id] !== undefined ? currentConfig[id] : coreDefaults[id]);
           addKey(id, value, coreDefaults[id]);
         }});
+
+        const savedDisabled = new Set(
+          Array.isArray(currentConfig.disabledExtensions) ? currentConfig.disabledExtensions : []
+        );
+        const disabledExtensions = discoverableDescriptors
+          .filter(descriptor => {{
+            const key = 'extensionEnabled:' + descriptor.id;
+            const enabled = visibleValues.has(key)
+              ? visibleValues.get(key)
+              : !savedDisabled.has(descriptor.id);
+            return !enabled;
+          }})
+          .map(descriptor => descriptor.id);
         disabledExtensions.sort();
         addKey('disabledExtensions', disabledExtensions, coreDefaults.disabledExtensions);
         if (remove.length > 0) payload.__remove = remove;
         return payload;
       }}
 
-      const controls = settingsViewEl.querySelectorAll('[data-input-id]');
       const extensionId = currentSection.slice(4);
       const descriptor = byId[extensionId];
       const inputDefaults = {{}};
       (descriptor && descriptor.inputs ? descriptor.inputs : []).forEach(input => {{
         inputDefaults[input.id] = input.default;
       }});
-      const handled = new Set();
-      controls.forEach(ctrl => {{
-        const id = ctrl.dataset.inputId;
-        if (handled.has(id)) return;
-        handled.add(id);
-        const type = ctrl.dataset.inputType;
-        let value;
-        if (type === 'boolean' || type === 'extension-toggle') {{
-          value = ctrl.value === 'true';
-        }} else if (type === 'multi-select') {{
-          value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
-            .filter(option => option.checked)
-            .map(option => option.dataset.optionValue);
-        }} else if (type === 'number') {{
-          value = ctrl.value === '' ? null : Number(ctrl.value);
-        }} else {{
-          value = ctrl.value;
-        }}
+      Object.keys(inputDefaults).forEach(id => {{
+        const value = visibleValues.has(id)
+          ? visibleValues.get(id)
+          : (currentConfig[id] !== undefined ? currentConfig[id] : inputDefaults[id]);
         addKey(id, value, inputDefaults[id]);
       }});
       if (remove.length > 0) payload.__remove = remove;
@@ -1589,6 +1964,10 @@ fn render_html(state: &UiServerState) -> String {
           await renderSection();
           setStatus('Settings saved and applied to the current system.');
         }} else {{
+          if (currentSection === 'core') {{
+            await refreshDescriptorModel();
+            renderNav();
+          }}
           await renderSection();
           setStatus('Settings saved successfully.');
         }}
@@ -1624,12 +2003,14 @@ fn render_html(state: &UiServerState) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_core_info, build_ui_state, core_data_path_for, extension_config_path_for,
-        extension_status_path_for, load_config, parse_json_object, parse_request,
-        read_chunked_body, render_html, start_daemon_ui_server, store_config, write_response,
-        HttpMethod, HttpResponse, UiConfigError, UiOpenOptions,
+        build_core_info, build_extension_info, build_ui_state, core_data_path_for,
+        extension_config_path_for, extension_status_path_for, load_config, parse_json_object,
+        parse_request, read_chunked_body, render_html, start_daemon_ui_server, store_config,
+        visible_descriptors, write_response, HttpMethod, HttpResponse, UiConfigError,
+        UiOpenOptions,
     };
     use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
+    use crate::core_config::CoreConfig;
     use crate::descriptor::{
         Action, Descriptor, InputField, InputType, Platform, SettingsDescriptor, SettingsSection,
         StatusDescriptor, StatusField, StatusFieldFormat, UiDescriptor,
@@ -1687,6 +2068,7 @@ mod tests {
                         .to_string(),
                 ),
                 apply_actions: vec![],
+                tabs: vec![],
                 sections: vec![SettingsSection {
                     id: "monitor".to_string(),
                     title: "Monitor".to_string(),
@@ -1716,7 +2098,8 @@ mod tests {
         super::UiServerState {
             selected_extension_id: descriptor.id.clone(),
             extension_ids: [descriptor.id.clone()].into_iter().collect::<HashSet<_>>(),
-            descriptors: vec![descriptor],
+            descriptors: vec![descriptor.clone()],
+            discoverable_descriptors: vec![descriptor],
             user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
             core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
             runtime_extension_roots: vec![
@@ -1851,6 +2234,121 @@ mod tests {
         assert!(state.extension_ids.contains("platform-bound"));
     }
 
+    #[test]
+    fn visible_descriptors_hide_disabled_extensions_from_sidebar_only() {
+        let enabled = sample_descriptor();
+        let mut disabled = sample_descriptor();
+        disabled.id = "disabled-ext".to_string();
+        disabled.name = "Disabled Extension".to_string();
+
+        let descriptors = vec![enabled.clone(), disabled.clone()];
+        let core_config = CoreConfig {
+            disabled_extensions: ["disabled-ext".to_string()].into_iter().collect(),
+        };
+
+        let visible = visible_descriptors(&descriptors, &core_config);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, enabled.id);
+        assert_eq!(descriptors.len(), 2, "discoverable list stays intact");
+    }
+
+    #[test]
+    fn find_discoverable_descriptor_reads_hidden_extension_metadata() {
+        let enabled = sample_descriptor();
+        let mut hidden = sample_descriptor();
+        hidden.id = "hidden-ext".to_string();
+        hidden.name = "Hidden Extension".to_string();
+
+        let state = super::UiServerState {
+            selected_extension_id: enabled.id.clone(),
+            extension_ids: [enabled.id.clone()].into_iter().collect::<HashSet<_>>(),
+            descriptors: vec![enabled.clone()],
+            discoverable_descriptors: vec![enabled, hidden.clone()],
+            user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
+            core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
+            runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],
+            state_store: ExtensionStateStore::new(PathBuf::from("C:/tmp/.Copper/extensions")),
+            host_extensions: HostExtensionRegistry::new(),
+            auth_token: "test-auth-token".to_string(),
+            origin: "http://127.0.0.1:4766".to_string(),
+            allow_close: true,
+        };
+
+        let descriptor =
+            super::find_discoverable_descriptor(&state, "hidden-ext").expect("discoverable");
+        assert_eq!(descriptor.id, hidden.id);
+    }
+
+    #[test]
+    fn build_extension_info_supports_hidden_discoverable_extension_commands() {
+        let enabled = sample_descriptor();
+        let hidden = Descriptor {
+            schema: Some(
+                "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json".to_string(),
+            ),
+            id: "hidden-ext".to_string(),
+            name: "Hidden Extension".to_string(),
+            version: "1.0.0".to_string(),
+            trigger: "hidden-trigger".to_string(),
+            platforms: vec![],
+            permissions: vec![],
+            inputs: vec![],
+            actions: vec![
+                Action {
+                    id: "status".to_string(),
+                    label: "Read status".to_string(),
+                    description: Some("Read current extension state.".to_string()),
+                    script: "status".to_string(),
+                },
+                Action {
+                    id: "apply-hidden".to_string(),
+                    label: "Apply hidden config".to_string(),
+                    description: Some("Apply the saved hidden extension config.".to_string()),
+                    script: "apply-hidden".to_string(),
+                },
+            ],
+            ui: Some(UiDescriptor {
+                ui_type: "form".to_string(),
+                source: None,
+                on_select: None,
+            }),
+            settings: Some(SettingsDescriptor {
+                title: Some("Hidden Extension".to_string()),
+                description: Some("Hidden settings".to_string()),
+                apply_actions: vec!["apply-hidden".to_string()],
+                tabs: vec![],
+                sections: vec![],
+                status: None,
+            }),
+            tray: None,
+        };
+
+        let state = super::UiServerState {
+            selected_extension_id: enabled.id.clone(),
+            extension_ids: [enabled.id.clone()].into_iter().collect::<HashSet<_>>(),
+            descriptors: vec![enabled],
+            discoverable_descriptors: vec![hidden.clone()],
+            user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
+            core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
+            runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],
+            state_store: ExtensionStateStore::new(PathBuf::from("C:/tmp/.Copper/extensions")),
+            host_extensions: HostExtensionRegistry::new(),
+            auth_token: "test-auth-token".to_string(),
+            origin: "http://127.0.0.1:4766".to_string(),
+            allow_close: true,
+        };
+
+        let info = build_extension_info(&state, &hidden).expect("hidden extension info");
+        let commands = info
+            .get("commands")
+            .and_then(|value| value.as_array())
+            .expect("commands array");
+        assert!(
+            !commands.is_empty(),
+            "discoverable extensions should keep command metadata for the core page"
+        );
+    }
+
     fn http_request(addr: &str, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
         http_request_with_headers(addr, method, path, &[], body)
     }
@@ -1906,7 +2404,7 @@ mod tests {
         assert!(html.contains("Desktop Torrent Organizer"));
         assert!(html.contains("Save settings"));
         assert!(html.contains("Status"));
-        assert!(html.contains("Commands"));
+        assert!(html.contains("See commands"));
         assert!(html.contains("Recent status"));
         assert!(html.contains("URLSearchParams(window.location.search)"));
     }
@@ -1999,6 +2497,7 @@ mod tests {
                 title: Some("Display".to_string()),
                 description: Some("Configure Windows display settings.".to_string()),
                 apply_actions: vec!["set-resolution".to_string()],
+                tabs: vec![],
                 sections: vec![],
                 status: None,
             }),
@@ -2008,6 +2507,7 @@ mod tests {
             selected_extension_id: descriptor.id.clone(),
             extension_ids: [descriptor.id.clone()].into_iter().collect::<HashSet<_>>(),
             descriptors: vec![descriptor.clone()],
+            discoverable_descriptors: vec![descriptor.clone()],
             user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
             core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
             runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],

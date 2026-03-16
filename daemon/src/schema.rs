@@ -225,6 +225,19 @@ mod tests {
                         "set-resolution",
                         "set-scale"
                     ],
+                    "tabs": [
+                        {{
+                            "id": "display",
+                            "title": "Display",
+                            "sections": ["taskbar"]
+                        }},
+                        {{
+                            "id": "status",
+                            "title": "Status",
+                            "showStatus": true,
+                            "showCommands": true
+                        }}
+                    ],
                     "sections": [
                         {{
                             "id": "taskbar",
@@ -256,6 +269,10 @@ mod tests {
         let descriptor = parse_and_validate(&raw).expect("descriptor should pass validation");
         let settings = descriptor.settings.expect("settings metadata");
         assert_eq!(settings.title.as_deref(), Some("Display"));
+        assert_eq!(settings.tabs.len(), 2);
+        assert_eq!(settings.tabs[0].sections, vec!["taskbar"]);
+        assert!(settings.tabs[1].show_status);
+        assert!(settings.tabs[1].show_commands);
         assert_eq!(settings.sections.len(), 1);
         assert_eq!(settings.sections[0].inputs, vec!["taskbarAutoHide"]);
         assert_eq!(

@@ -109,6 +109,20 @@ pub struct SettingsSection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SettingsTab {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub sections: Vec<String>,
+    #[serde(default, rename = "showStatus")]
+    pub show_status: bool,
+    #[serde(default, rename = "showCommands")]
+    pub show_commands: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StatusField {
     pub key: String,
     pub label: String,
@@ -134,6 +148,8 @@ pub struct SettingsDescriptor {
     pub description: Option<String>,
     #[serde(default, rename = "applyActions")]
     pub apply_actions: Vec<String>,
+    #[serde(default)]
+    pub tabs: Vec<SettingsTab>,
     #[serde(default)]
     pub sections: Vec<SettingsSection>,
     #[serde(default)]
