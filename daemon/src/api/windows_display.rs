@@ -91,12 +91,24 @@ where
 }
 
 fn build_request(action_id: &str, config: &Value) -> BridgeRequest {
+    let (resolution_width, resolution_height, refresh_rate) = config
+        .get("resolutionMode")
+        .and_then(Value::as_str)
+        .and_then(parse_resolution_mode)
+        .unwrap_or_else(|| {
+            (
+                read_i32(config, "resolutionWidth", 1920, 640, 16_384),
+                read_i32(config, "resolutionHeight", 1080, 480, 16_384),
+                read_i32(config, "refreshRate", 60, 1, 480),
+            )
+        });
+
     BridgeRequest {
         action: action_id.to_string(),
         taskbar_auto_hide: read_bool(config, "taskbarAutoHide", false),
-        resolution_width: read_i32(config, "resolutionWidth", 1920, 640, 16_384),
-        resolution_height: read_i32(config, "resolutionHeight", 1080, 480, 16_384),
-        refresh_rate: read_i32(config, "refreshRate", 60, 1, 480),
+        resolution_width,
+        resolution_height,
+        refresh_rate,
         scale_percent: read_i32(config, "scalePercent", 100, 100, 350),
     }
 }
@@ -111,10 +123,24 @@ fn read_bool(config: &Value, key: &str, default_value: bool) -> bool {
 fn read_i32(config: &Value, key: &str, default_value: i32, min: i32, max: i32) -> i32 {
     let value = config
         .get(key)
-        .and_then(Value::as_i64)
-        .and_then(|v| i32::try_from(v).ok())
+        .and_then(|value| {
+            value
+                .as_i64()
+                .and_then(|v| i32::try_from(v).ok())
+                .or_else(|| value.as_str().and_then(|raw| raw.parse::<i32>().ok()))
+        })
         .unwrap_or(default_value);
     value.clamp(min, max)
+}
+
+fn parse_resolution_mode(raw: &str) -> Option<(i32, i32, i32)> {
+    let (dimensions, refresh_raw) = raw.split_once('@')?;
+    let (width_raw, height_raw) = dimensions.split_once('x')?;
+    Some((
+        width_raw.parse().ok()?,
+        height_raw.parse().ok()?,
+        refresh_raw.parse().ok()?,
+    ))
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -891,6 +917,26 @@ mod tests {
                 assert_eq!(request.resolution_width, 16_384);
                 assert_eq!(request.resolution_height, 480);
                 assert_eq!(request.refresh_rate, 480);
+                Ok(json!({ "ok": true }))
+            },
+        )
+        .expect("dispatch");
+    }
+
+    #[test]
+    fn set_resolution_prefers_resolution_mode_when_present() {
+        execute_action_with_runner(
+            "set-resolution",
+            &json!({
+                "resolutionMode": "2560x1440@144",
+                "resolutionWidth": 1920,
+                "resolutionHeight": 1080,
+                "refreshRate": 60
+            }),
+            |request| {
+                assert_eq!(request.resolution_width, 2560);
+                assert_eq!(request.resolution_height, 1440);
+                assert_eq!(request.refresh_rate, 144);
                 Ok(json!({ "ok": true }))
             },
         )

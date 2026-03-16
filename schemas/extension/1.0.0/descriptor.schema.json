@@ -37,6 +37,7 @@
               "folder-picker",
               "file-picker",
               "select",
+              "list-select",
               "multi-select"
             ]
           },

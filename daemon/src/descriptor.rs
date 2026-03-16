@@ -23,6 +23,7 @@ pub enum InputType {
     FolderPicker,
     FilePicker,
     Select,
+    ListSelect,
     MultiSelect,
 }
 

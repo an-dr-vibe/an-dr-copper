@@ -9,9 +9,7 @@ function readAction(inputs: Inputs): string {
 function summarize(inputs: Inputs) {
   return {
     taskbarAutoHide: Boolean(inputs.taskbarAutoHide ?? false),
-    resolutionWidth: Number(inputs.resolutionWidth ?? 1920),
-    resolutionHeight: Number(inputs.resolutionHeight ?? 1080),
-    refreshRate: Number(inputs.refreshRate ?? 60),
+    resolutionMode: String(inputs.resolutionMode ?? "1920x1080@60"),
     scalePercent: Number(inputs.scalePercent ?? 100)
   };
 }

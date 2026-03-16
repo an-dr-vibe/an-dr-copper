@@ -220,39 +220,39 @@ fn windows_display_manager_descriptor_matches_required_contract() {
     assert!(action_ids.contains(&"set-resolution"));
     assert!(action_ids.contains(&"set-scale"));
 
-    let width = descriptor
+    let resolution_mode = descriptor
         .inputs
         .iter()
-        .find(|input| input.id == "resolutionWidth")
-        .expect("resolutionWidth input");
-    assert_eq!(width.default.as_u64(), Some(1920));
-
-    let height = descriptor
-        .inputs
-        .iter()
-        .find(|input| input.id == "resolutionHeight")
-        .expect("resolutionHeight input");
-    assert_eq!(height.default.as_u64(), Some(1080));
-
-    let hz = descriptor
-        .inputs
-        .iter()
-        .find(|input| input.id == "refreshRate")
-        .expect("refreshRate input");
-    assert_eq!(hz.default.as_u64(), Some(60));
+        .find(|input| input.id == "resolutionMode")
+        .expect("resolutionMode input");
+    assert_eq!(
+        resolution_mode.field_type,
+        copperd::descriptor::InputType::ListSelect
+    );
+    assert_eq!(resolution_mode.default.as_str(), Some("1920x1080@60"));
+    assert_eq!(
+        resolution_mode.options_source.as_deref(),
+        Some("dynamicOptions.resolutionModes")
+    );
 
     let scale = descriptor
         .inputs
         .iter()
         .find(|input| input.id == "scalePercent")
         .expect("scalePercent input");
+    assert_eq!(scale.field_type, copperd::descriptor::InputType::Select);
     assert_eq!(scale.default.as_u64(), Some(100));
+    assert_eq!(
+        scale.options_source.as_deref(),
+        Some("dynamicOptions.scalePercentages")
+    );
 
     let tray_presets = descriptor
         .inputs
         .iter()
         .find(|input| input.id == "trayResolutionPresets")
         .expect("trayResolutionPresets input");
+    assert_eq!(tray_presets.label, "Visible resolutions");
     assert_eq!(
         tray_presets.default.as_array().map(|values| values.len()),
         Some(2),
@@ -260,7 +260,7 @@ fn windows_display_manager_descriptor_matches_required_contract() {
     );
     assert_eq!(
         tray_presets.options_source.as_deref(),
-        Some("dynamicOptions.trayResolutionPresets")
+        Some("dynamicOptions.resolutionModes")
     );
 
     let settings = descriptor
@@ -294,6 +294,18 @@ fn windows_display_manager_descriptor_matches_required_contract() {
             .any(|section| section.id == "tray-menu"),
         "windows display settings should define a tray menu section"
     );
+    let resolution_section = settings
+        .sections
+        .iter()
+        .find(|section| section.id == "resolution")
+        .expect("resolution section");
+    assert_eq!(resolution_section.inputs, vec!["resolutionMode"]);
+    let scale_section = settings
+        .sections
+        .iter()
+        .find(|section| section.id == "scale")
+        .expect("scale section");
+    assert_eq!(scale_section.inputs, vec!["scalePercent"]);
     assert!(
         settings
             .status

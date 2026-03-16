@@ -44,7 +44,7 @@ pwsh -NoProfile -Command "$s=Invoke-RestMethod 'https://raw.githubusercontent.co
 ./scripts/install.ps1 -Force -AutoStart
 
 # released/copy install of a specific release tag:
-./scripts/install.ps1 -Version v0.3.0
+./scripts/install.ps1 -Version v0.3.1
 
 # linked development install from a cloned repo:
 ./scripts/install-dev.ps1 -Force

@@ -245,10 +245,7 @@ fn build_ui_state(
         }
         selected.to_string()
     } else {
-        descriptors
-            .first()
-            .map(|descriptor| descriptor.id.clone())
-            .unwrap_or_default()
+        String::new()
     };
 
     let state_store = ExtensionStateStore::for_current_user()?;
@@ -895,17 +892,33 @@ fn render_html(state: &UiServerState) -> String {
     .card {{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px; }}
     .card-title {{ font-size:18px; font-weight:700; margin:0 0 6px; }}
     .card-sub {{ color:var(--muted); margin:0 0 14px; font-size:14px; }}
-    label {{ display:block; font-weight:600; margin:10px 0 6px; }}
+    .input-shell {{ margin:0 0 16px; padding:12px; border:1px solid transparent; border-radius:12px; transition:border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }}
+    .input-shell:first-of-type {{ margin-top:-4px; }}
+    .input-shell.is-dirty {{ border-color:#b9576d; background:rgba(185,87,109,.08); box-shadow:0 0 0 1px rgba(185,87,109,.18) inset; }}
+    .input-head {{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 6px; }}
+    label {{ display:block; font-weight:600; margin:0; }}
+    .unsaved-badge {{
+      display:inline-flex; align-items:center; gap:6px; border-radius:999px; padding:4px 8px;
+      background:rgba(185,87,109,.16); color:#ffb7c6; font-size:12px; font-weight:700; letter-spacing:.02em;
+    }}
+    .unsaved-badge::before {{ content:'*'; font-size:13px; line-height:1; }}
     .field-help {{ color:var(--muted); font-size:13px; margin:0 0 8px; }}
     input, select {{
       width:100%; border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text);
       padding:10px;
+    }}
+    .input-shell.is-dirty input,
+    .input-shell.is-dirty select,
+    .input-shell.is-dirty .list-select {{
+      border-color:#b9576d;
+      box-shadow:0 0 0 1px rgba(185,87,109,.22);
     }}
     .btn-row {{ display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }}
     button {{
       border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text); padding:10px 14px; cursor:pointer;
     }}
     button.primary {{ background:var(--accent); border-color:transparent; color:#0b1020; font-weight:700; }}
+    button.primary.is-dirty {{ box-shadow:0 0 0 2px rgba(185,87,109,.35); }}
     [hidden] {{ display:none !important; }}
     .status-msg {{ color:var(--muted); margin-top:8px; min-height:20px; }}
     .empty {{ color:var(--muted); font-style:italic; }}
@@ -930,7 +943,9 @@ fn render_html(state: &UiServerState) -> String {
     .toggle-state {{ color:var(--muted); font-size:13px; }}
     .extension-list {{ display:grid; gap:12px; }}
     .extension-card {{ border:1px solid var(--line); border-radius:12px; padding:14px; background:var(--panel3); }}
+    .extension-card.is-dirty {{ border-color:#b9576d; box-shadow:0 0 0 1px rgba(185,87,109,.18) inset; }}
     .extension-head {{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }}
+    .extension-title-row {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
     .extension-name {{ font-weight:700; margin:0 0 4px; }}
     .extension-id {{ color:var(--muted); font-size:12px; }}
     .extension-meta {{ color:var(--muted); font-size:13px; margin:8px 0 0; }}
@@ -939,6 +954,15 @@ fn render_html(state: &UiServerState) -> String {
     .mini-btn.active-enable {{ background:#1f4b2f; border-color:#3d8b5c; color:#e7fff0; }}
     .mini-btn.active-disable {{ background:#4a2222; border-color:#a25555; color:#ffecec; }}
     .command-panel {{ margin-top:12px; display:grid; gap:10px; }}
+    .list-select {{
+      display:grid; gap:8px; max-height:220px; overflow:auto; padding:6px; border:1px solid var(--line);
+      border-radius:12px; background:var(--panel3);
+    }}
+    .list-option {{
+      width:100%; text-align:left; padding:10px 12px; border-radius:10px; border:1px solid var(--line);
+      background:rgba(255,255,255,.01); color:var(--text);
+    }}
+    .list-option.active {{ border-color:var(--accent); background:var(--accent-soft); color:var(--text); }}
     .checkbox-item {{
       display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line);
       border-radius:10px; background:var(--panel3);
@@ -978,6 +1002,93 @@ fn render_html(state: &UiServerState) -> String {
     let descriptors = [];
     let discoverableDescriptors = [];
     let byId = {{}};
+    const THEME_OPTIONS = [
+      {{ id: 'copper', label: 'Copper Dark' }},
+      {{ id: 'copper-light', label: 'Copper Light' }},
+      {{ id: 'brass', label: 'Brass Dark' }},
+      {{ id: 'brass-light', label: 'Brass Light' }},
+      {{ id: 'silver', label: 'Silver Dark' }},
+      {{ id: 'silver-light', label: 'Silver Light' }},
+      {{ id: 'gold', label: 'Gold Dark' }},
+      {{ id: 'gold-light', label: 'Gold Light' }},
+      {{ id: 'titanium', label: 'Titanium Dark' }},
+      {{ id: 'titanium-light', label: 'Titanium Light' }},
+    ];
+    const THEMES = {{
+      copper: {{
+        bg: '#181210', panel: '#241b18', panel2: '#1d1613', panel3: '#120c0a',
+        line: '#533327', text: '#f5ebe4', muted: '#bc9e8f',
+        accent: '#d8895a', accentSoft: 'rgba(216,137,90,.18)'
+      }},
+      'copper-light': {{
+        bg: '#fbf3ee', panel: '#fffbf8', panel2: '#f3e1d4', panel3: '#fff6f1',
+        line: '#e5c3ad', text: '#43281c', muted: '#916a58',
+        accent: '#cb7a4c', accentSoft: 'rgba(203,122,76,.16)'
+      }},
+      brass: {{
+        bg: '#17140f', panel: '#232018', panel2: '#1c1913', panel3: '#100d09',
+        line: '#5a4928', text: '#f3ecdd', muted: '#baa97c',
+        accent: '#caa24c', accentSoft: 'rgba(202,162,76,.18)'
+      }},
+      'brass-light': {{
+        bg: '#faf5e8', panel: '#fffdf7', panel2: '#f0e4c2', panel3: '#fcf8ef',
+        line: '#dfcb90', text: '#403117', muted: '#8a7747',
+        accent: '#c89c2f', accentSoft: 'rgba(200,156,47,.15)'
+      }},
+      silver: {{
+        bg: '#13161a', panel: '#1c2026', panel2: '#171b20', panel3: '#0f1216',
+        line: '#3d4550', text: '#eff3f7', muted: '#a7b2be',
+        accent: '#a6b7ca', accentSoft: 'rgba(166,183,202,.18)'
+      }},
+      'silver-light': {{
+        bg: '#f2f5f8', panel: '#fcfdff', panel2: '#e2e8ee', panel3: '#f6f8fb',
+        line: '#cad2db', text: '#27323c', muted: '#697784',
+        accent: '#8799ae', accentSoft: 'rgba(135,153,174,.15)'
+      }},
+      gold: {{
+        bg: '#19150e', panel: '#241f15', panel2: '#1d1911', panel3: '#120e08',
+        line: '#5a4921', text: '#f7efd8', muted: '#c2ae76',
+        accent: '#d8ae3f', accentSoft: 'rgba(216,174,63,.18)'
+      }},
+      'gold-light': {{
+        bg: '#fcf7e7', panel: '#fffdf7', panel2: '#f2e5bb', panel3: '#fdf9ef',
+        line: '#e0cd89', text: '#403114', muted: '#8d7941',
+        accent: '#cb981c', accentSoft: 'rgba(203,152,28,.15)'
+      }},
+      titanium: {{
+        bg: '#101317', panel: '#191e24', panel2: '#14181d', panel3: '#0c0f13',
+        line: '#38424d', text: '#e8eef5', muted: '#98a6b5',
+        accent: '#7d92ac', accentSoft: 'rgba(125,146,172,.18)'
+      }},
+      'titanium-light': {{
+        bg: '#eef2f6', panel: '#fbfdff', panel2: '#dce4eb', panel3: '#f4f7fa',
+        line: '#c3ced8', text: '#25313c', muted: '#687887',
+        accent: '#607b95', accentSoft: 'rgba(96,123,149,.15)'
+      }},
+    }};
+
+    function normalizeThemeId(themeId) {{
+      const normalized = String(themeId || 'copper-light').trim().toLowerCase();
+      return Object.prototype.hasOwnProperty.call(THEMES, normalized) ? normalized : 'copper-light';
+    }}
+
+    function resolveTheme(themeId) {{
+      const normalized = normalizeThemeId(themeId);
+      return THEMES[normalized] || THEMES.copper;
+    }}
+
+    function applyTheme(themeId) {{
+      const palette = resolveTheme(themeId);
+      document.documentElement.style.setProperty('--bg', palette.bg);
+      document.documentElement.style.setProperty('--panel', palette.panel);
+      document.documentElement.style.setProperty('--panel2', palette.panel2);
+      document.documentElement.style.setProperty('--panel3', palette.panel3);
+      document.documentElement.style.setProperty('--line', palette.line);
+      document.documentElement.style.setProperty('--text', palette.text);
+      document.documentElement.style.setProperty('--muted', palette.muted);
+      document.documentElement.style.setProperty('--accent', palette.accent);
+      document.documentElement.style.setProperty('--accent-soft', palette.accentSoft);
+    }}
 
     function replaceDescriptorModel(nextModel, syncSelection = true) {{
       descriptors = Array.isArray(nextModel.descriptors) ? nextModel.descriptors : [];
@@ -1098,6 +1209,71 @@ fn render_html(state: &UiServerState) -> String {
       return Array.isArray(sourced) ? sourced.map(String) : [];
     }}
 
+    function stableValueKey(value) {{
+      return JSON.stringify(value);
+    }}
+
+    function inferValueKind(input, value) {{
+      const sample = value !== undefined && value !== null ? value : input.default;
+      if (typeof sample === 'number') return 'number';
+      if (typeof sample === 'boolean') return 'boolean';
+      return 'string';
+    }}
+
+    function applyDirtyState(container, dirty) {{
+      container.dataset.dirty = dirty ? 'true' : 'false';
+      container.classList.toggle('is-dirty', dirty);
+      const badge = container.querySelector('.unsaved-badge');
+      if (badge) {{
+        badge.hidden = !dirty;
+      }}
+    }}
+
+    function registerDirtyTracker(container, readValue) {{
+      container.dataset.trackDirty = 'true';
+      container.dataset.initialValueKey = stableValueKey(readValue());
+      container.__readDirtyValue = readValue;
+      applyDirtyState(container, false);
+    }}
+
+    function refreshDirtyState() {{
+      const tracked = Array.from(contentViewEl.querySelectorAll('[data-track-dirty="true"]'));
+      tracked.forEach(container => {{
+        if (typeof container.__readDirtyValue !== 'function') return;
+        const dirty = stableValueKey(container.__readDirtyValue()) !== container.dataset.initialValueKey;
+        applyDirtyState(container, dirty);
+      }});
+
+      const hasDirty = tracked.some(container => container.dataset.dirty === 'true');
+      saveBtn.classList.toggle('is-dirty', hasDirty);
+      if (saveBtn.hidden) {{
+        return;
+      }}
+
+      const descriptor = currentDescriptor();
+      const applyActions = Array.isArray(descriptor && descriptor.settings && descriptor.settings.applyActions)
+        ? descriptor.settings.applyActions
+        : [];
+      const cleanLabel = currentSection === 'core'
+        ? 'Save settings'
+        : (applyActions.length > 0 ? 'Save and apply' : 'Save settings');
+      const dirtyLabel = currentSection === 'core'
+        ? 'Save changes'
+        : (applyActions.length > 0 ? 'Save and apply changes' : 'Save changes');
+      saveBtn.textContent = hasDirty ? dirtyLabel : cleanLabel;
+    }}
+
+    function coerceControlValue(ctrl, rawValue) {{
+      const kind = ctrl.dataset.valueKind || 'string';
+      if (kind === 'number') {{
+        return rawValue === '' ? null : Number(rawValue);
+      }}
+      if (kind === 'boolean') {{
+        return rawValue === 'true';
+      }}
+      return rawValue;
+    }}
+
     function createNavButton(key, label) {{
       const btn = document.createElement('button');
       btn.className = 'nav-btn' + (key === currentSection ? ' active' : '');
@@ -1121,9 +1297,18 @@ fn render_html(state: &UiServerState) -> String {
 
     function createInput(input, value, info) {{
       const wrapper = document.createElement('div');
+      wrapper.className = 'input-shell';
+      const head = document.createElement('div');
+      head.className = 'input-head';
       const label = document.createElement('label');
       label.textContent = input.label;
-      wrapper.appendChild(label);
+      const dirtyBadge = document.createElement('span');
+      dirtyBadge.className = 'unsaved-badge';
+      dirtyBadge.textContent = 'Unsaved';
+      dirtyBadge.hidden = true;
+      head.appendChild(label);
+      head.appendChild(dirtyBadge);
+      wrapper.appendChild(head);
       if (input.description) {{
         const help = document.createElement('div');
         help.className = 'field-help';
@@ -1132,10 +1317,12 @@ fn render_html(state: &UiServerState) -> String {
       }}
 
       let control;
+      let readDirtyValue = null;
       if (input.type === 'boolean') {{
         control = document.createElement('select');
         control.innerHTML = '<option value="true">Enabled</option><option value="false">Disabled</option>';
         control.value = String(value ?? input.default ?? false);
+        readDirtyValue = () => control.value === 'true';
       }} else if (input.type === 'extension-toggle') {{
         const currentValue = String(value ?? input.default ?? false);
         const hidden = document.createElement('input');
@@ -1143,6 +1330,7 @@ fn render_html(state: &UiServerState) -> String {
         hidden.value = currentValue;
         hidden.dataset.inputId = input.id;
         hidden.dataset.inputType = input.type;
+        hidden.dataset.valueKind = 'boolean';
 
         control = document.createElement('div');
         control.className = 'toggle-control';
@@ -1170,10 +1358,12 @@ fn render_html(state: &UiServerState) -> String {
         enableBtn.addEventListener('click', () => {{
           hidden.value = 'true';
           updateToggleUi();
+          refreshDirtyState();
         }});
         disableBtn.addEventListener('click', () => {{
           hidden.value = 'false';
           updateToggleUi();
+          refreshDirtyState();
         }});
 
         buttonGroup.appendChild(enableBtn);
@@ -1182,6 +1372,7 @@ fn render_html(state: &UiServerState) -> String {
         control.appendChild(stateText);
         control.appendChild(hidden);
         updateToggleUi();
+        readDirtyValue = () => hidden.value === 'true';
       }} else if (input.type === 'multi-select') {{
         const options = resolveInputOptions(input, info);
         const selected = Array.isArray(value)
@@ -1207,6 +1398,7 @@ fn render_html(state: &UiServerState) -> String {
             checkbox.dataset.inputId = input.id;
             checkbox.dataset.inputType = input.type;
             checkbox.dataset.optionValue = opt;
+            checkbox.addEventListener('change', () => refreshDirtyState());
             const text = document.createElement('span');
             text.textContent = opt;
             item.appendChild(checkbox);
@@ -1214,26 +1406,105 @@ fn render_html(state: &UiServerState) -> String {
             control.appendChild(item);
           }});
         }}
+        readDirtyValue = () =>
+          Array.from(control.querySelectorAll(`[data-input-id="${{input.id}}"][data-input-type="multi-select"]`))
+            .filter(option => option.checked)
+            .map(option => option.dataset.optionValue);
+      }} else if (input.type === 'list-select') {{
+        const options = resolveInputOptions(input, info);
+        const selected = String(value ?? input.default ?? options[0] ?? '');
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.value = selected;
+        hidden.dataset.inputId = input.id;
+        hidden.dataset.inputType = input.type;
+        hidden.dataset.valueKind = inferValueKind(input, value);
+
+        control = document.createElement('div');
+        control.className = 'list-select';
+        if (options.length === 0) {{
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = 'No options available right now.';
+          control.appendChild(empty);
+        }} else {{
+          const updateListUi = () => {{
+            Array.from(control.querySelectorAll('.list-option')).forEach(option => {{
+              option.classList.toggle('active', option.dataset.optionValue === hidden.value);
+            }});
+          }};
+
+          options.forEach(opt => {{
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.className = 'list-option';
+            option.dataset.optionValue = opt;
+            option.textContent = opt;
+            option.addEventListener('click', () => {{
+              hidden.value = opt;
+              updateListUi();
+              refreshDirtyState();
+            }});
+            control.appendChild(option);
+          }});
+          updateListUi();
+        }}
+        control.appendChild(hidden);
+        readDirtyValue = () => coerceControlValue(hidden, hidden.value);
       }} else if (input.type === 'select') {{
         control = document.createElement('select');
         resolveInputOptions(input, info).forEach(opt => {{
           const o = document.createElement('option');
           o.value = opt;
-          o.textContent = opt;
+          o.textContent = (input.optionLabels && input.optionLabels[opt]) || opt;
           control.appendChild(o);
         }});
-        if (value !== undefined && value !== null) control.value = String(value);
+        control.dataset.valueKind = inferValueKind(input, value);
+        if (input.id === 'uiTheme') {{
+          const preferredTheme = value !== undefined && value !== null
+            ? value
+            : input.default;
+          control.value = normalizeThemeId(preferredTheme);
+        }} else if (value !== undefined && value !== null) {{
+          control.value = String(value);
+        }} else if (input.default !== undefined && input.default !== null) {{
+          control.value = String(input.default);
+        }}
+        readDirtyValue = () => coerceControlValue(control, control.value);
+        if (input.id === 'uiTheme') {{
+          applyTheme(control.value || input.default || 'copper-light');
+        }}
       }} else {{
         control = document.createElement('input');
         control.type = (input.type === 'number') ? 'number' : 'text';
         control.value = String(value ?? input.default ?? '');
+        readDirtyValue = () =>
+          input.type === 'number'
+            ? (control.value === '' ? null : Number(control.value))
+            : control.value;
       }}
 
-      if (input.type !== 'multi-select' && input.type !== 'extension-toggle') {{
+      if (input.type !== 'multi-select' && input.type !== 'extension-toggle' && input.type !== 'list-select') {{
         control.dataset.inputId = input.id;
         control.dataset.inputType = input.type;
+        if (input.type === 'select') {{
+          control.dataset.valueKind = control.dataset.valueKind || inferValueKind(input, value);
+        }}
       }}
+      if (input.type === 'number') {{
+        control.dataset.valueKind = 'number';
+      }}
+
+      if (input.type === 'boolean' || input.type === 'select' || input.type === 'number' || input.type === 'text' || input.type === 'folder-picker' || input.type === 'file-picker') {{
+        control.addEventListener('input', () => refreshDirtyState());
+        control.addEventListener('change', () => refreshDirtyState());
+        if (input.id === 'uiTheme') {{
+          control.addEventListener('change', () => applyTheme(normalizeThemeId(control.value)));
+        }}
+      }}
+
       wrapper.appendChild(control);
+      registerDirtyTracker(wrapper, readDirtyValue || (() => null));
       return wrapper;
     }}
 
@@ -1377,6 +1648,7 @@ fn render_html(state: &UiServerState) -> String {
         }});
         saveBtn.hidden = !contentViewEl.querySelector('[data-editable="true"]');
         updateUrl();
+        refreshDirtyState();
         return;
       }}
 
@@ -1389,6 +1661,7 @@ fn render_html(state: &UiServerState) -> String {
         card.dataset.tabId === currentTab && card.dataset.editable === 'true'
       );
       updateUrl();
+      refreshDirtyState();
     }}
 
     function appendCard(card, tabId, editable = false) {{
@@ -1508,9 +1781,15 @@ fn render_html(state: &UiServerState) -> String {
       const head = document.createElement('div');
       head.className = 'extension-head';
       const summary = document.createElement('div');
+      const titleRow = document.createElement('div');
+      titleRow.className = 'extension-title-row';
       const title = document.createElement('div');
       title.className = 'extension-name';
       title.textContent = descriptor.name;
+      const dirtyBadge = document.createElement('span');
+      dirtyBadge.className = 'unsaved-badge';
+      dirtyBadge.textContent = 'Unsaved';
+      dirtyBadge.hidden = true;
       const meta = document.createElement('div');
       meta.className = 'extension-id mono';
       meta.textContent = descriptor.id;
@@ -1520,7 +1799,9 @@ fn render_html(state: &UiServerState) -> String {
         ? descriptor.platforms.join(', ')
         : 'windows, macos, linux';
       description.textContent = `Platforms: ${{platforms}}`;
-      summary.appendChild(title);
+      titleRow.appendChild(title);
+      titleRow.appendChild(dirtyBadge);
+      summary.appendChild(titleRow);
       summary.appendChild(meta);
       summary.appendChild(description);
 
@@ -1556,10 +1837,12 @@ fn render_html(state: &UiServerState) -> String {
       enableBtn.addEventListener('click', () => {{
         hidden.value = 'true';
         updateState();
+        refreshDirtyState();
       }});
       disableBtn.addEventListener('click', () => {{
         hidden.value = 'false';
         updateState();
+        refreshDirtyState();
       }});
       settingsBtn.addEventListener('click', () => {{
         currentSection = `ext:${{descriptor.id}}`;
@@ -1588,6 +1871,7 @@ fn render_html(state: &UiServerState) -> String {
       head.appendChild(actions);
       card.appendChild(head);
       card.appendChild(commandsPanel);
+      registerDirtyTracker(card, () => hidden.value === 'true');
       return card;
     }}
 
@@ -1625,16 +1909,11 @@ fn render_html(state: &UiServerState) -> String {
               {{
                 id: 'uiTheme',
                 label: 'UI theme',
-                description: 'Name of the preferred host settings theme.',
-                type: 'text',
-                default: 'obsidian'
-              }},
-              {{
-                id: 'startupExtension',
-                label: 'Startup extension id',
-                description: 'Extension page selected when the settings UI opens.',
-                type: 'text',
-                default: model.selectedExtensionId || ''
+                description: 'Built-in look and feel for the Copper settings UI.',
+                type: 'select',
+                options: THEME_OPTIONS.map(theme => theme.id),
+                optionLabels: Object.fromEntries(THEME_OPTIONS.map(theme => [theme.id, theme.label])),
+                default: 'copper-light'
               }}
             ]
           }},
@@ -1683,6 +1962,7 @@ fn render_html(state: &UiServerState) -> String {
         pageTitleEl.textContent = 'Copper';
         pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
         saveBtn.textContent = 'Save settings';
+        applyTheme((config && config.uiTheme) || 'copper-light');
 
         const sections = coreSections(config);
         const coreRows = [
@@ -1742,6 +2022,7 @@ fn render_html(state: &UiServerState) -> String {
         }}
         renderTabs(currentTabs);
         applyTabVisibility(currentTabs);
+        refreshDirtyState();
         return;
       }}
 
@@ -1808,6 +2089,7 @@ fn render_html(state: &UiServerState) -> String {
         currentTab = '';
         renderTabs([]);
         applyTabVisibility([]);
+        refreshDirtyState();
         return;
       }}
 
@@ -1834,6 +2116,7 @@ fn render_html(state: &UiServerState) -> String {
       }}
       renderTabs(currentTabs);
       applyTabVisibility(currentTabs);
+      refreshDirtyState();
     }}
 
     function collectCurrentPayload() {{
@@ -1868,7 +2151,7 @@ fn render_html(state: &UiServerState) -> String {
           }} else if (type === 'number') {{
             value = ctrl.value === '' ? null : Number(ctrl.value);
           }} else {{
-            value = ctrl.value;
+            value = coerceControlValue(ctrl, ctrl.value);
           }}
           values.set(id, value);
         }});
@@ -1881,8 +2164,7 @@ fn render_html(state: &UiServerState) -> String {
         const coreDefaults = {{
           userExtensionsDir: '~/.Copper/extensions',
           autoStart: false,
-          uiTheme: 'obsidian',
-          startupExtension: model.selectedExtensionId || '',
+          uiTheme: 'copper-light',
           disabledExtensions: [],
           extensionPackage: '',
           extensionsInstallDir: '~/.Copper/extensions'
@@ -2198,7 +2480,7 @@ mod tests {
     }
 
     #[test]
-    fn build_ui_state_selects_valid_default_extension() {
+    fn build_ui_state_defaults_to_core_section() {
         let temp = tempdir().expect("tempdir");
         let mut descriptor = sample_descriptor();
         descriptor.id = "alpha-ext".to_string();
@@ -2206,8 +2488,7 @@ mod tests {
         write_extension(temp.path(), &descriptor);
         let state = build_ui_state(temp.path(), None, true, test_auth(), test_origin())
             .expect("build state");
-        assert!(state.extension_ids.contains(&state.selected_extension_id));
-        assert_eq!(state.selected_extension_id, "alpha-ext");
+        assert!(state.selected_extension_id.is_empty());
     }
 
     #[test]
@@ -2401,12 +2682,18 @@ mod tests {
         assert!(html.contains("Settings"));
         assert!(html.contains("Copper"));
         assert!(html.contains("Launch Copper at login"));
+        assert!(html.contains("UI theme"));
         assert!(html.contains("Desktop Torrent Organizer"));
         assert!(html.contains("Save settings"));
         assert!(html.contains("Status"));
         assert!(html.contains("See commands"));
         assert!(html.contains("Recent status"));
         assert!(html.contains("URLSearchParams(window.location.search)"));
+        assert!(html.contains("const THEME_OPTIONS"));
+        assert!(html.contains("Copper Dark"));
+        assert!(html.contains("applyTheme"));
+        assert!(html.contains("unsaved-badge"));
+        assert!(html.contains("refreshDirtyState"));
     }
 
     #[test]
@@ -2842,7 +3129,7 @@ mod tests {
             "POST",
             "/config/core",
             &auth_headers,
-            Some(r#"{"uiTheme":"obsidian"}"#),
+            Some(r#"{"uiTheme":"copper"}"#),
         );
         assert_eq!(status_core_post, 200);
         assert!(body_core_post.contains("\"ok\": true"));
@@ -2942,7 +3229,7 @@ mod tests {
             &addr,
             "POST",
             "/config/core",
-            Some(r#"{"uiTheme":"obsidian"}"#),
+            Some(r#"{"uiTheme":"copper"}"#),
         );
         assert_eq!(status_post, 403);
         assert!(body_post.contains("control-plane token"));

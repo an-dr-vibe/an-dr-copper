@@ -201,12 +201,28 @@ mod tests {
                         "default": false
                     }},
                     {{
+                        "id": "resolutionMode",
+                        "type": "list-select",
+                        "label": "Resolution",
+                        "description": "Pick a detected resolution mode from the current display.",
+                        "default": "1920x1080@60",
+                        "optionsSource": "dynamicOptions.resolutionModes"
+                    }},
+                    {{
+                        "id": "scalePercent",
+                        "type": "select",
+                        "label": "Scale",
+                        "description": "Choose a supported Windows display scale.",
+                        "default": "100",
+                        "optionsSource": "dynamicOptions.scalePercentages"
+                    }},
+                    {{
                         "id": "trayResolutionPresets",
                         "type": "multi-select",
-                        "label": "Tray resolution presets",
+                        "label": "Visible resolutions",
                         "description": "Choose which resolutions appear in the tray menu.",
                         "default": ["1920x1080@60"],
-                        "optionsSource": "dynamicOptions.trayResolutionPresets"
+                        "optionsSource": "dynamicOptions.resolutionModes"
                     }}
                 ],
                 "actions": [
@@ -285,7 +301,19 @@ mod tests {
         );
         assert_eq!(
             descriptor.inputs[1].options_source.as_deref(),
-            Some("dynamicOptions.trayResolutionPresets")
+            Some("dynamicOptions.resolutionModes")
+        );
+        assert_eq!(
+            descriptor.inputs[1].field_type,
+            crate::descriptor::InputType::ListSelect
+        );
+        assert_eq!(
+            descriptor.inputs[2].options_source.as_deref(),
+            Some("dynamicOptions.scalePercentages")
+        );
+        assert_eq!(
+            descriptor.inputs[3].options_source.as_deref(),
+            Some("dynamicOptions.resolutionModes")
         );
         let status = settings.status.expect("status metadata");
         assert_eq!(status.fields.len(), 1);

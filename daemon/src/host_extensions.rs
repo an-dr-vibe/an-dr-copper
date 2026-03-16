@@ -1,6 +1,7 @@
 use crate::api::windows_display;
 use crate::state_store::{read_json_object, unix_now_secs, write_json_object, ExtensionStateStore};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -197,39 +198,121 @@ impl HostExtensionHandler for WindowsDisplayHandler {
     }
 
     fn dynamic_options(&self, config: &Value) -> Result<Value, std::io::Error> {
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = config;
-            Ok(serde_json::json!({}))
-        }
+        Ok(windows_display_dynamic_options(config))
+    }
+}
 
-        #[cfg(target_os = "windows")]
-        {
-            let status =
-                windows_display::execute_action("status", config).map_err(std::io::Error::other)?;
-            let presets = status
-                .get("resolution")
-                .and_then(|value| value.get("availableModes"))
-                .and_then(Value::as_array)
-                .map(|values| {
-                    values
-                        .iter()
-                        .filter_map(|value| {
-                            Some(format!(
-                                "{}x{}@{}",
-                                value.get("width")?.as_i64()?,
-                                value.get("height")?.as_i64()?,
-                                value.get("refreshRate")?.as_i64()?
-                            ))
-                        })
-                        .collect::<Vec<_>>()
+fn windows_display_dynamic_options(config: &Value) -> Value {
+    let fallback_resolution =
+        configured_resolution_mode(config).unwrap_or_else(|| "1920x1080@60".to_string());
+    let fallback_scale = configured_scale_percent(config).unwrap_or(100);
+
+    #[cfg(target_os = "windows")]
+    let live_status = windows_display::execute_action("status", config).ok();
+    #[cfg(not(target_os = "windows"))]
+    let live_status: Option<Value> = None;
+
+    let live_resolution_modes = live_status
+        .as_ref()
+        .and_then(|status| status.get("resolution"))
+        .and_then(|value| value.get("availableModes"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| {
+                    Some(format!(
+                        "{}x{}@{}",
+                        value.get("width")?.as_i64()?,
+                        value.get("height")?.as_i64()?,
+                        value.get("refreshRate")?.as_i64()?
+                    ))
                 })
-                .unwrap_or_default();
-            Ok(serde_json::json!({
-                "trayResolutionPresets": presets
-            }))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let live_scales = live_status
+        .as_ref()
+        .and_then(|status| status.get("scale"))
+        .and_then(|value| value.get("availablePercentages"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_i64())
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let configured_presets = config
+        .get("trayResolutionPresets")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let resolution_modes = unique_preserving_order(
+        live_resolution_modes
+            .into_iter()
+            .chain(configured_presets.iter().cloned())
+            .chain(std::iter::once(fallback_resolution.clone()))
+            .collect(),
+    );
+    let scale_percentages = unique_preserving_order(
+        live_scales
+            .into_iter()
+            .chain(std::iter::once(fallback_scale.to_string()))
+            .chain(
+                ["100", "125", "150", "175", "200"]
+                    .into_iter()
+                    .map(str::to_string),
+            )
+            .collect(),
+    );
+
+    serde_json::json!({
+        "resolutionModes": resolution_modes.clone(),
+        "trayResolutionPresets": resolution_modes,
+        "scalePercentages": scale_percentages,
+    })
+}
+
+fn unique_preserving_order(values: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::new();
+    for value in values {
+        if seen.insert(value.clone()) {
+            unique.push(value);
         }
     }
+    unique
+}
+
+fn configured_resolution_mode(config: &Value) -> Option<String> {
+    if let Some(mode) = config.get("resolutionMode").and_then(Value::as_str) {
+        return Some(mode.to_string());
+    }
+
+    Some(format!(
+        "{}x{}@{}",
+        config.get("resolutionWidth")?.as_i64()?,
+        config.get("resolutionHeight")?.as_i64()?,
+        config.get("refreshRate")?.as_i64()?
+    ))
+}
+
+fn configured_scale_percent(config: &Value) -> Option<i64> {
+    config.get("scalePercent").and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_str()?.parse::<i64>().ok())
+    })
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -556,11 +639,9 @@ mod tests {
             .dynamic_options(WINDOWS_DISPLAY_MANAGER_ID, &serde_json::json!({}))
             .expect("dynamic options");
 
-        if cfg!(target_os = "windows") {
-            assert!(options.get("trayResolutionPresets").is_some());
-        } else {
-            assert_eq!(options, serde_json::json!({}));
-        }
+        assert!(options.get("resolutionModes").is_some());
+        assert!(options.get("scalePercentages").is_some());
+        assert!(options.get("trayResolutionPresets").is_some());
     }
 
     #[test]

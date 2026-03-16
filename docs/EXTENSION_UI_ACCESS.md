@@ -20,10 +20,11 @@ Provide a stable, user-facing way to open an extension configuration UI without 
 
 ## Why This Works
 
-- Uses already-defined descriptor inputs (`text`, `select`, `folder-picker`, `file-picker`, etc.).
+- Uses already-defined descriptor inputs (`text`, `select`, `list-select`, `folder-picker`, `file-picker`, etc.).
 - Allows richer settings pages through optional `settings.sections`, `settings.tabs`, per-field descriptions, `settings.status` metadata, and `settings.applyActions`.
 - Keeps extension authoring declarative and AI-friendly.
 - Avoids hardcoding per-extension UI.
+- The shared renderer highlights unsaved changes at the field/card level and upgrades the save button state while edits are pending.
 
 ## Desktop Torrent Organizer Example
 
