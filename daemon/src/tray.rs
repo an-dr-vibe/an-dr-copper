@@ -439,7 +439,7 @@ use windows_impl::run_windows_tray;
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     use super::TrayController;
     #[cfg(not(windows))]
     use super::{configure_tray, default_icon, TrayOps};
