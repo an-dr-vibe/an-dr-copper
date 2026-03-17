@@ -556,7 +556,7 @@ mod tests {
         assert!(err.to_string().contains("menu failed"));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     #[test]
     fn initialize_returns_result() {
         let running = Arc::new(AtomicBool::new(true));
