@@ -14,40 +14,28 @@
       "default": false
     },
     {
-      "id": "resolutionWidth",
-      "type": "number",
-      "label": "Resolution width",
-      "description": "Target display width in pixels.",
-      "default": 1920
-    },
-    {
-      "id": "resolutionHeight",
-      "type": "number",
-      "label": "Resolution height",
-      "description": "Target display height in pixels.",
-      "default": 1080
-    },
-    {
-      "id": "refreshRate",
-      "type": "number",
-      "label": "Refresh rate (Hz)",
-      "description": "Target display refresh rate in hertz.",
-      "default": 60
+      "id": "resolutionMode",
+      "type": "list-select",
+      "label": "Resolution",
+      "description": "Target display mode picked from the detected resolution list.",
+      "default": "1920x1080@60",
+      "optionsSource": "dynamicOptions.resolutionModes"
     },
     {
       "id": "scalePercent",
-      "type": "number",
+      "type": "select",
       "label": "Display scale (%)",
       "description": "Target Windows display scale percentage.",
-      "default": 100
+      "default": 100,
+      "optionsSource": "dynamicOptions.scalePercentages"
     },
     {
       "id": "trayResolutionPresets",
       "type": "multi-select",
-      "label": "Tray resolution presets",
+      "label": "Visible resolutions",
       "description": "Select which detected resolutions appear in the tray menu.",
       "default": ["1920x1080@60", "2560x1440@60"],
-      "optionsSource": "dynamicOptions.trayResolutionPresets"
+      "optionsSource": "dynamicOptions.resolutionModes"
     }
   ],
   "actions": [
@@ -90,6 +78,28 @@
       "set-resolution",
       "set-scale"
     ],
+    "tabs": [
+      {
+        "id": "taskbar",
+        "title": "Taskbar",
+        "sections": ["taskbar"]
+      },
+      {
+        "id": "display",
+        "title": "Display",
+        "sections": ["resolution", "scale"]
+      },
+      {
+        "id": "tray",
+        "title": "Tray",
+        "sections": ["tray-menu"]
+      },
+      {
+        "id": "status",
+        "title": "Status",
+        "showStatus": true
+      }
+    ],
     "sections": [
       {
         "id": "taskbar",
@@ -101,7 +111,7 @@
         "id": "resolution",
         "title": "Resolution",
         "description": "Saved display resolution target.",
-        "inputs": ["resolutionWidth", "resolutionHeight", "refreshRate"]
+        "inputs": ["resolutionMode"]
       },
       {
         "id": "scale",

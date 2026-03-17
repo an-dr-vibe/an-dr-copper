@@ -183,10 +183,10 @@ mod windows_impl {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
         DestroyWindow, DispatchMessageW, GetCursorPos, LoadIconW, PeekMessageW, PostQuitMessage,
-        RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, CW_USEDEFAULT,
-        HICON, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG,
+        RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, HICON,
+        IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG,
         PM_REMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_CLOSE,
-        WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+        WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSW,
     };
 
     const WM_TRAYICON: u32 = WM_USER + 121;
@@ -316,10 +316,10 @@ mod windows_impl {
                 0,
                 class_name.as_ptr(),
                 wide("copper-windows-display-tray-window").as_ptr(),
-                WS_OVERLAPPEDWINDOW,
-                CW_USEDEFAULT,
                 0,
-                CW_USEDEFAULT,
+                0,
+                0,
+                0,
                 0,
                 ptr::null_mut(),
                 ptr::null_mut(),

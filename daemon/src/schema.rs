@@ -201,12 +201,28 @@ mod tests {
                         "default": false
                     }},
                     {{
+                        "id": "resolutionMode",
+                        "type": "list-select",
+                        "label": "Resolution",
+                        "description": "Pick a detected resolution mode from the current display.",
+                        "default": "1920x1080@60",
+                        "optionsSource": "dynamicOptions.resolutionModes"
+                    }},
+                    {{
+                        "id": "scalePercent",
+                        "type": "select",
+                        "label": "Scale",
+                        "description": "Choose a supported Windows display scale.",
+                        "default": "100",
+                        "optionsSource": "dynamicOptions.scalePercentages"
+                    }},
+                    {{
                         "id": "trayResolutionPresets",
                         "type": "multi-select",
-                        "label": "Tray resolution presets",
+                        "label": "Visible resolutions",
                         "description": "Choose which resolutions appear in the tray menu.",
                         "default": ["1920x1080@60"],
-                        "optionsSource": "dynamicOptions.trayResolutionPresets"
+                        "optionsSource": "dynamicOptions.resolutionModes"
                     }}
                 ],
                 "actions": [
@@ -224,6 +240,19 @@ mod tests {
                         "set-taskbar-autohide",
                         "set-resolution",
                         "set-scale"
+                    ],
+                    "tabs": [
+                        {{
+                            "id": "display",
+                            "title": "Display",
+                            "sections": ["taskbar"]
+                        }},
+                        {{
+                            "id": "status",
+                            "title": "Status",
+                            "showStatus": true,
+                            "showCommands": true
+                        }}
                     ],
                     "sections": [
                         {{
@@ -256,6 +285,10 @@ mod tests {
         let descriptor = parse_and_validate(&raw).expect("descriptor should pass validation");
         let settings = descriptor.settings.expect("settings metadata");
         assert_eq!(settings.title.as_deref(), Some("Display"));
+        assert_eq!(settings.tabs.len(), 2);
+        assert_eq!(settings.tabs[0].sections, vec!["taskbar"]);
+        assert!(settings.tabs[1].show_status);
+        assert!(settings.tabs[1].show_commands);
         assert_eq!(settings.sections.len(), 1);
         assert_eq!(settings.sections[0].inputs, vec!["taskbarAutoHide"]);
         assert_eq!(
@@ -268,7 +301,19 @@ mod tests {
         );
         assert_eq!(
             descriptor.inputs[1].options_source.as_deref(),
-            Some("dynamicOptions.trayResolutionPresets")
+            Some("dynamicOptions.resolutionModes")
+        );
+        assert_eq!(
+            descriptor.inputs[1].field_type,
+            crate::descriptor::InputType::ListSelect
+        );
+        assert_eq!(
+            descriptor.inputs[2].options_source.as_deref(),
+            Some("dynamicOptions.scalePercentages")
+        );
+        assert_eq!(
+            descriptor.inputs[3].options_source.as_deref(),
+            Some("dynamicOptions.resolutionModes")
         );
         let status = settings.status.expect("status metadata");
         assert_eq!(status.fields.len(), 1);

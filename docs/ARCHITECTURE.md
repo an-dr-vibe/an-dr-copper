@@ -1,7 +1,7 @@
 # Copper Architecture
 
-Version: 0.3.0  
-Last updated: 2026-03-15
+Version: 0.3.1  
+Last updated: 2026-03-16
 
 ## 1. Overview
 
@@ -18,8 +18,8 @@ Two-process target model (same intent as original architecture):
 
 Current implementation status:
 
-- Implemented: always-on daemon, extension registry loading, periodic hot-reload, authenticated IPC control plane, descriptor validation, trigger preparation, skeleton generation, local config UI (`ui open`), tray menu shortcut for desktop torrent extension config.
-- Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with Obsidian-style per-extension pages, separate Settings/Status views, and manifest-driven settings sections.
+- Implemented: always-on daemon, extension registry loading, periodic hot-reload, authenticated IPC control plane, descriptor validation, trigger preparation, skeleton generation, local config UI (`ui open`), and main tray icon UI launch on Windows.
+- Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with manifest-driven extension pages, optional manifest-defined tabs, and a core-managed extensions tab for enable/disable and command discovery.
 - Planned: embedded `deno_core` runtime execution, richer tray/hotkey integration, on-demand Tauri UI renderer.
 
 ## 3. Implemented Daemon Core

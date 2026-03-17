@@ -1,5 +1,6 @@
 use crate::autostart;
 use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
+use crate::core_config::{load_core_config, CoreConfig};
 use crate::descriptor::Descriptor;
 use crate::extension::{
     core_extensions_dir, current_platform, load_discoverable_registry, runtime_extension_roots,
@@ -12,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -143,6 +145,7 @@ impl HttpResponse {
 struct UiServerState {
     selected_extension_id: String,
     descriptors: Vec<Descriptor>,
+    discoverable_descriptors: Vec<Descriptor>,
     extension_ids: HashSet<String>,
     user_extensions_dir: PathBuf,
     core_extensions_dir: Option<PathBuf>,
@@ -222,11 +225,14 @@ fn build_ui_state(
     origin: String,
 ) -> Result<UiServerState, UiConfigError> {
     let registry = load_discoverable_registry(extensions_dir)?;
-    let mut descriptors = registry
+    let mut discoverable_descriptors = registry
         .list()
         .map(|extension| extension.descriptor.clone())
         .collect::<Vec<_>>();
-    descriptors.sort_by(|a, b| a.id.cmp(&b.id));
+    discoverable_descriptors.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let core_config = load_core_config()?;
+    let descriptors = visible_descriptors(&discoverable_descriptors, &core_config);
 
     let extension_ids = descriptors
         .iter()
@@ -239,10 +245,7 @@ fn build_ui_state(
         }
         selected.to_string()
     } else {
-        descriptors
-            .first()
-            .map(|descriptor| descriptor.id.clone())
-            .unwrap_or_default()
+        String::new()
     };
 
     let state_store = ExtensionStateStore::for_current_user()?;
@@ -251,6 +254,7 @@ fn build_ui_state(
     Ok(UiServerState {
         selected_extension_id,
         descriptors,
+        discoverable_descriptors,
         extension_ids,
         user_extensions_dir: extensions_dir.to_path_buf(),
         core_extensions_dir: core_extensions_dir(),
@@ -261,6 +265,27 @@ fn build_ui_state(
         origin,
         allow_close,
     })
+}
+
+fn visible_descriptors(
+    discoverable_descriptors: &[Descriptor],
+    core_config: &CoreConfig,
+) -> Vec<Descriptor> {
+    discoverable_descriptors
+        .iter()
+        .filter(|descriptor| core_config.is_extension_enabled(&descriptor.id))
+        .cloned()
+        .collect()
+}
+
+fn find_discoverable_descriptor<'a>(
+    state: &'a UiServerState,
+    extension_id: &str,
+) -> Option<&'a Descriptor> {
+    state
+        .discoverable_descriptors
+        .iter()
+        .find(|descriptor| descriptor.id == extension_id)
 }
 
 pub fn open_extension_config(
@@ -326,6 +351,7 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
         HttpResponse::ok_json(&serde_json::json!({
             "selectedExtensionId": state.selected_extension_id,
             "descriptors": state.descriptors,
+            "discoverableDescriptors": state.discoverable_descriptors,
         }))?
     } else if request.method == HttpMethod::Get && request.path == "/config/core" {
         HttpResponse::ok_json(&state.state_store.load_path_or_legacy(
@@ -369,15 +395,10 @@ fn handle_connection(mut stream: TcpStream, state: &UiServerState) -> Result<boo
             }
         }
     } else if let Some(extension_id) = request.path.strip_prefix("/info/extension/") {
-        if !state.extension_ids.contains(extension_id) {
-            HttpResponse::not_found()
-        } else {
-            let descriptor = state
-                .descriptors
-                .iter()
-                .find(|descriptor| descriptor.id == extension_id)
-                .ok_or_else(|| UiConfigError::ExtensionNotFound(extension_id.to_string()))?;
+        if let Some(descriptor) = find_discoverable_descriptor(state, extension_id) {
             HttpResponse::ok_json(&build_extension_info(state, descriptor)?)?
+        } else {
+            HttpResponse::not_found()
         }
     } else if let Some(extension_id) = request.path.strip_prefix("/config/extension/") {
         if !state.extension_ids.contains(extension_id) {
@@ -659,10 +680,27 @@ fn apply_core_settings(config: &Value) -> Result<(), UiConfigError> {
 fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .status()
-            .map_err(|e| UiConfigError::Browser(e.to_string()))?;
+        use std::ptr;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let operation = wide_windows_string("open");
+        let target = wide_windows_string(url);
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                target.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        } as isize;
+        if result <= 32 {
+            return Err(UiConfigError::Browser(format!(
+                "ShellExecuteW failed with code {result}"
+            )));
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -682,6 +720,11 @@ fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wide_windows_string(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 pub fn open_url_in_browser(url: &str) -> Result<(), UiConfigError> {
@@ -806,6 +849,7 @@ fn render_html(state: &UiServerState) -> String {
     let model = serde_json::json!({
         "selectedExtensionId": state.selected_extension_id,
         "descriptors": state.descriptors,
+        "discoverableDescriptors": state.discoverable_descriptors,
         "allowClose": state.allow_close,
         "authToken": state.auth_token,
     });
@@ -848,18 +892,34 @@ fn render_html(state: &UiServerState) -> String {
     .card {{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px; }}
     .card-title {{ font-size:18px; font-weight:700; margin:0 0 6px; }}
     .card-sub {{ color:var(--muted); margin:0 0 14px; font-size:14px; }}
-    label {{ display:block; font-weight:600; margin:10px 0 6px; }}
+    .input-shell {{ margin:0 0 16px; padding:12px; border:1px solid transparent; border-radius:12px; transition:border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }}
+    .input-shell:first-of-type {{ margin-top:-4px; }}
+    .input-shell.is-dirty {{ border-color:#b9576d; background:rgba(185,87,109,.08); box-shadow:0 0 0 1px rgba(185,87,109,.18) inset; }}
+    .input-head {{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 6px; }}
+    label {{ display:block; font-weight:600; margin:0; }}
+    .unsaved-badge {{
+      display:inline-flex; align-items:center; gap:6px; border-radius:999px; padding:4px 8px;
+      background:rgba(185,87,109,.16); color:#ffb7c6; font-size:12px; font-weight:700; letter-spacing:.02em;
+    }}
+    .unsaved-badge::before {{ content:'*'; font-size:13px; line-height:1; }}
     .field-help {{ color:var(--muted); font-size:13px; margin:0 0 8px; }}
     input, select {{
       width:100%; border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text);
       padding:10px;
+    }}
+    .input-shell.is-dirty input,
+    .input-shell.is-dirty select,
+    .input-shell.is-dirty .list-select {{
+      border-color:#b9576d;
+      box-shadow:0 0 0 1px rgba(185,87,109,.22);
     }}
     .btn-row {{ display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }}
     button {{
       border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text); padding:10px 14px; cursor:pointer;
     }}
     button.primary {{ background:var(--accent); border-color:transparent; color:#0b1020; font-weight:700; }}
-    button[hidden] {{ display:none; }}
+    button.primary.is-dirty {{ box-shadow:0 0 0 2px rgba(185,87,109,.35); }}
+    [hidden] {{ display:none !important; }}
     .status-msg {{ color:var(--muted); margin-top:8px; min-height:20px; }}
     .empty {{ color:var(--muted); font-style:italic; }}
     .kv-list {{ display:grid; grid-template-columns:minmax(180px, 240px) 1fr; gap:10px 16px; }}
@@ -881,6 +941,28 @@ fn render_html(state: &UiServerState) -> String {
     .toggle-btn.active-enable {{ background:#1f4b2f; border-color:#3d8b5c; color:#e7fff0; }}
     .toggle-btn.active-disable {{ background:#4a2222; border-color:#a25555; color:#ffecec; }}
     .toggle-state {{ color:var(--muted); font-size:13px; }}
+    .extension-list {{ display:grid; gap:12px; }}
+    .extension-card {{ border:1px solid var(--line); border-radius:12px; padding:14px; background:var(--panel3); }}
+    .extension-card.is-dirty {{ border-color:#b9576d; box-shadow:0 0 0 1px rgba(185,87,109,.18) inset; }}
+    .extension-head {{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }}
+    .extension-title-row {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
+    .extension-name {{ font-weight:700; margin:0 0 4px; }}
+    .extension-id {{ color:var(--muted); font-size:12px; }}
+    .extension-meta {{ color:var(--muted); font-size:13px; margin:8px 0 0; }}
+    .extension-actions {{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px; }}
+    .mini-btn {{ padding:8px 12px; font-size:13px; }}
+    .mini-btn.active-enable {{ background:#1f4b2f; border-color:#3d8b5c; color:#e7fff0; }}
+    .mini-btn.active-disable {{ background:#4a2222; border-color:#a25555; color:#ffecec; }}
+    .command-panel {{ margin-top:12px; display:grid; gap:10px; }}
+    .list-select {{
+      display:grid; gap:8px; max-height:220px; overflow:auto; padding:6px; border:1px solid var(--line);
+      border-radius:12px; background:var(--panel3);
+    }}
+    .list-option {{
+      width:100%; text-align:left; padding:10px 12px; border-radius:10px; border:1px solid var(--line);
+      background:rgba(255,255,255,.01); color:var(--text);
+    }}
+    .list-option.active {{ border-color:var(--accent); background:var(--accent-soft); color:var(--text); }}
     .checkbox-item {{
       display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line);
       border-radius:10px; background:var(--panel3);
@@ -898,7 +980,7 @@ fn render_html(state: &UiServerState) -> String {
   <div class="layout">
     <aside class="sidebar">
       <div class="title">Settings</div>
-      <p class="subtitle">Per-extension pages with separate status.</p>
+      <p class="subtitle">Manifest-driven pages with optional tabs.</p>
       <div id="nav"></div>
     </aside>
     <main class="main">
@@ -906,8 +988,7 @@ fn render_html(state: &UiServerState) -> String {
       <h1 class="page-title" id="pageTitle">Copper</h1>
       <p class="page-sub" id="pageSub">Core Copper configuration</p>
       <div class="tab-row" id="tabs"></div>
-      <section id="settingsView"></section>
-      <section id="statusView" hidden></section>
+      <section id="contentView"></section>
       <div class="btn-row">
         <button class="primary" id="saveBtn">Save settings</button>
         <button id="closeBtn">Close UI Server</button>
@@ -918,8 +999,115 @@ fn render_html(state: &UiServerState) -> String {
 
   <script>
     const model = {model_inline};
-    const descriptors = model.descriptors || [];
-    const byId = Object.fromEntries(descriptors.map(d => [d.id, d]));
+    let descriptors = [];
+    let discoverableDescriptors = [];
+    let byId = {{}};
+    const THEME_OPTIONS = [
+      {{ id: 'copper', label: 'Copper Dark' }},
+      {{ id: 'copper-light', label: 'Copper Light' }},
+      {{ id: 'brass', label: 'Brass Dark' }},
+      {{ id: 'brass-light', label: 'Brass Light' }},
+      {{ id: 'silver', label: 'Silver Dark' }},
+      {{ id: 'silver-light', label: 'Silver Light' }},
+      {{ id: 'gold', label: 'Gold Dark' }},
+      {{ id: 'gold-light', label: 'Gold Light' }},
+      {{ id: 'titanium', label: 'Titanium Dark' }},
+      {{ id: 'titanium-light', label: 'Titanium Light' }},
+    ];
+    const THEMES = {{
+      copper: {{
+        bg: '#181210', panel: '#241b18', panel2: '#1d1613', panel3: '#120c0a',
+        line: '#533327', text: '#f5ebe4', muted: '#bc9e8f',
+        accent: '#d8895a', accentSoft: 'rgba(216,137,90,.18)'
+      }},
+      'copper-light': {{
+        bg: '#fbf3ee', panel: '#fffbf8', panel2: '#f3e1d4', panel3: '#fff6f1',
+        line: '#e5c3ad', text: '#43281c', muted: '#916a58',
+        accent: '#cb7a4c', accentSoft: 'rgba(203,122,76,.16)'
+      }},
+      brass: {{
+        bg: '#17140f', panel: '#232018', panel2: '#1c1913', panel3: '#100d09',
+        line: '#5a4928', text: '#f3ecdd', muted: '#baa97c',
+        accent: '#caa24c', accentSoft: 'rgba(202,162,76,.18)'
+      }},
+      'brass-light': {{
+        bg: '#faf5e8', panel: '#fffdf7', panel2: '#f0e4c2', panel3: '#fcf8ef',
+        line: '#dfcb90', text: '#403117', muted: '#8a7747',
+        accent: '#c89c2f', accentSoft: 'rgba(200,156,47,.15)'
+      }},
+      silver: {{
+        bg: '#13161a', panel: '#1c2026', panel2: '#171b20', panel3: '#0f1216',
+        line: '#3d4550', text: '#eff3f7', muted: '#a7b2be',
+        accent: '#a6b7ca', accentSoft: 'rgba(166,183,202,.18)'
+      }},
+      'silver-light': {{
+        bg: '#f2f5f8', panel: '#fcfdff', panel2: '#e2e8ee', panel3: '#f6f8fb',
+        line: '#cad2db', text: '#27323c', muted: '#697784',
+        accent: '#8799ae', accentSoft: 'rgba(135,153,174,.15)'
+      }},
+      gold: {{
+        bg: '#19150e', panel: '#241f15', panel2: '#1d1911', panel3: '#120e08',
+        line: '#5a4921', text: '#f7efd8', muted: '#c2ae76',
+        accent: '#d8ae3f', accentSoft: 'rgba(216,174,63,.18)'
+      }},
+      'gold-light': {{
+        bg: '#fcf7e7', panel: '#fffdf7', panel2: '#f2e5bb', panel3: '#fdf9ef',
+        line: '#e0cd89', text: '#403114', muted: '#8d7941',
+        accent: '#cb981c', accentSoft: 'rgba(203,152,28,.15)'
+      }},
+      titanium: {{
+        bg: '#101317', panel: '#191e24', panel2: '#14181d', panel3: '#0c0f13',
+        line: '#38424d', text: '#e8eef5', muted: '#98a6b5',
+        accent: '#7d92ac', accentSoft: 'rgba(125,146,172,.18)'
+      }},
+      'titanium-light': {{
+        bg: '#eef2f6', panel: '#fbfdff', panel2: '#dce4eb', panel3: '#f4f7fa',
+        line: '#c3ced8', text: '#25313c', muted: '#687887',
+        accent: '#607b95', accentSoft: 'rgba(96,123,149,.15)'
+      }},
+    }};
+
+    function normalizeThemeId(themeId) {{
+      const normalized = String(themeId || 'copper-light').trim().toLowerCase();
+      return Object.prototype.hasOwnProperty.call(THEMES, normalized) ? normalized : 'copper-light';
+    }}
+
+    function resolveTheme(themeId) {{
+      const normalized = normalizeThemeId(themeId);
+      return THEMES[normalized] || THEMES.copper;
+    }}
+
+    function applyTheme(themeId) {{
+      const palette = resolveTheme(themeId);
+      document.documentElement.style.setProperty('--bg', palette.bg);
+      document.documentElement.style.setProperty('--panel', palette.panel);
+      document.documentElement.style.setProperty('--panel2', palette.panel2);
+      document.documentElement.style.setProperty('--panel3', palette.panel3);
+      document.documentElement.style.setProperty('--line', palette.line);
+      document.documentElement.style.setProperty('--text', palette.text);
+      document.documentElement.style.setProperty('--muted', palette.muted);
+      document.documentElement.style.setProperty('--accent', palette.accent);
+      document.documentElement.style.setProperty('--accent-soft', palette.accentSoft);
+    }}
+
+    function replaceDescriptorModel(nextModel, syncSelection = true) {{
+      descriptors = Array.isArray(nextModel.descriptors) ? nextModel.descriptors : [];
+      discoverableDescriptors = Array.isArray(nextModel.discoverableDescriptors)
+        ? nextModel.discoverableDescriptors
+        : descriptors;
+      byId = Object.fromEntries(descriptors.map(d => [d.id, d]));
+      model.selectedExtensionId = nextModel.selectedExtensionId || '';
+      if (syncSelection && currentSection && currentSection.startsWith('ext:')) {{
+        const id = currentSection.slice(4);
+        if (!byId[id]) {{
+          currentSection = 'core';
+          currentTab = '';
+          updateUrl();
+        }}
+      }}
+    }}
+
+    replaceDescriptorModel(model, false);
     let currentSection = (() => {{
       const defaultSection = model.selectedExtensionId ? `ext:${{model.selectedExtensionId}}` : 'core';
       const params = new URLSearchParams(window.location.search);
@@ -940,12 +1128,11 @@ fn render_html(state: &UiServerState) -> String {
     }})();
     let currentTab = (() => {{
       const params = new URLSearchParams(window.location.search);
-      return params.get('tab') === 'status' ? 'status' : 'settings';
+      return params.get('tab') || '';
     }})();
 
     const navEl = document.getElementById('nav');
-    const settingsViewEl = document.getElementById('settingsView');
-    const statusViewEl = document.getElementById('statusView');
+    const contentViewEl = document.getElementById('contentView');
     const statusMsgEl = document.getElementById('statusMsg');
     const closeBtn = document.getElementById('closeBtn');
     const pageEyebrowEl = document.getElementById('pageEyebrow');
@@ -969,7 +1156,9 @@ fn render_html(state: &UiServerState) -> String {
     function updateUrl() {{
       const params = new URLSearchParams();
       params.set('section', currentSection);
-      params.set('tab', currentTab);
+      if (currentTab) {{
+        params.set('tab', currentTab);
+      }}
       window.history.replaceState(null, '', `${{window.location.pathname}}?${{params.toString()}}`);
     }}
 
@@ -1020,6 +1209,71 @@ fn render_html(state: &UiServerState) -> String {
       return Array.isArray(sourced) ? sourced.map(String) : [];
     }}
 
+    function stableValueKey(value) {{
+      return JSON.stringify(value);
+    }}
+
+    function inferValueKind(input, value) {{
+      const sample = value !== undefined && value !== null ? value : input.default;
+      if (typeof sample === 'number') return 'number';
+      if (typeof sample === 'boolean') return 'boolean';
+      return 'string';
+    }}
+
+    function applyDirtyState(container, dirty) {{
+      container.dataset.dirty = dirty ? 'true' : 'false';
+      container.classList.toggle('is-dirty', dirty);
+      const badge = container.querySelector('.unsaved-badge');
+      if (badge) {{
+        badge.hidden = !dirty;
+      }}
+    }}
+
+    function registerDirtyTracker(container, readValue) {{
+      container.dataset.trackDirty = 'true';
+      container.dataset.initialValueKey = stableValueKey(readValue());
+      container.__readDirtyValue = readValue;
+      applyDirtyState(container, false);
+    }}
+
+    function refreshDirtyState() {{
+      const tracked = Array.from(contentViewEl.querySelectorAll('[data-track-dirty="true"]'));
+      tracked.forEach(container => {{
+        if (typeof container.__readDirtyValue !== 'function') return;
+        const dirty = stableValueKey(container.__readDirtyValue()) !== container.dataset.initialValueKey;
+        applyDirtyState(container, dirty);
+      }});
+
+      const hasDirty = tracked.some(container => container.dataset.dirty === 'true');
+      saveBtn.classList.toggle('is-dirty', hasDirty);
+      if (saveBtn.hidden) {{
+        return;
+      }}
+
+      const descriptor = currentDescriptor();
+      const applyActions = Array.isArray(descriptor && descriptor.settings && descriptor.settings.applyActions)
+        ? descriptor.settings.applyActions
+        : [];
+      const cleanLabel = currentSection === 'core'
+        ? 'Save settings'
+        : (applyActions.length > 0 ? 'Save and apply' : 'Save settings');
+      const dirtyLabel = currentSection === 'core'
+        ? 'Save changes'
+        : (applyActions.length > 0 ? 'Save and apply changes' : 'Save changes');
+      saveBtn.textContent = hasDirty ? dirtyLabel : cleanLabel;
+    }}
+
+    function coerceControlValue(ctrl, rawValue) {{
+      const kind = ctrl.dataset.valueKind || 'string';
+      if (kind === 'number') {{
+        return rawValue === '' ? null : Number(rawValue);
+      }}
+      if (kind === 'boolean') {{
+        return rawValue === 'true';
+      }}
+      return rawValue;
+    }}
+
     function createNavButton(key, label) {{
       const btn = document.createElement('button');
       btn.className = 'nav-btn' + (key === currentSection ? ' active' : '');
@@ -1027,7 +1281,7 @@ fn render_html(state: &UiServerState) -> String {
       btn.innerHTML = `<span class="nav-name">${{label}}</span><span class="nav-meta">${{isCore ? 'Core settings' : 'Extension settings'}}</span>`;
       btn.addEventListener('click', () => {{
         currentSection = key;
-        currentTab = 'settings';
+        currentTab = '';
         updateUrl();
         renderNav();
         renderSection().catch(err => setStatus('Load failed: ' + err));
@@ -1043,9 +1297,18 @@ fn render_html(state: &UiServerState) -> String {
 
     function createInput(input, value, info) {{
       const wrapper = document.createElement('div');
+      wrapper.className = 'input-shell';
+      const head = document.createElement('div');
+      head.className = 'input-head';
       const label = document.createElement('label');
       label.textContent = input.label;
-      wrapper.appendChild(label);
+      const dirtyBadge = document.createElement('span');
+      dirtyBadge.className = 'unsaved-badge';
+      dirtyBadge.textContent = 'Unsaved';
+      dirtyBadge.hidden = true;
+      head.appendChild(label);
+      head.appendChild(dirtyBadge);
+      wrapper.appendChild(head);
       if (input.description) {{
         const help = document.createElement('div');
         help.className = 'field-help';
@@ -1054,10 +1317,12 @@ fn render_html(state: &UiServerState) -> String {
       }}
 
       let control;
+      let readDirtyValue = null;
       if (input.type === 'boolean') {{
         control = document.createElement('select');
         control.innerHTML = '<option value="true">Enabled</option><option value="false">Disabled</option>';
         control.value = String(value ?? input.default ?? false);
+        readDirtyValue = () => control.value === 'true';
       }} else if (input.type === 'extension-toggle') {{
         const currentValue = String(value ?? input.default ?? false);
         const hidden = document.createElement('input');
@@ -1065,6 +1330,7 @@ fn render_html(state: &UiServerState) -> String {
         hidden.value = currentValue;
         hidden.dataset.inputId = input.id;
         hidden.dataset.inputType = input.type;
+        hidden.dataset.valueKind = 'boolean';
 
         control = document.createElement('div');
         control.className = 'toggle-control';
@@ -1092,10 +1358,12 @@ fn render_html(state: &UiServerState) -> String {
         enableBtn.addEventListener('click', () => {{
           hidden.value = 'true';
           updateToggleUi();
+          refreshDirtyState();
         }});
         disableBtn.addEventListener('click', () => {{
           hidden.value = 'false';
           updateToggleUi();
+          refreshDirtyState();
         }});
 
         buttonGroup.appendChild(enableBtn);
@@ -1104,6 +1372,7 @@ fn render_html(state: &UiServerState) -> String {
         control.appendChild(stateText);
         control.appendChild(hidden);
         updateToggleUi();
+        readDirtyValue = () => hidden.value === 'true';
       }} else if (input.type === 'multi-select') {{
         const options = resolveInputOptions(input, info);
         const selected = Array.isArray(value)
@@ -1129,6 +1398,7 @@ fn render_html(state: &UiServerState) -> String {
             checkbox.dataset.inputId = input.id;
             checkbox.dataset.inputType = input.type;
             checkbox.dataset.optionValue = opt;
+            checkbox.addEventListener('change', () => refreshDirtyState());
             const text = document.createElement('span');
             text.textContent = opt;
             item.appendChild(checkbox);
@@ -1136,26 +1406,105 @@ fn render_html(state: &UiServerState) -> String {
             control.appendChild(item);
           }});
         }}
+        readDirtyValue = () =>
+          Array.from(control.querySelectorAll(`[data-input-id="${{input.id}}"][data-input-type="multi-select"]`))
+            .filter(option => option.checked)
+            .map(option => option.dataset.optionValue);
+      }} else if (input.type === 'list-select') {{
+        const options = resolveInputOptions(input, info);
+        const selected = String(value ?? input.default ?? options[0] ?? '');
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.value = selected;
+        hidden.dataset.inputId = input.id;
+        hidden.dataset.inputType = input.type;
+        hidden.dataset.valueKind = inferValueKind(input, value);
+
+        control = document.createElement('div');
+        control.className = 'list-select';
+        if (options.length === 0) {{
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = 'No options available right now.';
+          control.appendChild(empty);
+        }} else {{
+          const updateListUi = () => {{
+            Array.from(control.querySelectorAll('.list-option')).forEach(option => {{
+              option.classList.toggle('active', option.dataset.optionValue === hidden.value);
+            }});
+          }};
+
+          options.forEach(opt => {{
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.className = 'list-option';
+            option.dataset.optionValue = opt;
+            option.textContent = opt;
+            option.addEventListener('click', () => {{
+              hidden.value = opt;
+              updateListUi();
+              refreshDirtyState();
+            }});
+            control.appendChild(option);
+          }});
+          updateListUi();
+        }}
+        control.appendChild(hidden);
+        readDirtyValue = () => coerceControlValue(hidden, hidden.value);
       }} else if (input.type === 'select') {{
         control = document.createElement('select');
         resolveInputOptions(input, info).forEach(opt => {{
           const o = document.createElement('option');
           o.value = opt;
-          o.textContent = opt;
+          o.textContent = (input.optionLabels && input.optionLabels[opt]) || opt;
           control.appendChild(o);
         }});
-        if (value !== undefined && value !== null) control.value = String(value);
+        control.dataset.valueKind = inferValueKind(input, value);
+        if (input.id === 'uiTheme') {{
+          const preferredTheme = value !== undefined && value !== null
+            ? value
+            : input.default;
+          control.value = normalizeThemeId(preferredTheme);
+        }} else if (value !== undefined && value !== null) {{
+          control.value = String(value);
+        }} else if (input.default !== undefined && input.default !== null) {{
+          control.value = String(input.default);
+        }}
+        readDirtyValue = () => coerceControlValue(control, control.value);
+        if (input.id === 'uiTheme') {{
+          applyTheme(control.value || input.default || 'copper-light');
+        }}
       }} else {{
         control = document.createElement('input');
         control.type = (input.type === 'number') ? 'number' : 'text';
         control.value = String(value ?? input.default ?? '');
+        readDirtyValue = () =>
+          input.type === 'number'
+            ? (control.value === '' ? null : Number(control.value))
+            : control.value;
       }}
 
-      if (input.type !== 'multi-select' && input.type !== 'extension-toggle') {{
+      if (input.type !== 'multi-select' && input.type !== 'extension-toggle' && input.type !== 'list-select') {{
         control.dataset.inputId = input.id;
         control.dataset.inputType = input.type;
+        if (input.type === 'select') {{
+          control.dataset.valueKind = control.dataset.valueKind || inferValueKind(input, value);
+        }}
       }}
+      if (input.type === 'number') {{
+        control.dataset.valueKind = 'number';
+      }}
+
+      if (input.type === 'boolean' || input.type === 'select' || input.type === 'number' || input.type === 'text' || input.type === 'folder-picker' || input.type === 'file-picker') {{
+        control.addEventListener('input', () => refreshDirtyState());
+        control.addEventListener('change', () => refreshDirtyState());
+        if (input.id === 'uiTheme') {{
+          control.addEventListener('change', () => applyTheme(normalizeThemeId(control.value)));
+        }}
+      }}
+
       wrapper.appendChild(control);
+      registerDirtyTracker(wrapper, readDirtyValue || (() => null));
       return wrapper;
     }}
 
@@ -1211,11 +1560,12 @@ fn render_html(state: &UiServerState) -> String {
         card.appendChild(list);
       }}
       target.appendChild(card);
+      return card;
     }}
 
     function renderCommands(target, commands) {{
       if (!commands.length) {{
-        return;
+        return null;
       }}
       const card = createCard('Commands', 'Manual operations exposed by this extension and how to use them.');
       const list = document.createElement('div');
@@ -1260,29 +1610,87 @@ fn render_html(state: &UiServerState) -> String {
       }});
       card.appendChild(list);
       target.appendChild(card);
+      return card;
     }}
 
-    function renderTabs() {{
+    function normalizeTabSpec(tab, fallbackTitle) {{
+      return {{
+        id: String(tab.id || fallbackTitle || 'tab').trim(),
+        title: tab.title || fallbackTitle || 'Tab',
+        description: tab.description || '',
+        sections: Array.isArray(tab.sections) ? tab.sections.map(String) : [],
+        showStatus: Boolean(tab.showStatus)
+      }};
+    }}
+
+    function renderTabs(tabs) {{
       tabsEl.innerHTML = '';
-      [['settings', 'Settings'], ['status', 'Status']].forEach(([id, label]) => {{
+      tabsEl.hidden = !tabs.length;
+      tabs.forEach(tab => {{
         const btn = document.createElement('button');
-        btn.className = 'tab-btn' + (currentTab === id ? ' active' : '');
-        btn.textContent = label;
+        btn.className = 'tab-btn' + (currentTab === tab.id ? ' active' : '');
+        btn.textContent = tab.title;
         btn.addEventListener('click', () => {{
-          currentTab = id;
+          currentTab = tab.id;
           updateUrl();
-          renderTabs();
-          toggleViews();
+          renderTabs(tabs);
+          applyTabVisibility(tabs);
         }});
         tabsEl.appendChild(btn);
       }});
     }}
 
-    function toggleViews() {{
-      const showSettings = currentTab === 'settings';
-      settingsViewEl.hidden = !showSettings;
-      statusViewEl.hidden = showSettings;
-      saveBtn.hidden = !showSettings;
+    function applyTabVisibility(tabs) {{
+      const cards = Array.from(contentViewEl.querySelectorAll('[data-tab-id]'));
+      if (!tabs.length) {{
+        cards.forEach(card => {{
+          card.hidden = false;
+        }});
+        saveBtn.hidden = !contentViewEl.querySelector('[data-editable="true"]');
+        updateUrl();
+        refreshDirtyState();
+        return;
+      }}
+
+      const activeTab = tabs.find(tab => tab.id === currentTab) || tabs[0];
+      currentTab = activeTab.id;
+      cards.forEach(card => {{
+        card.hidden = card.dataset.tabId !== currentTab;
+      }});
+      saveBtn.hidden = !cards.some(card =>
+        card.dataset.tabId === currentTab && card.dataset.editable === 'true'
+      );
+      updateUrl();
+      refreshDirtyState();
+    }}
+
+    function appendCard(card, tabId, editable = false) {{
+      if (tabId) {{
+        card.dataset.tabId = tabId;
+      }}
+      if (editable) {{
+        card.dataset.editable = 'true';
+      }}
+      contentViewEl.appendChild(card);
+    }}
+
+    function createSettingsCard(section, config, info) {{
+      const card = createCard(section.title, section.description);
+      section.inputDefs.forEach(input => {{
+        card.appendChild(createInput(input, config[input.id], info));
+      }});
+      return card;
+    }}
+
+    function buildStatusRows(statusMeta, status) {{
+      const fieldDefs = (statusMeta.fields && statusMeta.fields.length)
+        ? statusMeta.fields
+        : Object.keys(status).sort().map(key => ({{ key, label: humanizeKey(key) }}));
+      return fieldDefs.map(field => ({{
+        label: field.label || humanizeKey(field.key),
+        value: status[field.key],
+        format: field.format
+      }}));
     }}
 
     async function loadJson(url) {{
@@ -1295,30 +1703,192 @@ fn render_html(state: &UiServerState) -> String {
       return await res.json();
     }}
 
+    async function refreshDescriptorModel() {{
+      replaceDescriptorModel(await loadJson('/descriptor'));
+    }}
+
+    let currentConfig = {{}};
+    let currentInfo = {{}};
+    let currentTabs = [];
+    const extensionInfoCache = new Map();
+
+    async function loadExtensionInfoCached(extensionId) {{
+      if (extensionInfoCache.has(extensionId)) {{
+        return extensionInfoCache.get(extensionId);
+      }}
+      const info = await loadJson('/info/extension/' + encodeURIComponent(extensionId));
+      extensionInfoCache.set(extensionId, info);
+      return info;
+    }}
+
+    async function toggleExtensionCommands(descriptor, panel, button) {{
+      const shouldExpand = button.dataset.expanded !== 'true';
+      if (!shouldExpand) {{
+        panel.hidden = true;
+        button.dataset.expanded = 'false';
+        button.textContent = 'See commands';
+        return;
+      }}
+
+      button.dataset.expanded = 'true';
+      button.textContent = 'Loading commands...';
+
+      if (panel.dataset.loading === 'true') {{
+        return;
+      }}
+
+      if (!panel.dataset.loaded) {{
+        panel.dataset.loading = 'true';
+        panel.innerHTML = '';
+        try {{
+          const info = await loadExtensionInfoCached(descriptor.id);
+          const commands = Array.isArray(info.commands) ? info.commands : [];
+          if (commands.length === 0) {{
+            const empty = document.createElement('div');
+            empty.className = 'empty';
+            empty.textContent = 'No user-facing commands are available for this extension.';
+            panel.appendChild(empty);
+          }} else {{
+            renderCommands(panel, commands);
+          }}
+          panel.dataset.loaded = 'true';
+        }} catch (err) {{
+          const failure = document.createElement('div');
+          failure.className = 'empty';
+          failure.textContent = 'Failed to load commands: ' + err;
+          panel.appendChild(failure);
+        }} finally {{
+          panel.dataset.loading = 'false';
+        }}
+      }}
+
+      const expanded = button.dataset.expanded === 'true';
+      panel.hidden = !expanded;
+      button.textContent = expanded ? 'Hide commands' : 'See commands';
+    }}
+
+    function createCoreExtensionCard(descriptor, enabled) {{
+      const card = document.createElement('div');
+      card.className = 'extension-card';
+
+      const hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.value = enabled ? 'true' : 'false';
+      hidden.dataset.inputId = 'extensionEnabled:' + descriptor.id;
+      hidden.dataset.inputType = 'extension-toggle';
+      card.appendChild(hidden);
+
+      const head = document.createElement('div');
+      head.className = 'extension-head';
+      const summary = document.createElement('div');
+      const titleRow = document.createElement('div');
+      titleRow.className = 'extension-title-row';
+      const title = document.createElement('div');
+      title.className = 'extension-name';
+      title.textContent = descriptor.name;
+      const dirtyBadge = document.createElement('span');
+      dirtyBadge.className = 'unsaved-badge';
+      dirtyBadge.textContent = 'Unsaved';
+      dirtyBadge.hidden = true;
+      const meta = document.createElement('div');
+      meta.className = 'extension-id mono';
+      meta.textContent = descriptor.id;
+      const description = document.createElement('div');
+      description.className = 'extension-meta';
+      const platforms = Array.isArray(descriptor.platforms) && descriptor.platforms.length > 0
+        ? descriptor.platforms.join(', ')
+        : 'windows, macos, linux';
+      description.textContent = `Platforms: ${{platforms}}`;
+      titleRow.appendChild(title);
+      titleRow.appendChild(dirtyBadge);
+      summary.appendChild(titleRow);
+      summary.appendChild(meta);
+      summary.appendChild(description);
+
+      const actions = document.createElement('div');
+      actions.className = 'extension-actions';
+      const state = document.createElement('div');
+      state.className = 'toggle-state';
+      const enableBtn = document.createElement('button');
+      enableBtn.type = 'button';
+      enableBtn.className = 'mini-btn';
+      enableBtn.textContent = 'Enable';
+      const disableBtn = document.createElement('button');
+      disableBtn.type = 'button';
+      disableBtn.className = 'mini-btn';
+      disableBtn.textContent = 'Disable';
+      const commandsBtn = document.createElement('button');
+      commandsBtn.type = 'button';
+      commandsBtn.className = 'mini-btn';
+      commandsBtn.textContent = 'See commands';
+      const settingsBtn = document.createElement('button');
+      settingsBtn.type = 'button';
+      settingsBtn.className = 'mini-btn';
+      settingsBtn.textContent = 'Open settings';
+
+      const updateState = () => {{
+        const isEnabled = hidden.value === 'true';
+        enableBtn.className = 'mini-btn' + (isEnabled ? ' active-enable' : '');
+        disableBtn.className = 'mini-btn' + (!isEnabled ? ' active-disable' : '');
+        state.textContent = isEnabled ? 'Enabled in runtime' : 'Disabled in runtime';
+        settingsBtn.hidden = !isEnabled;
+      }};
+
+      enableBtn.addEventListener('click', () => {{
+        hidden.value = 'true';
+        updateState();
+        refreshDirtyState();
+      }});
+      disableBtn.addEventListener('click', () => {{
+        hidden.value = 'false';
+        updateState();
+        refreshDirtyState();
+      }});
+      settingsBtn.addEventListener('click', () => {{
+        currentSection = `ext:${{descriptor.id}}`;
+        currentTab = '';
+        updateUrl();
+        renderNav();
+        renderSection().catch(err => setStatus('Load failed: ' + err));
+      }});
+
+      const commandsPanel = document.createElement('div');
+      commandsPanel.className = 'command-panel';
+      commandsPanel.hidden = true;
+      commandsBtn.addEventListener('click', () => {{
+        toggleExtensionCommands(descriptor, commandsPanel, commandsBtn)
+          .catch(err => setStatus('Load failed: ' + err));
+      }});
+
+      actions.appendChild(enableBtn);
+      actions.appendChild(disableBtn);
+      actions.appendChild(settingsBtn);
+      actions.appendChild(commandsBtn);
+      actions.appendChild(state);
+      updateState();
+
+      head.appendChild(summary);
+      head.appendChild(actions);
+      card.appendChild(head);
+      card.appendChild(commandsPanel);
+      registerDirtyTracker(card, () => hidden.value === 'true');
+      return card;
+    }}
+
     async function renderSection() {{
-      settingsViewEl.innerHTML = '';
-      statusViewEl.innerHTML = '';
+      contentViewEl.innerHTML = '';
       setStatus('');
-      renderTabs();
-      toggleViews();
 
       function coreSections(config) {{
         const disabledExtensions = new Set(Array.isArray(config.disabledExtensions) ? config.disabledExtensions : []);
-        const extensionFields = descriptors.map(descriptor => {{
-          const platforms = Array.isArray(descriptor.platforms) && descriptor.platforms.length > 0
-            ? descriptor.platforms.join(', ')
-            : 'windows, macos, linux';
-          return {{
-            id: 'extensionEnabled:' + descriptor.id,
-            label: descriptor.name,
-            description: 'Supported platforms: ' + platforms,
-            type: 'extension-toggle',
-            default: !disabledExtensions.has(descriptor.id)
-          }};
-        }});
+        const extensionItems = discoverableDescriptors.map(descriptor => ({{
+          descriptor,
+          enabled: !disabledExtensions.has(descriptor.id)
+        }}));
 
         return [
           {{
+            id: 'general',
             title: 'General',
             description: 'Core Copper configuration.',
             fields: [
@@ -1339,20 +1909,16 @@ fn render_html(state: &UiServerState) -> String {
               {{
                 id: 'uiTheme',
                 label: 'UI theme',
-                description: 'Name of the preferred host settings theme.',
-                type: 'text',
-                default: 'obsidian'
-              }},
-              {{
-                id: 'startupExtension',
-                label: 'Startup extension id',
-                description: 'Extension page selected when the settings UI opens.',
-                type: 'text',
-                default: model.selectedExtensionId || ''
+                description: 'Built-in look and feel for the Copper settings UI.',
+                type: 'select',
+                options: THEME_OPTIONS.map(theme => theme.id),
+                optionLabels: Object.fromEntries(THEME_OPTIONS.map(theme => [theme.id, theme.label])),
+                default: 'copper-light'
               }}
             ]
           }},
           {{
+            id: 'package-install',
             title: 'Package install',
             description: 'Shared extension package installation inputs belong to Copper core settings, not to a torrent workflow extension.',
             fields: [
@@ -1373,9 +1939,10 @@ fn render_html(state: &UiServerState) -> String {
             ]
           }},
           {{
+            id: 'extensions',
             title: 'Extensions',
             description: 'Extensions can stay discoverable in the UI while being disabled for the active runtime.',
-            fields: extensionFields
+            items: extensionItems
           }}
         ];
       }}
@@ -1387,21 +1954,17 @@ fn render_html(state: &UiServerState) -> String {
         ? '/info/core'
         : '/info/extension/' + encodeURIComponent(currentSection.slice(4));
       const [config, info] = await Promise.all([loadJson(configTarget), loadJson(infoTarget)]);
+      currentConfig = config || {{}};
+      currentInfo = info || {{}};
 
       if (currentSection === 'core') {{
         pageEyebrowEl.textContent = 'Core';
         pageTitleEl.textContent = 'Copper';
         pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
         saveBtn.textContent = 'Save settings';
+        applyTheme((config && config.uiTheme) || 'copper-light');
 
-        coreSections(config).forEach(section => {{
-          const settingsCard = createCard(section.title, section.description);
-          section.fields.forEach(field => {{
-            settingsCard.appendChild(createInput(field, config[field.id], info));
-          }});
-          settingsViewEl.appendChild(settingsCard);
-        }});
-
+        const sections = coreSections(config);
         const coreRows = [
           {{ label: 'Extensions loaded', value: info.extensionsLoaded ?? 0 }},
           {{ label: 'Host platform', value: info.hostPlatform || 'unknown' }},
@@ -1410,7 +1973,56 @@ fn render_html(state: &UiServerState) -> String {
           {{ label: 'Core extensions directory', value: info.coreExtensionsDir || 'Not available', format: 'path', mono: true }},
           {{ label: 'Runtime extension roots', value: (info.runtimeExtensionRoots || []).join(', '), format: 'path', mono: true }}
         ];
-        renderKeyValueCard(statusViewEl, 'Status', 'Current Copper environment information.', coreRows);
+
+        currentTabs = [
+          {{ id: 'general', title: 'General' }},
+          {{ id: 'package-install', title: 'Package Install' }},
+          {{ id: 'extensions', title: 'Extensions' }}
+        ];
+        const generalSection = sections.find(section => section.id === 'general');
+        if (generalSection) {{
+          const card = createCard(generalSection.title, generalSection.description);
+          generalSection.fields.forEach(field => {{
+            card.appendChild(createInput(field, config[field.id], info));
+          }});
+          appendCard(card, 'general', true);
+        }}
+        const generalStatusHost = document.createElement('div');
+        renderKeyValueCard(
+          generalStatusHost,
+          'Environment',
+          'Current Copper environment information.',
+          coreRows
+        );
+        appendCard(generalStatusHost.firstElementChild, 'general', false);
+
+        sections
+          .filter(section => section.id !== 'general')
+          .forEach(section => {{
+            if (section.id === 'extensions') {{
+              const card = createCard(section.title, section.description);
+              const list = document.createElement('div');
+              list.className = 'extension-list';
+              (section.items || []).forEach(item => {{
+                list.appendChild(createCoreExtensionCard(item.descriptor, item.enabled));
+              }});
+              card.appendChild(list);
+              appendCard(card, section.id, true);
+              return;
+            }}
+            const card = createCard(section.title, section.description);
+            section.fields.forEach(field => {{
+              card.appendChild(createInput(field, config[field.id], info));
+            }});
+            appendCard(card, section.id, true);
+          }});
+
+        if (!currentTabs.some(tab => tab.id === currentTab)) {{
+          currentTab = currentTabs[0].id;
+        }}
+        renderTabs(currentTabs);
+        applyTabVisibility(currentTabs);
+        refreshDirtyState();
         return;
       }}
 
@@ -1426,44 +2038,85 @@ fn render_html(state: &UiServerState) -> String {
       pageTitleEl.textContent = settingsMeta.title || descriptor.name;
       pageSubEl.textContent =
         settingsMeta.description ||
-        'Configure this extension on one page and review its latest runtime status separately.';
+        'Configure this extension in a user-friendly workspace.';
       saveBtn.textContent = applyActions.length > 0 ? 'Save and apply' : 'Save settings';
 
       const sections = inferSections(descriptor.inputs || [], descriptor);
-      if (sections.length === 0) {{
-        const emptyCard = createCard('Settings', 'This extension does not expose editable settings yet.');
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = 'No configurable fields were declared in the manifest.';
-        emptyCard.appendChild(empty);
-        settingsViewEl.appendChild(emptyCard);
-      }} else {{
-        sections.forEach(section => {{
-          const card = createCard(section.title, section.description);
-          section.inputDefs.forEach(input => {{
-            card.appendChild(createInput(input, config[input.id], info));
-          }});
-          settingsViewEl.appendChild(card);
-        }});
-      }}
-
       const statusMeta = (info && info.statusMeta) || ((settingsMeta || {{}}).status) || {{}};
       const status = (info && info.status) || {{}};
-      const fieldDefs = (statusMeta.fields && statusMeta.fields.length)
-        ? statusMeta.fields
-        : Object.keys(status).sort().map(key => ({{ key, label: humanizeKey(key) }}));
-      const statusRows = fieldDefs.map(field => ({{
-        label: field.label || humanizeKey(field.key),
-        value: status[field.key],
-        format: field.format
+      const statusRows = buildStatusRows(statusMeta, status);
+      const declaredTabs = Array.isArray(settingsMeta.tabs)
+        ? settingsMeta.tabs.map(tab => normalizeTabSpec(tab, 'Tab')).filter(tab => tab.id)
+        : [];
+      const sectionToTab = new Map();
+      declaredTabs.forEach(tab => {{
+        tab.sections.forEach(sectionId => {{
+          if (!sectionToTab.has(sectionId)) {{
+            sectionToTab.set(sectionId, tab.id);
+          }}
+        }});
+      }});
+
+      currentTabs = declaredTabs.map(tab => ({{
+        id: tab.id,
+        title: tab.title,
+        description: tab.description || ''
       }}));
-      renderKeyValueCard(
-        statusViewEl,
-        (statusMeta && statusMeta.title) || 'Recent status',
-        (statusMeta && statusMeta.description) || 'Latest runtime values reported by the daemon for this extension.',
-        statusRows
-      );
-      renderCommands(statusViewEl, (info && info.commands) || []);
+
+      if (!declaredTabs.length) {{
+        if (sections.length === 0) {{
+          const emptyCard = createCard('Settings', 'This extension does not expose editable settings yet.');
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = 'No configurable fields were declared in the manifest.';
+          emptyCard.appendChild(empty);
+          appendCard(emptyCard, '', false);
+        }} else {{
+          sections.forEach(section => {{
+            appendCard(createSettingsCard(section, config, info), '', true);
+          }});
+        }}
+        if (statusRows.length > 0) {{
+          const statusHost = document.createElement('div');
+          renderKeyValueCard(
+            statusHost,
+            statusMeta.title || 'Recent status',
+            statusMeta.description || 'Latest runtime values reported by the daemon for this extension.',
+            statusRows
+          );
+          appendCard(statusHost.firstElementChild, '', false);
+        }}
+        currentTab = '';
+        renderTabs([]);
+        applyTabVisibility([]);
+        refreshDirtyState();
+        return;
+      }}
+
+      const fallbackTabId = declaredTabs[0].id;
+      sections.forEach(section => {{
+        const tabId = sectionToTab.get(section.id) || fallbackTabId;
+        appendCard(createSettingsCard(section, config, info), tabId, true);
+      }});
+
+      const statusTab = declaredTabs.find(tab => tab.showStatus);
+      if (statusRows.length > 0) {{
+        const statusHost = document.createElement('div');
+        renderKeyValueCard(
+            statusHost,
+            statusMeta.title || 'Recent status',
+            statusMeta.description || 'Latest runtime values reported by the daemon for this extension.',
+            statusRows
+        );
+        appendCard(statusHost.firstElementChild, statusTab ? statusTab.id : fallbackTabId, false);
+      }}
+
+      if (!currentTabs.some(tab => tab.id === currentTab)) {{
+        currentTab = currentTabs[0].id;
+      }}
+      renderTabs(currentTabs);
+      applyTabVisibility(currentTabs);
+      refreshDirtyState();
     }}
 
     function collectCurrentPayload() {{
@@ -1479,19 +2132,10 @@ fn render_html(state: &UiServerState) -> String {
         }}
       }};
 
-      if (!currentSection.startsWith('ext:')) {{
-        const coreDefaults = {{
-          userExtensionsDir: '~/.Copper/extensions',
-          autoStart: false,
-          uiTheme: 'obsidian',
-          startupExtension: model.selectedExtensionId || '',
-          disabledExtensions: [],
-          extensionPackage: '',
-          extensionsInstallDir: '~/.Copper/extensions'
-        }};
-        const controls = settingsViewEl.querySelectorAll('[data-input-id]');
+      const readControlValues = root => {{
+        const values = new Map();
+        const controls = root.querySelectorAll('[data-input-id]');
         const handled = new Set();
-        const disabledExtensions = [];
         controls.forEach(ctrl => {{
           const id = ctrl.dataset.inputId;
           if (handled.has(id)) return;
@@ -1501,53 +2145,66 @@ fn render_html(state: &UiServerState) -> String {
           if (type === 'boolean' || type === 'extension-toggle') {{
             value = ctrl.value === 'true';
           }} else if (type === 'multi-select') {{
-            value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
+            value = Array.from(root.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
               .filter(option => option.checked)
               .map(option => option.dataset.optionValue);
           }} else if (type === 'number') {{
             value = ctrl.value === '' ? null : Number(ctrl.value);
           }} else {{
-            value = ctrl.value;
+            value = coerceControlValue(ctrl, ctrl.value);
           }}
-          if (id.startsWith('extensionEnabled:')) {{
-            if (!value) {{
-              disabledExtensions.push(id.slice('extensionEnabled:'.length));
-            }}
-            return;
-          }}
+          values.set(id, value);
+        }});
+        return values;
+      }};
+
+      const visibleValues = readControlValues(contentViewEl);
+
+      if (!currentSection.startsWith('ext:')) {{
+        const coreDefaults = {{
+          userExtensionsDir: '~/.Copper/extensions',
+          autoStart: false,
+          uiTheme: 'copper-light',
+          disabledExtensions: [],
+          extensionPackage: '',
+          extensionsInstallDir: '~/.Copper/extensions'
+        }};
+        Object.keys(coreDefaults).forEach(id => {{
+          if (id === 'disabledExtensions') return;
+          const value = visibleValues.has(id)
+            ? visibleValues.get(id)
+            : (currentConfig[id] !== undefined ? currentConfig[id] : coreDefaults[id]);
           addKey(id, value, coreDefaults[id]);
         }});
+
+        const savedDisabled = new Set(
+          Array.isArray(currentConfig.disabledExtensions) ? currentConfig.disabledExtensions : []
+        );
+        const disabledExtensions = discoverableDescriptors
+          .filter(descriptor => {{
+            const key = 'extensionEnabled:' + descriptor.id;
+            const enabled = visibleValues.has(key)
+              ? visibleValues.get(key)
+              : !savedDisabled.has(descriptor.id);
+            return !enabled;
+          }})
+          .map(descriptor => descriptor.id);
         disabledExtensions.sort();
         addKey('disabledExtensions', disabledExtensions, coreDefaults.disabledExtensions);
         if (remove.length > 0) payload.__remove = remove;
         return payload;
       }}
 
-      const controls = settingsViewEl.querySelectorAll('[data-input-id]');
       const extensionId = currentSection.slice(4);
       const descriptor = byId[extensionId];
       const inputDefaults = {{}};
       (descriptor && descriptor.inputs ? descriptor.inputs : []).forEach(input => {{
         inputDefaults[input.id] = input.default;
       }});
-      const handled = new Set();
-      controls.forEach(ctrl => {{
-        const id = ctrl.dataset.inputId;
-        if (handled.has(id)) return;
-        handled.add(id);
-        const type = ctrl.dataset.inputType;
-        let value;
-        if (type === 'boolean' || type === 'extension-toggle') {{
-          value = ctrl.value === 'true';
-        }} else if (type === 'multi-select') {{
-          value = Array.from(settingsViewEl.querySelectorAll(`[data-input-id="${{id}}"][data-input-type="multi-select"]`))
-            .filter(option => option.checked)
-            .map(option => option.dataset.optionValue);
-        }} else if (type === 'number') {{
-          value = ctrl.value === '' ? null : Number(ctrl.value);
-        }} else {{
-          value = ctrl.value;
-        }}
+      Object.keys(inputDefaults).forEach(id => {{
+        const value = visibleValues.has(id)
+          ? visibleValues.get(id)
+          : (currentConfig[id] !== undefined ? currentConfig[id] : inputDefaults[id]);
         addKey(id, value, inputDefaults[id]);
       }});
       if (remove.length > 0) payload.__remove = remove;
@@ -1589,6 +2246,10 @@ fn render_html(state: &UiServerState) -> String {
           await renderSection();
           setStatus('Settings saved and applied to the current system.');
         }} else {{
+          if (currentSection === 'core') {{
+            await refreshDescriptorModel();
+            renderNav();
+          }}
           await renderSection();
           setStatus('Settings saved successfully.');
         }}
@@ -1624,12 +2285,14 @@ fn render_html(state: &UiServerState) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_core_info, build_ui_state, core_data_path_for, extension_config_path_for,
-        extension_status_path_for, load_config, parse_json_object, parse_request,
-        read_chunked_body, render_html, start_daemon_ui_server, store_config, write_response,
-        HttpMethod, HttpResponse, UiConfigError, UiOpenOptions,
+        build_core_info, build_extension_info, build_ui_state, core_data_path_for,
+        extension_config_path_for, extension_status_path_for, load_config, parse_json_object,
+        parse_request, read_chunked_body, render_html, start_daemon_ui_server, store_config,
+        visible_descriptors, write_response, HttpMethod, HttpResponse, UiConfigError,
+        UiOpenOptions,
     };
     use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
+    use crate::core_config::CoreConfig;
     use crate::descriptor::{
         Action, Descriptor, InputField, InputType, Platform, SettingsDescriptor, SettingsSection,
         StatusDescriptor, StatusField, StatusFieldFormat, UiDescriptor,
@@ -1687,6 +2350,7 @@ mod tests {
                         .to_string(),
                 ),
                 apply_actions: vec![],
+                tabs: vec![],
                 sections: vec![SettingsSection {
                     id: "monitor".to_string(),
                     title: "Monitor".to_string(),
@@ -1716,7 +2380,8 @@ mod tests {
         super::UiServerState {
             selected_extension_id: descriptor.id.clone(),
             extension_ids: [descriptor.id.clone()].into_iter().collect::<HashSet<_>>(),
-            descriptors: vec![descriptor],
+            descriptors: vec![descriptor.clone()],
+            discoverable_descriptors: vec![descriptor],
             user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
             core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
             runtime_extension_roots: vec![
@@ -1815,7 +2480,7 @@ mod tests {
     }
 
     #[test]
-    fn build_ui_state_selects_valid_default_extension() {
+    fn build_ui_state_defaults_to_core_section() {
         let temp = tempdir().expect("tempdir");
         let mut descriptor = sample_descriptor();
         descriptor.id = "alpha-ext".to_string();
@@ -1823,8 +2488,7 @@ mod tests {
         write_extension(temp.path(), &descriptor);
         let state = build_ui_state(temp.path(), None, true, test_auth(), test_origin())
             .expect("build state");
-        assert!(state.extension_ids.contains(&state.selected_extension_id));
-        assert_eq!(state.selected_extension_id, "alpha-ext");
+        assert!(state.selected_extension_id.is_empty());
     }
 
     #[test]
@@ -1849,6 +2513,121 @@ mod tests {
         )
         .expect("build");
         assert!(state.extension_ids.contains("platform-bound"));
+    }
+
+    #[test]
+    fn visible_descriptors_hide_disabled_extensions_from_sidebar_only() {
+        let enabled = sample_descriptor();
+        let mut disabled = sample_descriptor();
+        disabled.id = "disabled-ext".to_string();
+        disabled.name = "Disabled Extension".to_string();
+
+        let descriptors = vec![enabled.clone(), disabled.clone()];
+        let core_config = CoreConfig {
+            disabled_extensions: ["disabled-ext".to_string()].into_iter().collect(),
+        };
+
+        let visible = visible_descriptors(&descriptors, &core_config);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, enabled.id);
+        assert_eq!(descriptors.len(), 2, "discoverable list stays intact");
+    }
+
+    #[test]
+    fn find_discoverable_descriptor_reads_hidden_extension_metadata() {
+        let enabled = sample_descriptor();
+        let mut hidden = sample_descriptor();
+        hidden.id = "hidden-ext".to_string();
+        hidden.name = "Hidden Extension".to_string();
+
+        let state = super::UiServerState {
+            selected_extension_id: enabled.id.clone(),
+            extension_ids: [enabled.id.clone()].into_iter().collect::<HashSet<_>>(),
+            descriptors: vec![enabled.clone()],
+            discoverable_descriptors: vec![enabled, hidden.clone()],
+            user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
+            core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
+            runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],
+            state_store: ExtensionStateStore::new(PathBuf::from("C:/tmp/.Copper/extensions")),
+            host_extensions: HostExtensionRegistry::new(),
+            auth_token: "test-auth-token".to_string(),
+            origin: "http://127.0.0.1:4766".to_string(),
+            allow_close: true,
+        };
+
+        let descriptor =
+            super::find_discoverable_descriptor(&state, "hidden-ext").expect("discoverable");
+        assert_eq!(descriptor.id, hidden.id);
+    }
+
+    #[test]
+    fn build_extension_info_supports_hidden_discoverable_extension_commands() {
+        let enabled = sample_descriptor();
+        let hidden = Descriptor {
+            schema: Some(
+                "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json".to_string(),
+            ),
+            id: "hidden-ext".to_string(),
+            name: "Hidden Extension".to_string(),
+            version: "1.0.0".to_string(),
+            trigger: "hidden-trigger".to_string(),
+            platforms: vec![],
+            permissions: vec![],
+            inputs: vec![],
+            actions: vec![
+                Action {
+                    id: "status".to_string(),
+                    label: "Read status".to_string(),
+                    description: Some("Read current extension state.".to_string()),
+                    script: "status".to_string(),
+                },
+                Action {
+                    id: "apply-hidden".to_string(),
+                    label: "Apply hidden config".to_string(),
+                    description: Some("Apply the saved hidden extension config.".to_string()),
+                    script: "apply-hidden".to_string(),
+                },
+            ],
+            ui: Some(UiDescriptor {
+                ui_type: "form".to_string(),
+                source: None,
+                on_select: None,
+            }),
+            settings: Some(SettingsDescriptor {
+                title: Some("Hidden Extension".to_string()),
+                description: Some("Hidden settings".to_string()),
+                apply_actions: vec!["apply-hidden".to_string()],
+                tabs: vec![],
+                sections: vec![],
+                status: None,
+            }),
+            tray: None,
+        };
+
+        let state = super::UiServerState {
+            selected_extension_id: enabled.id.clone(),
+            extension_ids: [enabled.id.clone()].into_iter().collect::<HashSet<_>>(),
+            descriptors: vec![enabled],
+            discoverable_descriptors: vec![hidden.clone()],
+            user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
+            core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
+            runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],
+            state_store: ExtensionStateStore::new(PathBuf::from("C:/tmp/.Copper/extensions")),
+            host_extensions: HostExtensionRegistry::new(),
+            auth_token: "test-auth-token".to_string(),
+            origin: "http://127.0.0.1:4766".to_string(),
+            allow_close: true,
+        };
+
+        let info = build_extension_info(&state, &hidden).expect("hidden extension info");
+        let commands = info
+            .get("commands")
+            .and_then(|value| value.as_array())
+            .expect("commands array");
+        assert!(
+            !commands.is_empty(),
+            "discoverable extensions should keep command metadata for the core page"
+        );
     }
 
     fn http_request(addr: &str, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
@@ -1903,12 +2682,18 @@ mod tests {
         assert!(html.contains("Settings"));
         assert!(html.contains("Copper"));
         assert!(html.contains("Launch Copper at login"));
+        assert!(html.contains("UI theme"));
         assert!(html.contains("Desktop Torrent Organizer"));
         assert!(html.contains("Save settings"));
         assert!(html.contains("Status"));
-        assert!(html.contains("Commands"));
+        assert!(html.contains("See commands"));
         assert!(html.contains("Recent status"));
         assert!(html.contains("URLSearchParams(window.location.search)"));
+        assert!(html.contains("const THEME_OPTIONS"));
+        assert!(html.contains("Copper Dark"));
+        assert!(html.contains("applyTheme"));
+        assert!(html.contains("unsaved-badge"));
+        assert!(html.contains("refreshDirtyState"));
     }
 
     #[test]
@@ -1999,6 +2784,7 @@ mod tests {
                 title: Some("Display".to_string()),
                 description: Some("Configure Windows display settings.".to_string()),
                 apply_actions: vec!["set-resolution".to_string()],
+                tabs: vec![],
                 sections: vec![],
                 status: None,
             }),
@@ -2008,6 +2794,7 @@ mod tests {
             selected_extension_id: descriptor.id.clone(),
             extension_ids: [descriptor.id.clone()].into_iter().collect::<HashSet<_>>(),
             descriptors: vec![descriptor.clone()],
+            discoverable_descriptors: vec![descriptor.clone()],
             user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
             core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
             runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],
@@ -2342,7 +3129,7 @@ mod tests {
             "POST",
             "/config/core",
             &auth_headers,
-            Some(r#"{"uiTheme":"obsidian"}"#),
+            Some(r#"{"uiTheme":"copper"}"#),
         );
         assert_eq!(status_core_post, 200);
         assert!(body_core_post.contains("\"ok\": true"));
@@ -2442,7 +3229,7 @@ mod tests {
             &addr,
             "POST",
             "/config/core",
-            Some(r#"{"uiTheme":"obsidian"}"#),
+            Some(r#"{"uiTheme":"copper"}"#),
         );
         assert_eq!(status_post, 403);
         assert!(body_post.contains("control-plane token"));

@@ -12,16 +12,19 @@ Provide a stable, user-facing way to open an extension configuration UI without 
    - `copperd ui open --extension <extension-id>`
 3. UI behavior:
    - Host reads `manifest.json` inputs and optional `settings` metadata and renders a dedicated extension settings page.
-   - Settings and runtime status are shown separately.
+   - If `settings.tabs` is declared, the page renders those user-defined tabs.
+   - If no tabs are declared, the page renders a single combined view without a tab strip.
+   - Extension pages render settings and status only; manifest actions are surfaced centrally from **Core -> Extensions**.
    - Stored config is persisted under a dedicated extension config file.
    - Extensions may declare `settings.applyActions` so saving the page can also apply the saved config to the live host state.
 
 ## Why This Works
 
-- Uses already-defined descriptor inputs (`text`, `select`, `folder-picker`, `file-picker`, etc.).
-- Allows richer settings pages through optional `settings.sections`, per-field descriptions, `settings.status` metadata, and `settings.applyActions`.
+- Uses already-defined descriptor inputs (`text`, `select`, `list-select`, `folder-picker`, `file-picker`, etc.).
+- Allows richer settings pages through optional `settings.sections`, `settings.tabs`, per-field descriptions, `settings.status` metadata, and `settings.applyActions`.
 - Keeps extension authoring declarative and AI-friendly.
 - Avoids hardcoding per-extension UI.
+- The shared renderer highlights unsaved changes at the field/card level and upgrades the save button state while edits are pending.
 
 ## Desktop Torrent Organizer Example
 
@@ -32,11 +35,8 @@ Recommended config actions in UI:
 1. `move-torrents`
    - `desktopFolder` (default `~/Desktop`)
    - `torrentsFolder` (default `~/Desktop/Torrents`)
-2. Core package install settings
-   - `extensionPackage` (zip or tar.gz)
-   - `extensionsInstallDir` (default `~/.Copper/extensions`)
-3. `show-config`
-   - Shows last run + install history
+2. `show-config`
+   - Shows the saved monitor configuration and last run summary
 
 ## Current State (2026-03-15)
 
@@ -50,7 +50,9 @@ Recommended config actions in UI:
 - Extension runtime status is stored at:
   - `~/.Copper/extensions/<extension-id>/status.json`
 - Legacy `data.json` is still read as a fallback during migration.
-- UI now uses a dedicated extension page with separate **Settings** and **Status** tabs.
+- UI now uses dedicated extension pages with optional manifest-defined tabs.
+- Core settings use fixed tabs for **General**, **Package Install**, and **Extensions**.
+- Core **Extensions** renders discoverable extensions as cards with enable/disable controls, a settings shortcut, and lazy-loaded command help generated from manifest actions.
 - Shared package-install inputs now live on the **Core** settings page instead of inside the desktop torrent extension settings.
 - Core settings now include **Launch Copper at login**, which applies user-level autostart registration when saved. On Windows, the autostart path prefers the `copper.exe` GUI launcher so it does not open a terminal window at login.
 - Core settings also include per-extension enable/disable toggles backed by `~/.Copper/extensions/copper-core/config.json` `disabledExtensions`.
