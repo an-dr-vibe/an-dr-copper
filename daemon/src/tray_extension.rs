@@ -604,11 +604,12 @@ mod windows_impl {
         let result = windows_display::execute_action(action_id, &config)?;
         let mut status = state
             .state_store
-            .load_path_or_legacy(&state.status_path, Some(&state.legacy_path))
+            .load_path_or_legacy(&state.status_path, None)
             .map_err(|err| err.to_string())?;
         update_status_snapshot(&mut status, action_id, &result, true, None);
         write_json_object(&state.status_path, &status).map_err(|err| err.to_string())?;
         state.status = parse_status(&result);
+        apply_config_scale_fallback(&mut state.status, &config);
         state.resolution_presets = resolve_resolution_presets(&config, &state.status);
         if action_id == "set-scale"
             && result
@@ -635,10 +636,11 @@ mod windows_impl {
             .map_err(|err| err.to_string())?;
         let result = windows_display::execute_action("status", &config)?;
         state.status = parse_status(&result);
+        apply_config_scale_fallback(&mut state.status, &config);
         state.resolution_presets = resolve_resolution_presets(&config, &state.status);
         let mut status = state
             .state_store
-            .load_path_or_legacy(&state.status_path, Some(&state.legacy_path))
+            .load_path_or_legacy(&state.status_path, None)
             .map_err(|err| err.to_string())?;
         update_status_snapshot(&mut status, "status", &result, true, None);
         write_json_object(&state.status_path, &status).map_err(|err| err.to_string())?;
@@ -742,6 +744,28 @@ mod windows_impl {
                 refresh_rate: 60,
             },
         ]
+    }
+
+    fn configured_scale_percent(config: &Value) -> Option<i32> {
+        config
+            .get("scalePercent")
+            .and_then(|value| {
+                value
+                    .as_i64()
+                    .or_else(|| value.as_str()?.parse::<i64>().ok())
+            })
+            .and_then(|value| i32::try_from(value).ok())
+    }
+
+    fn apply_config_scale_fallback(status: &mut DisplayStatus, config: &Value) {
+        let Some(scale) = configured_scale_percent(config) else {
+            return;
+        };
+
+        status.current_scale = scale;
+        if !status.available_scales.contains(&scale) {
+            status.available_scales.push(scale);
+        }
     }
 
     fn parse_tray_resolution_presets(value: &Value) -> Vec<ResolutionPreset> {
@@ -951,8 +975,9 @@ mod windows_impl {
     #[cfg(test)]
     mod tests {
         use super::{
-            default_resolution_presets, merge_object, parse_resolution_preset, parse_status,
-            tray_visual_changed, DisplayStatus, WindowsDisplayTrayState,
+            apply_config_scale_fallback, default_resolution_presets, merge_object,
+            parse_resolution_preset, parse_status, tray_visual_changed, DisplayStatus,
+            WindowsDisplayTrayState,
         };
         use crate::state_store::ExtensionStateStore;
         use std::path::PathBuf;
@@ -1067,6 +1092,25 @@ mod windows_impl {
                 &previous_tooltip
             ));
         }
+
+        #[test]
+        fn apply_config_scale_fallback_prefers_saved_scale_when_status_is_stale() {
+            let mut status = DisplayStatus {
+                current_scale: 100,
+                available_scales: vec![100, 125],
+                ..DisplayStatus::default()
+            };
+
+            apply_config_scale_fallback(
+                &mut status,
+                &serde_json::json!({
+                    "scalePercent": 150
+                }),
+            );
+
+            assert_eq!(status.current_scale, 150);
+            assert_eq!(status.available_scales, vec![100, 125, 150]);
+        }
     }
 }
 
@@ -1074,58 +1118,4 @@ mod windows_impl {
 use windows_impl::run_windows_display_tray;
 
 #[cfg(test)]
-mod tests {
-    use super::{collect_specs, AdditionalTrayController};
-    use crate::extension::Registry;
-    use std::fs;
-    use std::path::Path;
-    use std::sync::{atomic::AtomicBool, Arc};
-    use tempfile::tempdir;
-
-    fn write_extension(root: &Path, manifest: &str) {
-        fs::create_dir_all(root).expect("create extension dir");
-        fs::write(root.join("manifest.json"), manifest).expect("write manifest");
-        fs::write(root.join("main.ts"), "export default function(){}").expect("write main.ts");
-    }
-
-    #[test]
-    fn initialize_without_enabled_extensions_creates_empty_controller() {
-        let temp = tempdir().expect("tempdir");
-        let registry = Registry::load_from_dir(temp.path()).expect("registry");
-        let controller = AdditionalTrayController::initialize(
-            Arc::new(AtomicBool::new(true)),
-            "http://127.0.0.1:4766".to_string(),
-            &registry,
-        )
-        .expect("controller");
-        assert!(controller.specs().is_empty());
-    }
-
-    #[test]
-    fn collect_specs_discovers_tray_specs_from_registry_metadata() {
-        let temp = tempdir().expect("tempdir");
-        write_extension(
-            &temp.path().join("windows-display-manager"),
-            r#"{
-                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
-                "id": "windows-display-manager",
-                "name": "Windows Display Manager",
-                "version": "1.0.0",
-                "trigger": "windows-display",
-                "permissions": ["ui", "store"],
-                "actions": [{ "id": "status", "label": "Status", "script": "return;" }],
-                "tray": {
-                    "provider": "windows-display",
-                    "title": "Windows Display Manager",
-                    "tooltip": "Taskbar and display shortcuts"
-                }
-            }"#,
-        );
-        let registry = Registry::load_from_dir(temp.path()).expect("registry");
-        let specs = collect_specs(&registry);
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].extension_id, "windows-display-manager");
-        assert_eq!(specs[0].provider, "windows-display");
-        assert_eq!(specs[0].title, "Windows Display Manager");
-    }
-}
+include!("tray_extension_tests.rs");

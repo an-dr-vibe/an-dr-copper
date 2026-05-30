@@ -1,13 +1,14 @@
 use crate::core_config::{load_core_config, CoreConfig};
 use crate::descriptor::{Descriptor, Permission, Platform};
 use crate::schema::{parse_and_validate, ValidationError};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use walkdir::WalkDir;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Extension {
     pub root: PathBuf,
     pub descriptor: Descriptor,

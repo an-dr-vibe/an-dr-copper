@@ -139,7 +139,8 @@ fn trigger_shows_selected_action_details() {
     ])
     .assert()
     .success()
-    .stdout(contains("Trigger dry-run"))
+    .stdout(contains("Trigger prepared"))
+    .stdout(contains("Runtime: subprocess-runtime (isolated=true)"))
     .stdout(contains("Permissions: fs,ui"));
 }
 
@@ -157,7 +158,8 @@ fn trigger_torrent_extension_shows_expected_permissions() {
     ])
     .assert()
     .success()
-    .stdout(contains("Trigger dry-run"))
+    .stdout(contains("Trigger prepared"))
+    .stdout(contains("Runtime: subprocess-runtime (isolated=true)"))
     .stdout(contains("Permissions: fs,shell,store,ui"))
     .stdout(contains("Move .torrent files"));
 }

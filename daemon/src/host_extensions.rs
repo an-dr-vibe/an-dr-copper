@@ -1,5 +1,6 @@
 use crate::api::windows_display;
 use crate::state_store::{read_json_object, unix_now_secs, write_json_object, ExtensionStateStore};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -13,13 +14,45 @@ const SESSION_COUNTER_INCREMENT_ACTION: &str = "increment";
 #[derive(Debug, Default, Clone)]
 pub struct HostExtensionRegistry;
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostStateContract {
+    pub capability_id: &'static str,
+    pub config_schema_version: u32,
+    pub status_schema_version: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostCapabilityInfo {
+    pub id: &'static str,
+    pub extension_ids: Vec<&'static str>,
+    pub background_polling: bool,
+    pub state_contract: HostStateContract,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppliedActionResult {
     pub action_id: String,
     pub result: Value,
 }
 
-pub trait HostExtensionHandler {
+#[derive(Debug, Clone, Copy)]
+pub struct BackgroundCapability {
+    pub capability_id: &'static str,
+    pub extension_id: &'static str,
+}
+
+struct HostCapabilitySpec {
+    id: &'static str,
+    extension_ids: &'static [&'static str],
+    background_polling: bool,
+    config_schema_version: u32,
+    status_schema_version: u32,
+    handler: &'static dyn HostExtensionHandler,
+}
+
+pub trait HostExtensionHandler: Sync {
     fn supports_cli_trigger(&self, _action_id: &str) -> bool {
         false
     }
@@ -106,23 +139,118 @@ impl HostExtensionRegistry {
     }
 
     pub fn supports_cli_trigger(&self, extension_id: &str, action_id: &str) -> bool {
-        match self.handler(extension_id) {
-            Some(handler) => handler.supports_cli_trigger(action_id),
+        match self.capability(extension_id) {
+            Some(capability) => capability.handler.supports_cli_trigger(action_id),
             None => false,
         }
     }
 
-    pub fn background_extension_ids(&self) -> &'static [&'static str] {
-        &[DESKTOP_TORRENT_ORGANIZER_ID]
+    pub fn background_capabilities(&self) -> Vec<BackgroundCapability> {
+        capability_specs()
+            .iter()
+            .filter(|capability| capability.background_polling)
+            .flat_map(|capability| {
+                capability
+                    .extension_ids
+                    .iter()
+                    .copied()
+                    .map(|extension_id| BackgroundCapability {
+                        capability_id: capability.id,
+                        extension_id,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    pub fn capability_info(&self, extension_id: &str) -> Option<HostCapabilityInfo> {
+        self.capability(extension_id).map(capability_info)
+    }
+
+    pub fn state_contract(&self, extension_id: &str) -> Option<HostStateContract> {
+        self.capability(extension_id).map(state_contract)
+    }
+
+    fn capability(&self, extension_id: &str) -> Option<&'static HostCapabilitySpec> {
+        capability_specs()
+            .iter()
+            .find(|capability| capability.extension_ids.contains(&extension_id))
     }
 
     fn handler(&self, extension_id: &str) -> Option<&'static dyn HostExtensionHandler> {
-        match extension_id {
-            SESSION_COUNTER_ID => Some(&SESSION_COUNTER_HANDLER),
-            WINDOWS_DISPLAY_MANAGER_ID => Some(&WINDOWS_DISPLAY_HANDLER),
-            DESKTOP_TORRENT_ORGANIZER_ID => Some(&DESKTOP_TORRENT_HANDLER),
-            _ => None,
-        }
+        self.capability(extension_id)
+            .map(|capability| capability.handler)
+    }
+}
+
+fn capability_specs() -> &'static [HostCapabilitySpec] {
+    static CAPABILITY_SPECS: [HostCapabilitySpec; 3] = [
+        HostCapabilitySpec {
+            id: "host.session-counter",
+            extension_ids: &[SESSION_COUNTER_ID],
+            background_polling: false,
+            config_schema_version: 1,
+            status_schema_version: 1,
+            handler: &SESSION_COUNTER_HANDLER,
+        },
+        HostCapabilitySpec {
+            id: "host.windows-display",
+            extension_ids: &[WINDOWS_DISPLAY_MANAGER_ID],
+            background_polling: false,
+            config_schema_version: 1,
+            status_schema_version: 1,
+            handler: &WINDOWS_DISPLAY_HANDLER,
+        },
+        HostCapabilitySpec {
+            id: "host.desktop-torrent-organizer",
+            extension_ids: &[DESKTOP_TORRENT_ORGANIZER_ID],
+            background_polling: true,
+            config_schema_version: 1,
+            status_schema_version: 1,
+            handler: &DESKTOP_TORRENT_HANDLER,
+        },
+    ];
+    &CAPABILITY_SPECS
+}
+
+fn state_contract(capability: &HostCapabilitySpec) -> HostStateContract {
+    HostStateContract {
+        capability_id: capability.id,
+        config_schema_version: capability.config_schema_version,
+        status_schema_version: capability.status_schema_version,
+    }
+}
+
+fn capability_info(capability: &HostCapabilitySpec) -> HostCapabilityInfo {
+    HostCapabilityInfo {
+        id: capability.id,
+        extension_ids: capability.extension_ids.to_vec(),
+        background_polling: capability.background_polling,
+        state_contract: state_contract(capability),
+    }
+}
+
+fn stamp_status_contract(extension_id: &str, status: &mut Value) {
+    let Some(capability) = capability_specs()
+        .iter()
+        .find(|capability| capability.extension_ids.contains(&extension_id))
+    else {
+        return;
+    };
+
+    if !status.is_object() {
+        *status = serde_json::json!({});
+    }
+
+    if let Some(map) = status.as_object_mut() {
+        map.insert(
+            "_stateContract".to_string(),
+            serde_json::json!({
+                "capabilityId": capability.id,
+                "schemaVersion": capability.status_schema_version,
+                "stateKind": "status",
+            }),
+        );
     }
 }
 
@@ -151,6 +279,7 @@ impl HostExtensionHandler for SessionCounterHandler {
         status["count"] = serde_json::json!(next);
         status["lastIncrementUnix"] = serde_json::json!(unix_now_secs());
         status["lastActionId"] = serde_json::json!(SESSION_COUNTER_INCREMENT_ACTION);
+        stamp_status_contract(SESSION_COUNTER_ID, &mut status);
         write_json_object(&path, &status)?;
         Ok(serde_json::json!({ "sessionCount": next }))
     }
@@ -413,6 +542,7 @@ fn update_windows_display_status(
             map.insert("lastError".to_string(), serde_json::json!(error));
         }
     }
+    stamp_status_contract(WINDOWS_DISPLAY_MANAGER_ID, state);
 }
 
 #[derive(Debug, Clone)]
@@ -530,6 +660,7 @@ fn write_desktop_torrent_status(
     if report.moved > 0 {
         status["lastMoveUnix"] = serde_json::json!(unix_now_secs());
     }
+    stamp_status_contract(DESKTOP_TORRENT_ORGANIZER_ID, &mut status);
     write_json_object(&path, &status)
 }
 
@@ -605,6 +736,14 @@ mod tests {
             payload.get("sessionCount").and_then(|value| value.as_u64()),
             Some(1)
         );
+        let status = read_json_object(&store.status_path(SESSION_COUNTER_ID)).expect("status");
+        assert_eq!(
+            status
+                .get("_stateContract")
+                .and_then(|value| value.get("capabilityId"))
+                .and_then(|value| value.as_str()),
+            Some("host.session-counter")
+        );
     }
 
     #[test]
@@ -677,5 +816,22 @@ mod tests {
             status.get("lastScanMoved").and_then(|value| value.as_u64()),
             Some(1)
         );
+        assert_eq!(
+            status
+                .get("_stateContract")
+                .and_then(|value| value.get("capabilityId"))
+                .and_then(|value| value.as_str()),
+            Some("host.desktop-torrent-organizer")
+        );
+    }
+
+    #[test]
+    fn registry_exposes_capability_metadata() {
+        let registry = HostExtensionRegistry::new();
+        let capability = registry
+            .capability_info(WINDOWS_DISPLAY_MANAGER_ID)
+            .expect("capability");
+        assert_eq!(capability.id, "host.windows-display");
+        assert_eq!(capability.state_contract.status_schema_version, 1);
     }
 }

@@ -1,7 +1,7 @@
 use crate::descriptor::Permission;
 use crate::extension::Extension;
 use crate::host_extensions::HostExtensionRegistry;
-use crate::runtime::RuntimeAdapter;
+use crate::runtime::{RuntimeAdapter, RuntimeMetadata};
 use crate::state_store::ExtensionStateStore;
 use serde::Serialize;
 
@@ -11,10 +11,11 @@ pub struct PreparedTrigger {
     pub extension_id: String,
     #[serde(rename = "actionId")]
     pub action_id: String,
-    pub permissions: Vec<&'static str>,
+    pub permissions: Vec<String>,
     pub script: String,
     #[serde(rename = "mainTsPath")]
     pub main_ts_path: String,
+    pub runtime: RuntimeMetadata,
     #[serde(flatten)]
     pub extras: serde_json::Map<String, serde_json::Value>,
 }
@@ -43,44 +44,19 @@ impl<'a> ExecutionEngine<'a> {
         extension: &Extension,
         action_id: Option<&str>,
     ) -> Result<PreparedTrigger, String> {
-        let action = if let Some(id) = action_id {
-            extension
-                .descriptor
-                .actions
-                .iter()
-                .find(|candidate| candidate.id == id)
-                .ok_or_else(|| {
-                    format!(
-                        "action '{id}' not found in extension '{}'",
-                        extension.descriptor.id
-                    )
-                })?
-        } else {
-            extension.descriptor.actions.first().ok_or_else(|| {
-                format!(
-                    "extension '{}' contains no executable actions",
-                    extension.descriptor.id
-                )
-            })?
-        };
-
         let runtime_payload = self
             .runtime
-            .on_trigger(extension, Some(&action.id))
+            .prepare_trigger(extension, action_id)
             .map_err(|err| format!("runtime trigger failed: {err}"))?;
-        let mut extras = serde_json::Map::new();
-        if let Some(object) = runtime_payload.as_object() {
-            for (key, value) in object {
-                if key == "extensionId" || key == "actionId" || key == "script" {
-                    continue;
-                }
-                extras.insert(key.clone(), value.clone());
-            }
-        }
+        let mut extras = runtime_payload.extras.clone();
 
         if let Some(object) = self
             .host_extensions
-            .trigger_payload(&extension.descriptor.id, self.state_store, &action.id)
+            .trigger_payload(
+                &extension.descriptor.id,
+                self.state_store,
+                &runtime_payload.action_id,
+            )
             .map_err(|err| format!("host extension trigger failed: {err}"))?
             .as_object()
             .cloned()
@@ -89,25 +65,26 @@ impl<'a> ExecutionEngine<'a> {
         }
 
         Ok(PreparedTrigger {
-            extension_id: extension.descriptor.id.clone(),
-            action_id: action.id.clone(),
-            permissions: permissions_as_strings(&extension.descriptor.permissions),
-            script: action.script.clone(),
-            main_ts_path: extension.main_ts_path.display().to_string(),
+            extension_id: runtime_payload.extension_id,
+            action_id: runtime_payload.action_id,
+            permissions: runtime_payload.permissions,
+            script: runtime_payload.script,
+            main_ts_path: runtime_payload.main_ts_path,
+            runtime: runtime_payload.runtime,
             extras,
         })
     }
 }
 
-pub fn permissions_as_strings(permissions: &[Permission]) -> Vec<&'static str> {
+pub fn permissions_as_strings(permissions: &[Permission]) -> Vec<String> {
     permissions
         .iter()
         .map(|permission| match permission {
-            Permission::Fs => "fs",
-            Permission::Shell => "shell",
-            Permission::Network => "network",
-            Permission::Store => "store",
-            Permission::Ui => "ui",
+            Permission::Fs => "fs".to_string(),
+            Permission::Shell => "shell".to_string(),
+            Permission::Network => "network".to_string(),
+            Permission::Store => "store".to_string(),
+            Permission::Ui => "ui".to_string(),
         })
         .collect()
 }
@@ -156,6 +133,7 @@ mod tests {
 
         let prepared = engine.prepare_trigger(&extension, None).expect("prepared");
         assert_eq!(prepared.action_id, "increment");
+        assert!(!prepared.runtime.isolated);
         assert_eq!(
             prepared
                 .extras

@@ -204,6 +204,12 @@ fn windows_display_manager_descriptor_matches_required_contract() {
     let descriptor = read_descriptor("windows-display-manager");
     assert_eq!(descriptor.id, "windows-display-manager");
     assert_eq!(descriptor.trigger, "windows-display");
+    let platforms = descriptor
+        .platforms
+        .iter()
+        .map(|platform| platform.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(platforms, vec!["windows"]);
     assert_eq!(
         descriptor.permissions,
         vec![Permission::Ui, Permission::Store]

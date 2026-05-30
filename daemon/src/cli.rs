@@ -6,11 +6,12 @@ use crate::descriptor::Descriptor;
 use crate::execution::ExecutionEngine;
 use crate::extension::{default_extensions_dir, load_runtime_registry};
 use crate::host_extensions::HostExtensionRegistry;
-use crate::runtime::DryRunRuntime;
+use crate::runtime::{default_runtime_adapter, run_protocol_worker};
 use crate::schema::parse_and_validate;
 use crate::state_store::ExtensionStateStore;
 use clap::{Parser, Subcommand};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -96,6 +97,11 @@ enum Commands {
         #[command(subcommand)]
         command: UiCommands,
     },
+    #[command(hide = true)]
+    Internal {
+        #[command(subcommand)]
+        command: InternalCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -160,6 +166,11 @@ enum UiCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum InternalCommands {
+    RuntimeTrigger,
+}
+
 pub fn run() -> Result<(), CliError> {
     let args = Args::parse();
     let command = args.command.unwrap_or_else(default_run_command);
@@ -198,6 +209,7 @@ fn run_command(command: Commands) -> Result<(), CliError> {
         Commands::Doctor => cmd_doctor(),
         Commands::Daemon { command } => cmd_daemon(command),
         Commands::Ui { command } => cmd_ui(command),
+        Commands::Internal { command } => cmd_internal(command),
     }
 }
 
@@ -283,6 +295,16 @@ fn cmd_ui(command: UiCommands) -> Result<(), CliError> {
     Ok(())
 }
 
+fn cmd_internal(command: InternalCommands) -> Result<(), CliError> {
+    match command {
+        InternalCommands::RuntimeTrigger => {
+            run_protocol_worker(io::stdin(), io::stdout())
+                .map_err(|err| CliError::Message(err.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
 fn cmd_validate(path: &Path) -> Result<(), CliError> {
     let raw = fs::read_to_string(path)?;
     let descriptor = parse_and_validate(&raw)?;
@@ -341,17 +363,21 @@ fn cmd_trigger(dir: &Path, id: &str, action: Option<&str>) -> Result<(), CliErro
     let ext = registry
         .get(id)
         .ok_or_else(|| CliError::Message(format!("extension '{}' not found", id)))?;
-    let runtime = DryRunRuntime;
+    let runtime = default_runtime_adapter().map_err(|err| CliError::Message(err.to_string()))?;
     let store = ExtensionStateStore::for_current_user()?;
     let host_extensions = HostExtensionRegistry::new();
-    let engine = ExecutionEngine::new(&runtime, &host_extensions, &store);
+    let engine = ExecutionEngine::new(runtime.as_ref(), &host_extensions, &store);
     let prepared = engine
         .prepare_trigger(ext, action)
         .map_err(CliError::Message)?;
 
     println!(
-        "Trigger dry-run: extension='{}' action='{}'",
+        "Trigger prepared: extension='{}' action='{}'",
         prepared.extension_id, prepared.action_id
+    );
+    println!(
+        "Runtime: {} (isolated={})",
+        prepared.runtime.executor, prepared.runtime.isolated
     );
     println!("Permissions: {}", prepared.permissions.join(","));
     println!("Script:");
@@ -511,10 +537,10 @@ mod tests {
     use crate::descriptor::{Action, Descriptor, Permission};
     use clap::Parser;
     use std::fs;
-    use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::path::PathBuf;
     use tempfile::tempdir;
+    use tiny_http::{Method, Response as HttpResponse, Server};
 
     fn write_extension(root: &std::path::Path, id: &str) {
         let ext = root.join(id);
@@ -554,19 +580,47 @@ mod tests {
     }
 
     fn spawn_ipc_server(expected_op: &'static str) -> (String, std::thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = listener.local_addr().expect("local addr").to_string();
+        let addr = {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            listener.local_addr().expect("local addr").to_string()
+        };
+        let server_addr = addr.clone();
         let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = String::new();
-            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
-            reader.read_line(&mut request).expect("read request");
-            assert!(request.contains(&format!("\"op\":\"{expected_op}\"")));
-            stream
-                .write_all(br#"{"ok":true,"message":"ok"}"#)
+            let server = Server::http(&server_addr).expect("server");
+            let mut request = server.recv().expect("request");
+            match expected_op {
+                "health" => {
+                    assert_eq!(request.method(), &Method::Get);
+                    assert_eq!(request.url(), "/health");
+                }
+                "list" => {
+                    assert_eq!(request.method(), &Method::Get);
+                    assert_eq!(request.url(), "/list");
+                }
+                "trigger" => {
+                    assert_eq!(request.method(), &Method::Post);
+                    assert_eq!(request.url(), "/trigger");
+                    let mut body = String::new();
+                    request.as_reader().read_to_string(&mut body).expect("body");
+                    assert!(body.contains("\"id\":\"alpha-ext\""));
+                }
+                "reload" => {
+                    assert_eq!(request.method(), &Method::Post);
+                    assert_eq!(request.url(), "/reload");
+                }
+                "verify" => {
+                    assert_eq!(request.method(), &Method::Post);
+                    assert_eq!(request.url(), "/verify");
+                }
+                "shutdown" => {
+                    assert_eq!(request.method(), &Method::Post);
+                    assert_eq!(request.url(), "/shutdown");
+                }
+                other => panic!("unexpected op {other}"),
+            }
+            request
+                .respond(HttpResponse::from_string(r#"{"ok":true,"message":"ok"}"#))
                 .expect("write response");
-            stream.write_all(b"\n").expect("write newline");
-            stream.flush().expect("flush");
         });
         (addr, handle)
     }
