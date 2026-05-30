@@ -8,8 +8,10 @@ pub const SUPPORTED_SCHEMA_URL: &str =
 #[serde(rename_all = "kebab-case")]
 pub enum Permission {
     Fs,
-    Shell,
+    Keyboard,
     Network,
+    SecureStore,
+    Shell,
     Store,
     Ui,
 }

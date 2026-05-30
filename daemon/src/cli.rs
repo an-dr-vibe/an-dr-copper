@@ -469,8 +469,10 @@ fn format_permissions(perms: &[Permission]) -> String {
         .iter()
         .map(|p| match p {
             Permission::Fs => "fs",
-            Permission::Shell => "shell",
+            Permission::Keyboard => "keyboard",
             Permission::Network => "network",
+            Permission::SecureStore => "secure-store",
+            Permission::Shell => "shell",
             Permission::Store => "store",
             Permission::Ui => "ui",
         })

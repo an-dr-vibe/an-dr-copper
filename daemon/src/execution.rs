@@ -81,8 +81,10 @@ pub fn permissions_as_strings(permissions: &[Permission]) -> Vec<String> {
         .iter()
         .map(|permission| match permission {
             Permission::Fs => "fs".to_string(),
-            Permission::Shell => "shell".to_string(),
+            Permission::Keyboard => "keyboard".to_string(),
             Permission::Network => "network".to_string(),
+            Permission::SecureStore => "secure-store".to_string(),
+            Permission::Shell => "shell".to_string(),
             Permission::Store => "store".to_string(),
             Permission::Ui => "ui".to_string(),
         })

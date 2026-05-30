@@ -4,14 +4,35 @@
 
 Maintain Copper as a cross-platform, manifest-first automation host that is easy to evolve through AI requests.
 
+## Role-Specific Context
+
+Pick the file that matches your task. Each agent file describes the role behavior and tells you exactly which project docs to read for specifics — **project knowledge lives in `docs/`, not in agent files**.
+
+| Role | Agent file | Project docs it points to |
+|---|---|---|
+| Architect | `agents/architect.md` | `docs/ARCHITECTURE.md` |
+| Developer | `agents/developer.md` | `docs/DEVELOPMENT.md`, `sdk/api.d.ts`, `schemas/` |
+| Tester | `agents/tester.md` | `docs/TESTING.md` |
+
+## Project Docs Map
+
+| Doc | Contains |
+|---|---|
+| `docs/ARCHITECTURE.md` | System overview, module layout, API surface table, design invariants, known gaps |
+| `docs/DEVELOPMENT.md` | Build commands, change recipes, state file locations, key source files |
+| `docs/TESTING.md` | Test commands, file locations, TDD workflow, coverage rules, known failures |
+| `docs/AI_AUTHORING.md` | How to generate and verify extensions |
+| `sdk/api.d.ts` | TypeScript API contract for extension authors |
+| `schemas/extension/1.0.0/descriptor.schema.json` | Manifest validation schema |
+
 ## Read First
 
 Before editing code, read these files in order:
 
 1. `docs/ARCHITECTURE.md`
-2. `schemas/extension/1.0.0/descriptor.schema.json`
+2. `docs/DEVELOPMENT.md`
 3. `sdk/api.d.ts`
-4. `README.md`
+4. `schemas/extension/1.0.0/descriptor.schema.json`
 
 ## Operating Rules
 

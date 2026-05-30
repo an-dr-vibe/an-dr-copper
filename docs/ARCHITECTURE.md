@@ -1,7 +1,7 @@
 # Copper Architecture
 
 Version: 0.3.2  
-Last updated: 2026-03-18
+Last updated: 2026-05-31
 
 ## 1. Overview
 
@@ -95,7 +95,7 @@ Type contract for AI generation:
 .
 |- daemon/
 |  |- src/
-|  |  |- api/        # host-side API module stubs (fs/shell/ui/notify/store)
+|  |  |- api/        # host-side API modules (fs/shell/ui/notify/store/keyboard/secure_store)
 |  |  |- runtime/    # runtime adapter abstraction
 |  |  |- execution.rs        # shared trigger preparation and execution orchestration
 |  |  |- daemon_scheduler.rs # reload/background scheduling policy
@@ -128,7 +128,25 @@ Module sizing guideline:
 - Split by responsibility first: service layer, transport, rendering/assets, platform-specific code, and tests should usually live in separate files.
 - Test-heavy modules may use `include!`-backed test files when that keeps the production module readable without changing visibility or behavior.
 
-## 6. CLI Surface
+## 6. Host API Surface
+
+Each module lives in `daemon/src/api/<name>.rs` and has a matching entry in `sdk/api.d.ts`.
+Adding a module requires 5 touch-points — see `agents/developer.md`.
+
+| Module | Permission | Keyring backend | Status |
+|---|---|---|---|
+| `fs` | `fs` | — | stub |
+| `shell` | `shell` | — | stub |
+| `notify` | — | — | stub |
+| `ui` | `ui` | — | stub |
+| `store` | `store` | — | stub |
+| `keyboard` | `keyboard` | — | stub |
+| `secure_store` | `secure-store` | Windows Credential Manager / GNOME SecretService / macOS Keychain | **real** |
+
+`secure_store` uses the `keyring` crate (`v3`, features `windows-native apple-native linux-native`).
+All other modules are stubs awaiting `deno_core` runtime integration.
+
+## 8. CLI Surface
 
 Local utility commands:
 
@@ -151,13 +169,13 @@ Daemon control commands:
 - `daemon verify`
 - `daemon shutdown`
 
-## 7. Cross-Platform Strategy
+## 9. Cross-Platform Strategy
 
 - Rust host binaries for Windows/macOS/Linux.
 - PowerShell scripts as the default cross-platform scripting path (`pwsh`).
 - Bash variants retained for shell-native environments.
 
-## 8. Verification
+## 10. Verification
 
 Primary checks:
 
@@ -179,7 +197,21 @@ Release packaging:
 
 - `./scripts/build-release.ps1` builds `copperd`, creates `dist/release/copper-<host-triple>/` with `extensions/`, and publishes per-extension archives in `extensions-published/`.
 
-## 9. Known Gaps vs Full Target Architecture
+## 11. Design Invariants
+
+These must not be broken without a deliberate versioning decision:
+
+| Invariant | Reason |
+|---|---|
+| Manifest is source of truth for all extension metadata | Schema validation is the only safety net for AI-authored extensions |
+| Schema URL pinned in every manifest | Version drift breaks existing extensions silently |
+| All state flows through `state_store` | No extension writes config/status files directly |
+| HTTP control plane is loopback-only with per-session auth token | No remote attack surface |
+| Trigger preparation runs in a subprocess, not in-process | Failures in runtime planning cannot crash the daemon |
+| Cross-platform build must pass on Windows, macOS, and Linux | Platform-specific code goes behind `#[cfg]` or target sections in Cargo.toml |
+| No mandatory GUI dependency in headless build path | CI must build without a display server |
+
+## 12. Known Gaps vs Full Target Architecture
 
 - `deno_core` is not embedded yet (the runtime boundary and ABI exist, but trigger preparation still uses a dry-run worker rather than executing TypeScript).
 - On-demand Tauri renderer is not wired yet.
