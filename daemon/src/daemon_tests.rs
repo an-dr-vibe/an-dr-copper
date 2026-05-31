@@ -1,12 +1,8 @@
 mod tests {
     use super::{
-        copper_data_root_from_home, execute_windows_display_action_with_runner_in, expand_home,
-        extension_config_path_in, extension_status_path_in, handle_request,
-        load_torrent_monitor_config, load_torrent_monitor_config_from,
-        maybe_increment_session_counter, maybe_increment_session_counter_in,
-        next_available_destination, parse_http_response, read_json_object, request_url,
-        run_torrent_move, send_request, split_name_and_extension, write_desktop_torrent_status_in,
-        write_json_object, DaemonConfig, DaemonState, IpcRequest, TorrentMonitorConfig,
+        execute_windows_display_action_with_runner_in, extension_config_path_in,
+        extension_status_path_in, handle_request, parse_http_response, read_json_object,
+        request_url, send_request, write_json_object, DaemonConfig, DaemonState, IpcRequest,
         DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS, WINDOWS_DISPLAY_MANAGER_ID,
     };
     use crate::daemon_service::DaemonControlService;
@@ -150,71 +146,6 @@ mod tests {
     }
 
     #[test]
-    fn trigger_session_counter_includes_incremented_count() {
-        let temp = tempdir().expect("tempdir");
-        let status_home = temp.path().join("home");
-        let data_root = copper_data_root_from_home(&status_home);
-        let count1 = maybe_increment_session_counter_in(&data_root, "session-counter", "increment")
-            .expect("increment")
-            .expect("count");
-        let count2 = maybe_increment_session_counter_in(&data_root, "session-counter", "increment")
-            .expect("increment again")
-            .expect("count again");
-        let skipped = maybe_increment_session_counter_in(&data_root, "session-counter", "other")
-            .expect("skip");
-        assert_eq!(count1, 1);
-        assert_eq!(count2, 2);
-        assert!(skipped.is_none());
-    }
-
-    #[test]
-    fn load_torrent_monitor_config_reads_polling_fields() {
-        let temp = tempdir().expect("tempdir");
-        let data_root = temp.path().join(".Copper/extensions");
-        let ext_dir = data_root.join("desktop-torrent-organizer");
-        fs::create_dir_all(&ext_dir).expect("create extension data dir");
-        fs::write(
-            ext_dir.join("data.json"),
-            r#"{
-              "autoRun": false,
-              "pollIntervalSeconds": 12,
-              "desktopFolder": "/tmp/desktop",
-              "torrentsFolder": "/tmp/desktop/Torrents"
-            }"#,
-        )
-        .expect("write config");
-
-        let cfg = load_torrent_monitor_config_from(&data_root).expect("load");
-        assert!(!cfg.enabled);
-        assert_eq!(cfg.poll_interval.as_secs(), 12);
-        assert_eq!(cfg.desktop_folder, PathBuf::from("/tmp/desktop"));
-        assert_eq!(cfg.torrents_folder, PathBuf::from("/tmp/desktop/Torrents"));
-    }
-
-    #[test]
-    fn run_torrent_move_moves_only_torrent_files() {
-        let temp = tempdir().expect("tempdir");
-        let desktop = temp.path().join("Desktop");
-        let torrents = desktop.join("Torrents");
-        fs::create_dir_all(&desktop).expect("create desktop");
-        fs::write(desktop.join("movie.torrent"), "data").expect("write torrent");
-        fs::write(desktop.join("note.txt"), "data").expect("write non-torrent");
-
-        let cfg = TorrentMonitorConfig {
-            enabled: true,
-            poll_interval: Duration::from_secs(1),
-            desktop_folder: desktop.clone(),
-            torrents_folder: torrents.clone(),
-        };
-        let report = run_torrent_move(&cfg).expect("run move");
-        assert_eq!(report.found, 1);
-        assert_eq!(report.moved, 1);
-        assert_eq!(report.failed, 0);
-        assert!(torrents.join("movie.torrent").exists());
-        assert!(desktop.join("note.txt").exists());
-    }
-
-    #[test]
     fn list_request_returns_permissions_as_strings() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
@@ -246,30 +177,6 @@ mod tests {
         let response = handle_request(&mut state, IpcRequest::Shutdown, &running);
         assert!(response.ok);
         assert!(!running.load(std::sync::atomic::Ordering::Relaxed));
-    }
-
-    #[test]
-    fn split_name_and_extension_handles_edge_cases() {
-        assert_eq!(
-            split_name_and_extension("movie.torrent"),
-            ("movie", "torrent")
-        );
-        assert_eq!(split_name_and_extension("archive"), ("archive", ""));
-        assert_eq!(split_name_and_extension(".hidden"), (".hidden", ""));
-    }
-
-    #[test]
-    fn next_available_destination_uses_suffix_on_collision() {
-        let temp = tempdir().expect("tempdir");
-        let target = temp.path();
-        fs::write(target.join("movie.torrent"), "existing").expect("write existing");
-        fs::write(target.join("movie-1.torrent"), "existing").expect("write existing suffix");
-
-        let candidate = next_available_destination(target, "movie.torrent".into());
-        assert_eq!(
-            candidate.file_name().and_then(|v| v.to_str()),
-            Some("movie-2.torrent")
-        );
     }
 
     #[test]
@@ -305,16 +212,10 @@ mod tests {
     #[test]
     fn extension_storage_paths_are_scoped_to_extension() {
         let root = PathBuf::from("C:/tmp/.Copper/extensions");
-        let config_path = extension_config_path_in(&root, "desktop-torrent-organizer");
-        let status_path = extension_status_path_in(&root, "desktop-torrent-organizer");
-        assert_eq!(
-            config_path,
-            root.join("desktop-torrent-organizer").join("config.json")
-        );
-        assert_eq!(
-            status_path,
-            root.join("desktop-torrent-organizer").join("status.json")
-        );
+        let config_path = extension_config_path_in(&root, "alpha-ext");
+        let status_path = extension_status_path_in(&root, "alpha-ext");
+        assert_eq!(config_path, root.join("alpha-ext").join("config.json"));
+        assert_eq!(status_path, root.join("alpha-ext").join("status.json"));
     }
 
     #[test]
@@ -346,119 +247,6 @@ mod tests {
         );
         assert!(!response.ok);
         assert!(response.message.contains("not found"));
-    }
-
-    #[test]
-    fn run_torrent_move_handles_missing_desktop_folder() {
-        let temp = tempdir().expect("tempdir");
-        let cfg = TorrentMonitorConfig {
-            enabled: true,
-            poll_interval: Duration::from_secs(1),
-            desktop_folder: temp.path().join("does-not-exist"),
-            torrents_folder: temp.path().join("Torrents"),
-        };
-
-        let report = run_torrent_move(&cfg).expect("missing folder should not fail");
-        assert_eq!(report.found, 0);
-        assert_eq!(report.moved, 0);
-        assert_eq!(report.failed, 0);
-    }
-
-    #[test]
-    fn run_torrent_move_errors_when_desktop_is_not_directory() {
-        let temp = tempdir().expect("tempdir");
-        let desktop_file = temp.path().join("Desktop");
-        fs::write(&desktop_file, "not a dir").expect("write desktop file");
-        let cfg = TorrentMonitorConfig {
-            enabled: true,
-            poll_interval: Duration::from_secs(1),
-            desktop_folder: desktop_file,
-            torrents_folder: temp.path().join("Torrents"),
-        };
-        let err = run_torrent_move(&cfg).expect_err("must fail for non-directory desktop");
-        assert!(
-            err.kind() == std::io::ErrorKind::NotADirectory
-                || err.kind() == std::io::ErrorKind::Other
-        );
-    }
-
-    #[test]
-    fn next_available_destination_handles_names_without_extension() {
-        let temp = tempdir().expect("tempdir");
-        let target = temp.path();
-        fs::write(target.join("README"), "existing").expect("write existing");
-
-        let candidate = next_available_destination(target, "README".into());
-        assert_eq!(
-            candidate.file_name().and_then(|v| v.to_str()),
-            Some("README-1")
-        );
-    }
-
-    #[test]
-    fn next_available_destination_uses_timestamp_fallback_after_many_collisions() {
-        let temp = tempdir().expect("tempdir");
-        let target = temp.path();
-        fs::write(target.join("movie.torrent"), "existing").expect("seed");
-        for idx in 1..=9999u32 {
-            fs::write(target.join(format!("movie-{idx}.torrent")), "existing")
-                .expect("seed suffix");
-        }
-
-        let candidate = next_available_destination(target, "movie.torrent".into());
-        let name = candidate
-            .file_name()
-            .and_then(|n| n.to_str())
-            .expect("utf-8 file name")
-            .to_string();
-        assert!(name.starts_with("movie-"));
-        assert!(name.ends_with(".torrent"));
-        assert!(!target.join(&name).exists());
-    }
-
-    #[test]
-    fn write_desktop_torrent_status_persists_scan_fields() {
-        let temp = tempdir().expect("tempdir");
-        let data_root = temp.path().join(".Copper/extensions");
-        let config = TorrentMonitorConfig {
-            enabled: true,
-            poll_interval: Duration::from_secs(5),
-            desktop_folder: temp.path().join("Desktop"),
-            torrents_folder: temp.path().join("Desktop/Torrents"),
-        };
-        let report = super::TorrentMoveReport {
-            found: 3,
-            moved: 2,
-            failed: 1,
-        };
-
-        write_desktop_torrent_status_in(&data_root, &config, report).expect("write status");
-        let stored = read_json_object(&extension_status_path_in(
-            &data_root,
-            "desktop-torrent-organizer",
-        ))
-        .expect("read status");
-        assert_eq!(stored.get("autoRun").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(
-            stored.get("pollIntervalSeconds").and_then(|v| v.as_u64()),
-            Some(5)
-        );
-        assert_eq!(
-            stored.get("lastScanFound").and_then(|v| v.as_u64()),
-            Some(3)
-        );
-        assert_eq!(
-            stored.get("lastScanMoved").and_then(|v| v.as_u64()),
-            Some(2)
-        );
-        assert_eq!(
-            stored.get("lastScanFailed").and_then(|v| v.as_u64()),
-            Some(1)
-        );
-        assert!(stored
-            .get("lastMoveUnix")
-            .and_then(|v| v.as_u64())
-            .is_some());
     }
 
     fn free_addr() -> String {
@@ -521,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn trigger_request_session_counter_includes_count_payload() {
+    fn trigger_request_session_counter_succeeds() {
         let temp = tempdir().expect("tempdir");
         write_extension_with_action(temp.path(), "session-counter", "increment");
         let mut state = DaemonState::load(temp.path()).expect("state");
@@ -536,7 +324,10 @@ mod tests {
         );
         assert!(response.ok);
         let data = response.data.expect("payload");
-        assert!(data.get("sessionCount").and_then(|v| v.as_u64()).is_some());
+        assert_eq!(
+            data.get("actionId").and_then(|v| v.as_str()),
+            Some("increment")
+        );
     }
 
     #[test]
@@ -689,111 +480,4 @@ mod tests {
         assert!(response.message.contains("manifest"));
     }
 
-    #[test]
-    fn maybe_increment_session_counter_handles_missing_or_present_home() {
-        match maybe_increment_session_counter("not-session-counter", "noop") {
-            Ok(value) => assert!(value.is_none()),
-            Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
-        }
-    }
-
-    #[test]
-    fn load_torrent_monitor_config_handles_missing_or_present_home() {
-        match load_torrent_monitor_config() {
-            Ok(cfg) => {
-                let secs = cfg.poll_interval.as_secs();
-                assert!((1..=3600).contains(&secs));
-            }
-            Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
-        }
-    }
-
-    #[test]
-    fn expand_home_handles_tilde_variants() {
-        let expanded_home = expand_home("~");
-        let expanded_child = expand_home("~/Desktop");
-        if let Some(home) = dirs::home_dir() {
-            assert_eq!(expanded_home, home);
-            assert_eq!(expanded_child, home.join("Desktop"));
-        } else {
-            assert_eq!(expanded_home, PathBuf::from("~"));
-            assert_eq!(expanded_child, PathBuf::from("~/Desktop"));
-        }
-
-        let literal = expand_home("C:/tmp/Desktop");
-        assert_eq!(literal, PathBuf::from("C:/tmp/Desktop"));
-    }
-
-    #[test]
-    fn write_desktop_torrent_status_skips_last_move_when_nothing_moved() {
-        let temp = tempdir().expect("tempdir");
-        let data_root = temp.path().join(".Copper/extensions");
-        let config = TorrentMonitorConfig {
-            enabled: true,
-            poll_interval: Duration::from_secs(5),
-            desktop_folder: temp.path().join("Desktop"),
-            torrents_folder: temp.path().join("Desktop/Torrents"),
-        };
-        let report = super::TorrentMoveReport {
-            found: 1,
-            moved: 0,
-            failed: 1,
-        };
-
-        write_desktop_torrent_status_in(&data_root, &config, report).expect("write status");
-        let stored = read_json_object(&extension_status_path_in(
-            &data_root,
-            "desktop-torrent-organizer",
-        ))
-        .expect("read status");
-        assert!(stored.get("lastMoveUnix").is_none());
-    }
-
-    #[test]
-    fn load_torrent_monitor_config_prefers_config_file_and_falls_back_to_legacy_data_file() {
-        let temp = tempdir().expect("tempdir");
-        let data_root = temp.path().join(".Copper/extensions");
-        let ext_dir = data_root.join("desktop-torrent-organizer");
-        fs::create_dir_all(&ext_dir).expect("create extension dir");
-
-        fs::write(
-            ext_dir.join("data.json"),
-            r#"{
-                "desktopFolder": "D:/LegacyDesktop",
-                "torrentsFolder": "D:/LegacyDesktop/Torrents",
-                "autoRun": false,
-                "pollIntervalSeconds": 33
-            }"#,
-        )
-        .expect("write legacy data");
-
-        let legacy = load_torrent_monitor_config_from(&data_root).expect("load legacy");
-        assert_eq!(legacy.desktop_folder, PathBuf::from("D:/LegacyDesktop"));
-        assert_eq!(
-            legacy.torrents_folder,
-            PathBuf::from("D:/LegacyDesktop/Torrents")
-        );
-        assert!(!legacy.enabled);
-        assert_eq!(legacy.poll_interval.as_secs(), 33);
-
-        fs::write(
-            ext_dir.join("config.json"),
-            r#"{
-                "desktopFolder": "D:/ConfigDesktop",
-                "torrentsFolder": "D:/ConfigDesktop/Torrents",
-                "autoRun": true,
-                "pollIntervalSeconds": 9
-            }"#,
-        )
-        .expect("write config");
-
-        let config = load_torrent_monitor_config_from(&data_root).expect("load config");
-        assert_eq!(config.desktop_folder, PathBuf::from("D:/ConfigDesktop"));
-        assert_eq!(
-            config.torrents_folder,
-            PathBuf::from("D:/ConfigDesktop/Torrents")
-        );
-        assert!(config.enabled);
-        assert_eq!(config.poll_interval.as_secs(), 9);
-    }
 }

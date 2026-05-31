@@ -372,32 +372,21 @@ fn cmd_trigger(dir: &Path, id: &str, action: Option<&str>) -> Result<(), CliErro
         .map_err(CliError::Message)?;
 
     println!(
-        "Trigger prepared: extension='{}' action='{}'",
-        prepared.extension_id, prepared.action_id
+        "Trigger: extension='{}' action='{}' permissions={}",
+        prepared.extension_id,
+        prepared.action_id,
+        if prepared.permissions.is_empty() {
+            "none".to_string()
+        } else {
+            prepared.permissions.join(",")
+        }
     );
-    println!(
-        "Runtime: {} (isolated={})",
-        prepared.runtime.executor, prepared.runtime.isolated
-    );
-    println!("Permissions: {}", prepared.permissions.join(","));
-    println!("Script:");
-    println!("{}", prepared.script);
-    if let Some(count) = prepared
-        .extras
-        .get("sessionCount")
-        .and_then(|value| value.as_u64())
-    {
-        println!("Session counter: {count}");
-    }
-    if let Some(host_execution) = prepared.extras.get("hostExecution") {
-        println!("Host execution:");
-        println!(
-            "{}",
-            serde_json::to_string_pretty(host_execution).map_err(|err| CliError::Message(
-                format!("failed to render host execution: {err}")
-            ))?
-        );
-    }
+
+    engine
+        .execute_trigger(&prepared, &serde_json::json!({}))
+        .map_err(CliError::Message)?;
+
+    println!("Done: '{}'", prepared.extension_id);
     Ok(())
 }
 

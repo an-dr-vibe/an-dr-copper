@@ -30,11 +30,7 @@ pub use transport::send_request;
 use transport::{parse_http_response, request_url};
 
 #[cfg(test)]
-use crate::host_extensions::{
-    DESKTOP_TORRENT_ORGANIZER_ID, SESSION_COUNTER_ID, WINDOWS_DISPLAY_MANAGER_ID,
-};
-#[cfg(test)]
-use std::ffi::OsString;
+use crate::host_extensions::WINDOWS_DISPLAY_MANAGER_ID;
 #[cfg(test)]
 use std::fs;
 #[cfg(test)]
@@ -42,8 +38,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:4765";
 pub const DEFAULT_RELOAD_INTERVAL_MS: u64 = 3_000;
-#[cfg(test)]
-const SESSION_COUNTER_INCREMENT_ACTION: &str = "increment";
+
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     pub extensions_dir: PathBuf,
@@ -123,23 +118,6 @@ struct DaemonState {
     auth_token: Option<String>,
     state_store: ExtensionStateStore,
     host_extensions: HostExtensionRegistry,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone)]
-struct TorrentMonitorConfig {
-    enabled: bool,
-    poll_interval: Duration,
-    desktop_folder: PathBuf,
-    torrents_folder: PathBuf,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, Default)]
-struct TorrentMoveReport {
-    found: u64,
-    moved: u64,
-    failed: u64,
 }
 
 impl DaemonState {
@@ -269,43 +247,15 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             let _ = state.reload()?;
             scheduler.mark_reload();
         }
-        scheduler.tick_background(&state.host_extensions, &state.state_store, &state.core_config);
+        scheduler.tick_background(
+            &state.host_extensions,
+            &state.state_store,
+            &state.core_config,
+        );
     }
 
     logging::info("Daemon stopped");
     Ok(())
-}
-
-#[cfg(test)]
-pub fn maybe_increment_session_counter(
-    extension_id: &str,
-    action_id: &str,
-) -> Result<Option<u64>, std::io::Error> {
-    let data_root = copper_data_root()?;
-    maybe_increment_session_counter_in(&data_root, extension_id, action_id)
-}
-
-#[cfg(test)]
-fn maybe_increment_session_counter_in(
-    data_root: &Path,
-    extension_id: &str,
-    action_id: &str,
-) -> Result<Option<u64>, std::io::Error> {
-    if extension_id != SESSION_COUNTER_ID || action_id != SESSION_COUNTER_INCREMENT_ACTION {
-        return Ok(None);
-    }
-
-    fs::create_dir_all(data_root)?;
-    let path = extension_status_path_in(data_root, SESSION_COUNTER_ID);
-
-    let mut status = read_json_object(&path)?;
-    let current = status.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let next = current.saturating_add(1);
-    status["count"] = serde_json::json!(next);
-    status["lastIncrementUnix"] = serde_json::json!(unix_now_secs());
-    status["lastActionId"] = serde_json::json!(SESSION_COUNTER_INCREMENT_ACTION);
-    write_json_object(&path, &status)?;
-    Ok(Some(next))
 }
 
 #[cfg(test)]
@@ -370,181 +320,6 @@ where
 
     write_json_object(&path, &state)?;
     Ok(execution)
-}
-
-#[cfg(test)]
-fn load_torrent_monitor_config() -> Result<TorrentMonitorConfig, std::io::Error> {
-    let data_root = copper_data_root()?;
-    load_torrent_monitor_config_from(&data_root)
-}
-
-#[cfg(test)]
-fn load_torrent_monitor_config_from(
-    data_root: &Path,
-) -> Result<TorrentMonitorConfig, std::io::Error> {
-    let config = load_extension_config_object(data_root, DESKTOP_TORRENT_ORGANIZER_ID)?;
-
-    let enabled = config
-        .get("autoRun")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let poll_secs = config
-        .get("pollIntervalSeconds")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5)
-        .clamp(1, 3600);
-    let desktop_folder = expand_home(
-        config
-            .get("desktopFolder")
-            .and_then(|v| v.as_str())
-            .unwrap_or("~/Desktop"),
-    );
-    let torrents_folder = expand_home(
-        config
-            .get("torrentsFolder")
-            .and_then(|v| v.as_str())
-            .unwrap_or("~/Desktop/Torrents"),
-    );
-
-    Ok(TorrentMonitorConfig {
-        enabled,
-        poll_interval: Duration::from_secs(poll_secs),
-        desktop_folder,
-        torrents_folder,
-    })
-}
-
-#[cfg(test)]
-fn run_torrent_move(config: &TorrentMonitorConfig) -> Result<TorrentMoveReport, std::io::Error> {
-    fs::create_dir_all(&config.torrents_folder)?;
-
-    let mut report = TorrentMoveReport::default();
-    let read_dir = match fs::read_dir(&config.desktop_folder) {
-        Ok(read_dir) => read_dir,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(report),
-        Err(err) => return Err(err),
-    };
-
-    for entry in read_dir {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let file_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name,
-            None => continue,
-        };
-        if !file_name.to_ascii_lowercase().ends_with(".torrent") {
-            continue;
-        }
-
-        report.found = report.found.saturating_add(1);
-        let destination = next_available_destination(&config.torrents_folder, entry.file_name());
-        match fs::rename(&path, &destination) {
-            Ok(()) => {
-                report.moved = report.moved.saturating_add(1);
-            }
-            Err(_) => match fs::copy(&path, &destination).and_then(|_| fs::remove_file(&path)) {
-                Ok(()) => {
-                    report.moved = report.moved.saturating_add(1);
-                }
-                Err(_) => {
-                    report.failed = report.failed.saturating_add(1);
-                }
-            },
-        }
-    }
-    Ok(report)
-}
-
-#[cfg(test)]
-fn next_available_destination(target_dir: &Path, file_name: OsString) -> PathBuf {
-    let original = target_dir.join(&file_name);
-    if !original.exists() {
-        return original;
-    }
-
-    let file_name_lossy = file_name.to_string_lossy();
-    let (base, ext) = split_name_and_extension(&file_name_lossy);
-    for idx in 1..=9999u32 {
-        let candidate_name = if ext.is_empty() {
-            format!("{base}-{idx}")
-        } else {
-            format!("{base}-{idx}.{ext}")
-        };
-        let candidate = target_dir.join(candidate_name);
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    target_dir.join(format!(
-        "{}-{}.{}",
-        base,
-        unix_now_secs(),
-        if ext.is_empty() { "torrent" } else { ext }
-    ))
-}
-
-#[cfg(test)]
-fn split_name_and_extension(name: &str) -> (&str, &str) {
-    match name.rsplit_once('.') {
-        Some((base, ext)) if !base.is_empty() => (base, ext),
-        _ => (name, ""),
-    }
-}
-
-#[cfg(test)]
-fn write_desktop_torrent_status_in(
-    data_root: &Path,
-    config: &TorrentMonitorConfig,
-    report: TorrentMoveReport,
-) -> Result<(), std::io::Error> {
-    fs::create_dir_all(data_root)?;
-    let path = extension_status_path_in(data_root, DESKTOP_TORRENT_ORGANIZER_ID);
-
-    let mut status = read_json_object(&path)?;
-    status["autoRun"] = serde_json::json!(config.enabled);
-    status["pollIntervalSeconds"] = serde_json::json!(config.poll_interval.as_secs());
-    status["desktopFolder"] = serde_json::json!(config.desktop_folder.display().to_string());
-    status["torrentsFolder"] = serde_json::json!(config.torrents_folder.display().to_string());
-    status["lastScanUnix"] = serde_json::json!(unix_now_secs());
-    status["lastScanFound"] = serde_json::json!(report.found);
-    status["lastScanMoved"] = serde_json::json!(report.moved);
-    status["lastScanFailed"] = serde_json::json!(report.failed);
-    if report.moved > 0 {
-        status["lastMoveUnix"] = serde_json::json!(unix_now_secs());
-    }
-
-    write_json_object(&path, &status)
-}
-
-#[cfg(test)]
-fn expand_home(raw: &str) -> PathBuf {
-    if let Some(stripped) = raw.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
-    }
-    if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home;
-        }
-    }
-    PathBuf::from(raw)
-}
-
-#[cfg(test)]
-fn copper_data_root() -> Result<PathBuf, std::io::Error> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "home directory not available")
-    })?;
-    Ok(copper_data_root_from_home(&home))
-}
-
-#[cfg(test)]
-fn copper_data_root_from_home(home: &Path) -> PathBuf {
-    home.join(".Copper").join("extensions")
 }
 
 #[cfg(test)]

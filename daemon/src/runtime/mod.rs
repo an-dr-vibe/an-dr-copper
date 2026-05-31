@@ -1,3 +1,5 @@
+pub mod deno_runner;
+
 use crate::descriptor::Action;
 use crate::execution::permissions_as_strings;
 use crate::extension::Extension;

@@ -1,44 +1,64 @@
+// Trigger: copperd daemon trigger windows-display-manager --action <action-id>
+// Actions: status | toggle-taskbar-autohide | set-taskbar-autohide | set-resolution | set-scale
+
 import type { Api } from "@host/api";
 
 type Inputs = Record<string, unknown>;
 
-function readAction(inputs: Inputs): string {
-  return String(inputs.action ?? "status");
-}
-
-function summarize(inputs: Inputs) {
-  return {
-    taskbarAutoHide: Boolean(inputs.taskbarAutoHide ?? false),
-    resolutionMode: String(inputs.resolutionMode ?? "1920x1080@60"),
-    scalePercent: Number(inputs.scalePercent ?? 100)
-  };
-}
-
 export default function (api: Api) {
   return {
     async onTrigger(inputs: Inputs = {}) {
-      const action = readAction(inputs);
-      const requested = summarize(inputs);
+      const action = String(inputs.action ?? "status");
 
-      await api.ui.show({
-        type: "detail",
-        title: "Windows Display Manager",
-        content: {
-          extensionId: "windows-display-manager",
-          supportedActions: [
-            "status",
-            "toggle-taskbar-autohide",
-            "set-taskbar-autohide",
-            "set-resolution",
-            "set-scale"
-          ],
-          requestedAction: action,
-          requested,
-          runFromDaemon: "copperd daemon trigger windows-display-manager --action <action-id>",
-          note: "Daemon host API executes taskbar/resolution/scale actions, stores config and status under ~/.Copper/extensions/windows-display-manager/, and loads the tray icon from manifest tray metadata."
+      if (!api.windows) {
+        await api.notify("windows-display-manager: not available on this platform");
+        return;
+      }
+
+      const display = api.windows.display;
+
+      switch (action) {
+        case "status": {
+          const s = await display.status();
+          await api.notify(
+            `Display ${s.resolution.width}x${s.resolution.height}@${s.resolution.refreshRate}Hz` +
+              ` | Scale ${s.scale.currentPercent}%` +
+              ` | Taskbar auto-hide: ${s.taskbarAutoHide}`
+          );
+          break;
         }
-      });
-      await api.notify(`windows-display-manager request queued: ${action}`);
-    }
+        case "toggle-taskbar-autohide": {
+          const r = await display.toggleTaskbarAutoHide();
+          await api.notify(
+            `Taskbar auto-hide: ${r.taskbarAutoHide ? "enabled" : "disabled"}`
+          );
+          break;
+        }
+        case "set-taskbar-autohide": {
+          const autoHide = Boolean(inputs.autoHide ?? true);
+          const r = await display.setTaskbarAutoHide(autoHide);
+          await api.notify(
+            `Taskbar auto-hide set to: ${r.taskbarAutoHide ? "enabled" : "disabled"}`
+          );
+          break;
+        }
+        case "set-resolution": {
+          const width = Number(inputs.width ?? 1920);
+          const height = Number(inputs.height ?? 1080);
+          const refreshRate = Number(inputs.refreshRate ?? 60);
+          await display.setResolution(width, height, refreshRate);
+          await api.notify(`Resolution set to ${width}x${height}@${refreshRate}Hz`);
+          break;
+        }
+        case "set-scale": {
+          const scalePercent = Number(inputs.scalePercent ?? 100);
+          await display.setScale(scalePercent);
+          await api.notify(`Display scale set to ${scalePercent}%`);
+          break;
+        }
+        default:
+          await api.notify(`windows-display-manager: unknown action "${action}"`);
+      }
+    },
   };
 }

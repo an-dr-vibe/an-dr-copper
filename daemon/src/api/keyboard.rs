@@ -17,7 +17,12 @@ pub fn normalize_combo(combo: &str) -> KeyCombo {
         .copied()
         .filter(|p| MODIFIER_ORDER.contains(p))
         .collect();
-    mods.sort_by_key(|m| MODIFIER_ORDER.iter().position(|o| o == m).unwrap_or(usize::MAX));
+    mods.sort_by_key(|m| {
+        MODIFIER_ORDER
+            .iter()
+            .position(|o| o == m)
+            .unwrap_or(usize::MAX)
+    });
 
     let final_key = parts
         .iter()
@@ -59,9 +64,7 @@ pub fn key_label(name: &str) -> String {
         "arrow_down" => "Arrow Down".to_string(),
         "arrow_left" => "Arrow Left".to_string(),
         "arrow_right" => "Arrow Right".to_string(),
-        name if name.starts_with('f') && name[1..].parse::<u8>().is_ok() => {
-            name.to_uppercase()
-        }
+        name if name.starts_with('f') && name[1..].parse::<u8>().is_ok() => name.to_uppercase(),
         name => {
             let mut chars = name.chars();
             match chars.next() {

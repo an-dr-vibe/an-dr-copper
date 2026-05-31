@@ -1,6 +1,6 @@
 use crate::config_ui::DEFAULT_DAEMON_UI_BIND;
 use crate::execution::{permissions_as_strings, ExecutionEngine};
-use crate::extension::{Extension, Registry};
+use crate::extension::Registry;
 use crate::host_extensions::HostExtensionRegistry;
 use crate::runtime::default_runtime_adapter;
 use crate::state_store::ExtensionStateStore;
@@ -91,17 +91,10 @@ impl<'a> DaemonControlService<'a> {
             .registry
             .get(id)
             .ok_or_else(|| format!("extension '{id}' not found"))?;
-        self.prepare_trigger(ext, action)
-    }
-
-    fn prepare_trigger(
-        &self,
-        extension: &Extension,
-        action: Option<&str>,
-    ) -> Result<Value, String> {
         let runtime = default_runtime_adapter().map_err(|err| err.to_string())?;
         let engine = ExecutionEngine::new(runtime.as_ref(), self.host_extensions, self.state_store);
-        let prepared = engine.prepare_trigger(extension, action)?;
+        let prepared = engine.prepare_trigger(ext, action)?;
+        engine.execute_trigger(&prepared, &serde_json::json!({}))?;
         serde_json::to_value(prepared).map_err(|err| err.to_string())
     }
 }

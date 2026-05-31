@@ -1,0 +1,281 @@
+use crate::api;
+use serde_json::Value;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+
+const BRIDGE_TS: &str = include_str!("../../../sdk/bridge.ts");
+
+pub fn find_deno() -> Option<PathBuf> {
+    let locator = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
+    if let Ok(output) = Command::new(locator).arg("deno").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout);
+            let first = path.lines().next().unwrap_or("").trim();
+            if !first.is_empty() {
+                let p = PathBuf::from(first);
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    // Fallback: ~/.deno/bin/deno[.exe]
+    if let Some(home) = dirs::home_dir() {
+        let name = if cfg!(target_os = "windows") {
+            "deno.exe"
+        } else {
+            "deno"
+        };
+        let p = home.join(".deno").join("bin").join(name);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+pub fn execute_extension(
+    extension_id: &str,
+    main_ts_path: &str,
+    store_json_path: &str,
+    inputs: &Value,
+) -> Result<(), String> {
+    let deno =
+        find_deno().ok_or_else(|| "deno not found; install from https://deno.land".to_string())?;
+
+    // Write the embedded bridge to a temp file so Deno can run it.
+    let bridge_path =
+        std::env::temp_dir().join(format!("copper-bridge-{}.ts", rand::random::<u64>()));
+    std::fs::write(&bridge_path, BRIDGE_TS)
+        .map_err(|e| format!("failed to write bridge.ts: {e}"))?;
+
+    let inputs_json = serde_json::to_string(inputs).unwrap_or_else(|_| "{}".to_string());
+
+    let mut child = Command::new(&deno)
+        .args(["run", "--no-check", "--allow-all"])
+        .arg(&bridge_path)
+        .env("COPPER_EXTENSION_ID", extension_id)
+        .env("COPPER_MAIN_TS", main_ts_path)
+        .env("COPPER_STORE_PATH", store_json_path)
+        .env("COPPER_INPUTS", &inputs_json)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("failed to spawn deno: {e}"))?;
+
+    let result = drive_extension(&mut child, extension_id, store_json_path);
+    let _ = std::fs::remove_file(&bridge_path);
+    result
+}
+
+fn drive_extension(child: &mut Child, extension_id: &str, store_path: &str) -> Result<(), String> {
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "no stdin handle".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "no stdout handle".to_string())?;
+
+    let reader = BufReader::new(stdout);
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("read error: {e}"))?;
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+
+        let msg: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Terminal signals from the extension
+        if msg.get("_done").and_then(|v| v.as_bool()).unwrap_or(false) {
+            break;
+        }
+        if let Some(err) = msg.get("_error").and_then(|v| v.as_str()) {
+            let _ = child.wait();
+            return Err(format!("extension error: {err}"));
+        }
+
+        // Dispatch JSON-RPC call
+        let id = msg.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        let params = msg
+            .get("params")
+            .cloned()
+            .unwrap_or(Value::Object(Default::default()));
+
+        let response_value = match dispatch_api(method, &params, extension_id, store_path) {
+            Ok(v) => serde_json::json!({ "id": id, "result": v }),
+            Err(e) => serde_json::json!({ "id": id, "error": e }),
+        };
+
+        let response_line = serde_json::to_string(&response_value).unwrap() + "\n";
+        if stdin.write_all(response_line.as_bytes()).is_err() {
+            break;
+        }
+        let _ = stdin.flush();
+    }
+
+    drop(stdin);
+    let _ = child.wait();
+    Ok(())
+}
+
+fn dispatch_api(
+    method: &str,
+    params: &Value,
+    _extension_id: &str,
+    store_path: &str,
+) -> Result<Value, String> {
+    match method {
+        "fs.list" => {
+            let path = params["path"].as_str().unwrap_or("");
+            let entries = api::fs::list(path);
+            serde_json::to_value(&entries).map_err(|e| e.to_string())
+        }
+        "fs.move" => {
+            let src = params["src"].as_str().unwrap_or("");
+            let dst = params["dst"].as_str().unwrap_or("");
+            api::fs::move_file(src, dst)
+                .map(|_| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "fs.delete" => {
+            let path = params["path"].as_str().unwrap_or("");
+            api::fs::delete(path)
+                .map(|_| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "shell.run" => {
+            let cmd = params["cmd"].as_str().unwrap_or("");
+            let args: Vec<String> = params["args"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let r = api::shell::run(cmd, &args);
+            Ok(serde_json::json!({
+                "code": r.code,
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+            }))
+        }
+        "shell.which" => {
+            let binary = params["binary"].as_str().unwrap_or("");
+            Ok(api::shell::which(binary)
+                .map(Value::String)
+                .unwrap_or(Value::Null))
+        }
+        "notify" => {
+            let message = params["message"].as_str().unwrap_or("");
+            api::notify::notify(message);
+            Ok(Value::Null)
+        }
+        "store.get" => {
+            let key = params["key"].as_str().unwrap_or("");
+            Ok(api::store::get(store_path, key).unwrap_or(Value::Null))
+        }
+        "store.set" => {
+            let key = params["key"].as_str().unwrap_or("");
+            let value = params["value"].clone();
+            api::store::set(store_path, key, value)
+                .map(|_| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "ui.show" | "ui.update" => Ok(Value::Null),
+        "keyboard.typeText" => {
+            let text = params["text"].as_str().unwrap_or("");
+            api::keyboard::type_text(text);
+            Ok(Value::Null)
+        }
+        "keyboard.sendKey" => {
+            let key = params["key"].as_str().unwrap_or("");
+            api::keyboard::send_key(key);
+            Ok(Value::Null)
+        }
+        "keyboard.sendCombo" => {
+            let combo = params["combo"].as_str().unwrap_or("");
+            api::keyboard::send_combo(combo);
+            Ok(Value::Null)
+        }
+        "keyboard.normalizeCombo" => {
+            let combo = params["combo"].as_str().unwrap_or("");
+            let r = api::keyboard::normalize_combo(combo);
+            Ok(serde_json::json!({ "combo": r.combo, "label": r.label }))
+        }
+        "secureStore.get" => {
+            let service = params["service"].as_str().unwrap_or("");
+            let key = params["key"].as_str().unwrap_or("");
+            Ok(api::secure_store::get(service, key)
+                .map(Value::String)
+                .unwrap_or(Value::Null))
+        }
+        "secureStore.set" => {
+            let service = params["service"].as_str().unwrap_or("");
+            let key = params["key"].as_str().unwrap_or("");
+            let value = params["value"].as_str().unwrap_or("");
+            api::secure_store::set(service, key, value);
+            Ok(Value::Null)
+        }
+        "secureStore.delete" => {
+            let service = params["service"].as_str().unwrap_or("");
+            let key = params["key"].as_str().unwrap_or("");
+            api::secure_store::delete(service, key);
+            Ok(Value::Null)
+        }
+        m if m.starts_with("windows.display.") => dispatch_windows_display(m, params),
+        unknown => Err(format!("unknown API method: {unknown}")),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn dispatch_windows_display(method: &str, params: &Value) -> Result<Value, String> {
+    let (action_id, config) = match method {
+        "windows.display.status" => ("status", serde_json::json!({})),
+        "windows.display.toggleTaskbarAutoHide" => {
+            ("toggle-taskbar-autohide", serde_json::json!({}))
+        }
+        "windows.display.setTaskbarAutoHide" => {
+            let enabled = params["autoHide"].as_bool().unwrap_or(false);
+            (
+                "set-taskbar-autohide",
+                serde_json::json!({ "enabled": enabled }),
+            )
+        }
+        "windows.display.setResolution" => (
+            "set-resolution",
+            serde_json::json!({
+                "resolutionWidth": params["width"],
+                "resolutionHeight": params["height"],
+                "refreshRate": params["refreshRate"],
+            }),
+        ),
+        "windows.display.setScale" => (
+            "set-scale",
+            serde_json::json!({ "scalePercent": params["scalePercent"] }),
+        ),
+        other => return Err(format!("unknown windows.display method: {other}")),
+    };
+    api::windows_display::execute_action(action_id, &config).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn dispatch_windows_display(method: &str, _params: &Value) -> Result<Value, String> {
+    Err(format!(
+        "{method}: windows.display API is only available on Windows"
+    ))
+}

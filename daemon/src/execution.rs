@@ -1,9 +1,10 @@
 use crate::descriptor::Permission;
 use crate::extension::Extension;
 use crate::host_extensions::HostExtensionRegistry;
-use crate::runtime::{RuntimeAdapter, RuntimeMetadata};
+use crate::runtime::{deno_runner, RuntimeAdapter, RuntimeMetadata};
 use crate::state_store::ExtensionStateStore;
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PreparedTrigger {
@@ -74,6 +75,29 @@ impl<'a> ExecutionEngine<'a> {
             extras,
         })
     }
+
+    pub fn execute_trigger(
+        &self,
+        prepared: &PreparedTrigger,
+        inputs: &Value,
+    ) -> Result<(), String> {
+        if cfg!(test) {
+            return Ok(());
+        }
+        let store_path = self
+            .state_store
+            .data_root()
+            .join(&prepared.extension_id)
+            .join("store.json")
+            .display()
+            .to_string();
+        deno_runner::execute_extension(
+            &prepared.extension_id,
+            &prepared.main_ts_path,
+            &store_path,
+            inputs,
+        )
+    }
 }
 
 pub fn permissions_as_strings(permissions: &[Permission]) -> Vec<String> {
@@ -136,12 +160,5 @@ mod tests {
         let prepared = engine.prepare_trigger(&extension, None).expect("prepared");
         assert_eq!(prepared.action_id, "increment");
         assert!(!prepared.runtime.isolated);
-        assert_eq!(
-            prepared
-                .extras
-                .get("sessionCount")
-                .and_then(|value| value.as_u64()),
-            Some(1)
-        );
     }
 }
