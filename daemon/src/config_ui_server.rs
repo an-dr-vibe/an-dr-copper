@@ -276,12 +276,57 @@ pub(super) fn handle_connection(
                 },
             }
         }
+    } else if let Some(rest) = request.path.strip_prefix("/trigger/extension/") {
+        if request.method != HttpMethod::Post {
+            HttpResponse::not_found()
+        } else {
+            let mut parts = rest.splitn(2, '/');
+            let extension_id = parts.next().unwrap_or("");
+            let action_id = parts.next();
+            if extension_id.is_empty() || !state.extension_ids.contains(extension_id) {
+                HttpResponse::not_found()
+            } else {
+                match handle_trigger_extension(state, extension_id, action_id) {
+                    Ok(resp) => resp,
+                    Err(err) => HttpResponse::bad_request(err.to_string()),
+                }
+            }
+        }
     } else {
         HttpResponse::not_found()
     };
 
     write_response(&mut stream, response)?;
     Ok(stop_after)
+}
+
+fn handle_trigger_extension(
+    state: &UiServerState,
+    extension_id: &str,
+    action_id: Option<&str>,
+) -> Result<HttpResponse, UiConfigError> {
+    use crate::execution::ExecutionEngine;
+    use crate::extension::load_runtime_registry;
+    use crate::runtime::default_runtime_adapter;
+
+    let registry = load_runtime_registry(&state.user_extensions_dir)?;
+    let ext = registry
+        .get(extension_id)
+        .ok_or_else(|| UiConfigError::ExtensionNotFound(extension_id.to_string()))?;
+    let runtime =
+        default_runtime_adapter().map_err(|e| UiConfigError::Request(e.to_string()))?;
+    let engine = ExecutionEngine::new(runtime.as_ref(), &state.host_extensions, &state.state_store);
+    let prepared = engine
+        .prepare_trigger(ext, action_id)
+        .map_err(UiConfigError::Request)?;
+    engine
+        .execute_trigger(&prepared, &serde_json::json!({}))
+        .map_err(UiConfigError::Request)?;
+    Ok(HttpResponse::ok_json(&serde_json::json!({
+        "ok": true,
+        "extensionId": prepared.extension_id,
+        "actionId": prepared.action_id,
+    }))?)
 }
 
 fn request_is_authorized(request: &HttpRequest, state: &UiServerState) -> bool {

@@ -198,6 +198,11 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
       contentViewEl.innerHTML = '';
       setStatus('');
 
+      if (currentSection === 'commands') {{
+        renderCommandsPage();
+        return;
+      }}
+
       function coreSections(config) {{
         const disabledExtensions = new Set(Array.isArray(config.disabledExtensions) ? config.disabledExtensions : []);
         const extensionItems = discoverableDescriptors.map(descriptor => ({{

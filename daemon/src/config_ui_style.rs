@@ -105,6 +105,24 @@ pub(super) const CONFIG_UI_STYLE: &str = r#"
       border-radius:10px; background:var(--panel3);
     }}
     .checkbox-item input {{ width:auto; margin-top:3px; }}
+    .command-run-list {{ display:grid; gap:8px; }}
+    .command-run-row {{
+      display:flex; align-items:center; gap:14px; padding:10px 12px;
+      border:1px solid var(--line); border-radius:10px; background:var(--panel3);
+    }}
+    .command-run-info {{ flex:1; min-width:0; }}
+    .command-run-label {{ font-weight:600; }}
+    .command-run-desc {{ color:var(--muted); font-size:13px; margin-top:2px; }}
+    .run-btn {{
+      padding:7px 16px; white-space:nowrap; font-weight:600;
+      border-color:var(--accent); color:var(--accent);
+    }}
+    .run-btn:hover:not(:disabled) {{ background:var(--accent-soft); }}
+    .run-btn:disabled {{ opacity:.55; cursor:not-allowed; }}
+    .run-btn.run-ok {{ border-color:#3d8b5c; color:#3d8b5c; }}
+    .run-status {{ font-size:13px; white-space:nowrap; min-width:70px; }}
+    .run-status.run-ok {{ color:#3d8b5c; }}
+    .run-status.run-error {{ color:#e05c6f; }}
     @media (max-width: 900px) {{
       .layout {{ grid-template-columns:1fr; }}
       .sidebar {{ border-right:none; border-bottom:1px solid var(--line); }}

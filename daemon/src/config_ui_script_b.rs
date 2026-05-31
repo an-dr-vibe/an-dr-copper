@@ -5,7 +5,104 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
     function renderNav() {{
       navEl.innerHTML = '';
       navEl.appendChild(createNavButton('core', 'Copper'));
+      navEl.appendChild(createNavButton('commands', 'Commands'));
       descriptors.forEach(d => navEl.appendChild(createNavButton(`ext:${{d.id}}`, d.name)));
+    }}
+
+    async function runAction(extensionId, actionId) {{
+      const res = await fetch(
+        '/trigger/extension/' + encodeURIComponent(extensionId) + '/' + encodeURIComponent(actionId),
+        {{ method: 'POST', headers: {{ '{UI_AUTH_HEADER}': model.authToken }} }}
+      );
+      if (!res.ok) throw new Error((await res.text()) || 'HTTP ' + res.status);
+      return await res.json();
+    }}
+
+    function renderCommandsPage() {{
+      pageEyebrowEl.textContent = 'System';
+      pageTitleEl.textContent = 'Commands';
+      pageSubEl.textContent = 'Run extension actions directly from the UI.';
+      saveBtn.hidden = true;
+      currentTabs = [];
+      renderTabs([]);
+
+      if (!descriptors.length) {{
+        const card = createCard('No extensions loaded', '');
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No extensions are available. Check your extensions directory.';
+        card.appendChild(empty);
+        contentViewEl.appendChild(card);
+        return;
+      }}
+
+      descriptors.forEach(descriptor => {{
+        const actions = descriptor.actions || [];
+        if (!actions.length) return;
+
+        const card = createCard(descriptor.name, descriptor.id);
+        const list = document.createElement('div');
+        list.className = 'command-run-list';
+
+        actions.forEach(action => {{
+          const row = document.createElement('div');
+          row.className = 'command-run-row';
+
+          const info = document.createElement('div');
+          info.className = 'command-run-info';
+          const labelEl = document.createElement('div');
+          labelEl.className = 'command-run-label';
+          labelEl.textContent = action.label || action.id;
+          info.appendChild(labelEl);
+          if (action.description) {{
+            const descEl = document.createElement('div');
+            descEl.className = 'command-run-desc';
+            descEl.textContent = action.description;
+            info.appendChild(descEl);
+          }}
+
+          const runBtn = document.createElement('button');
+          runBtn.className = 'run-btn';
+          runBtn.textContent = '▶ Run';
+
+          const statusEl = document.createElement('span');
+          statusEl.className = 'run-status';
+
+          runBtn.addEventListener('click', async () => {{
+            runBtn.disabled = true;
+            runBtn.textContent = 'Running…';
+            statusEl.textContent = '';
+            statusEl.className = 'run-status';
+            try {{
+              await runAction(descriptor.id, action.id);
+              runBtn.textContent = '▶ Run';
+              runBtn.className = 'run-btn run-ok';
+              statusEl.textContent = '✓ Done';
+              statusEl.className = 'run-status run-ok';
+              setTimeout(() => {{
+                runBtn.className = 'run-btn';
+                runBtn.disabled = false;
+                statusEl.textContent = '';
+                statusEl.className = 'run-status';
+              }}, 2000);
+            }} catch (err) {{
+              runBtn.textContent = '▶ Run';
+              runBtn.className = 'run-btn';
+              runBtn.disabled = false;
+              statusEl.textContent = '✗ ' + (err.message || 'Failed');
+              statusEl.className = 'run-status run-error';
+            }}
+          }});
+
+          row.appendChild(info);
+          row.appendChild(runBtn);
+          row.appendChild(statusEl);
+          list.appendChild(row);
+        }});
+
+        card.appendChild(list);
+        contentViewEl.appendChild(card);
+      }});
     }}
 
     function createInput(input, value, info) {{

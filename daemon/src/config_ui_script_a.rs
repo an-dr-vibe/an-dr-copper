@@ -118,6 +118,9 @@ pub(super) const CONFIG_UI_SCRIPT_A: &str = r#"
       if (requested === 'core') {{
         return 'core';
       }}
+      if (requested === 'commands') {{
+        return 'commands';
+      }}
       if (requested.startsWith('ext:')) {{
         const id = requested.slice(4);
         if (byId[id]) {{
@@ -278,7 +281,9 @@ pub(super) const CONFIG_UI_SCRIPT_A: &str = r#"
       const btn = document.createElement('button');
       btn.className = 'nav-btn' + (key === currentSection ? ' active' : '');
       const isCore = key === 'core';
-      btn.innerHTML = `<span class="nav-name">${{label}}</span><span class="nav-meta">${{isCore ? 'Core settings' : 'Extension settings'}}</span>`;
+      const isCommands = key === 'commands';
+      const navMeta = isCore ? 'Core settings' : isCommands ? 'Run actions' : 'Extension settings';
+      btn.innerHTML = `<span class="nav-name">${{label}}</span><span class="nav-meta">${{navMeta}}</span>`;
       btn.addEventListener('click', () => {{
         currentSection = key;
         currentTab = '';

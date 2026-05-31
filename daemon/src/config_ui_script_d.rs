@@ -1,6 +1,7 @@
 pub(super) const CONFIG_UI_SCRIPT_D: &str = r#"
 
     function collectCurrentPayload() {{
+      if (currentSection === 'commands') return {{}};
       const payload = {{}};
       const remove = [];
       const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
