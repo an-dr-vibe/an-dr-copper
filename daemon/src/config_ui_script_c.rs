@@ -170,7 +170,7 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
                 type: 'select',
                 options: THEME_OPTIONS.map(theme => theme.id),
                 optionLabels: Object.fromEntries(THEME_OPTIONS.map(theme => [theme.id, theme.label])),
-                default: 'obsidian-light'
+                default: 'light'
               }}
             ]
           }},
@@ -222,7 +222,7 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
         pageTitleEl.textContent = 'Copper';
         pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
         saveBtn.textContent = 'Save settings';
-        applyTheme((config && config.uiTheme) || 'obsidian-light');
+        applyTheme((config && config.uiTheme) || 'light');
 
         const sections = coreSections(config);
         const coreRows = [

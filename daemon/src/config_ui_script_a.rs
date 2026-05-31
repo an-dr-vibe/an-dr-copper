@@ -3,90 +3,32 @@ pub(super) const CONFIG_UI_SCRIPT_A: &str = r#"
     let discoverableDescriptors = [];
     let byId = {{}};
     const THEME_OPTIONS = [
-      {{ id: 'obsidian-light', label: 'Obsidian Light' }},
-      {{ id: 'obsidian-dark', label: 'Obsidian Dark' }},
-      {{ id: 'copper', label: 'Copper Dark' }},
-      {{ id: 'copper-light', label: 'Copper Light' }},
-      {{ id: 'brass', label: 'Brass Dark' }},
-      {{ id: 'brass-light', label: 'Brass Light' }},
-      {{ id: 'silver', label: 'Silver Dark' }},
-      {{ id: 'silver-light', label: 'Silver Light' }},
-      {{ id: 'gold', label: 'Gold Dark' }},
-      {{ id: 'gold-light', label: 'Gold Light' }},
-      {{ id: 'titanium', label: 'Titanium Dark' }},
-      {{ id: 'titanium-light', label: 'Titanium Light' }},
+      {{ id: 'light', label: 'Light' }},
+      {{ id: 'dark', label: 'Dark' }},
     ];
     const THEMES = {{
-      'obsidian-light': {{
+      light: {{
         bg: '#ffffff', panel: '#f6f6f6', panel2: '#f7f7f7', panel3: '#ffffff',
         line: '#dddddd', text: '#1f1f1f', muted: '#6f6f6f',
-        accent: '#705dcf', accentSoft: 'rgba(112,93,207,.14)'
+        accent: '#ffb000', accentSoft: 'rgba(255,176,0,.18)', accentText: '#1f1f1f'
       }},
-      'obsidian-dark': {{
+      dark: {{
         bg: '#1e1e1e', panel: '#262626', panel2: '#242424', panel3: '#1f1f1f',
         line: '#3a3a3a', text: '#dcddde', muted: '#a6a6a6',
-        accent: '#8b7cf6', accentSoft: 'rgba(139,124,246,.18)'
-      }},
-      copper: {{
-        bg: '#181210', panel: '#241b18', panel2: '#1d1613', panel3: '#120c0a',
-        line: '#533327', text: '#f5ebe4', muted: '#bc9e8f',
-        accent: '#d8895a', accentSoft: 'rgba(216,137,90,.18)'
-      }},
-      'copper-light': {{
-        bg: '#fbf3ee', panel: '#fffbf8', panel2: '#f3e1d4', panel3: '#fff6f1',
-        line: '#e5c3ad', text: '#43281c', muted: '#916a58',
-        accent: '#cb7a4c', accentSoft: 'rgba(203,122,76,.16)'
-      }},
-      brass: {{
-        bg: '#17140f', panel: '#232018', panel2: '#1c1913', panel3: '#100d09',
-        line: '#5a4928', text: '#f3ecdd', muted: '#baa97c',
-        accent: '#caa24c', accentSoft: 'rgba(202,162,76,.18)'
-      }},
-      'brass-light': {{
-        bg: '#faf5e8', panel: '#fffdf7', panel2: '#f0e4c2', panel3: '#fcf8ef',
-        line: '#dfcb90', text: '#403117', muted: '#8a7747',
-        accent: '#c89c2f', accentSoft: 'rgba(200,156,47,.15)'
-      }},
-      silver: {{
-        bg: '#13161a', panel: '#1c2026', panel2: '#171b20', panel3: '#0f1216',
-        line: '#3d4550', text: '#eff3f7', muted: '#a7b2be',
-        accent: '#a6b7ca', accentSoft: 'rgba(166,183,202,.18)'
-      }},
-      'silver-light': {{
-        bg: '#f2f5f8', panel: '#fcfdff', panel2: '#e2e8ee', panel3: '#f6f8fb',
-        line: '#cad2db', text: '#27323c', muted: '#697784',
-        accent: '#8799ae', accentSoft: 'rgba(135,153,174,.15)'
-      }},
-      gold: {{
-        bg: '#19150e', panel: '#241f15', panel2: '#1d1911', panel3: '#120e08',
-        line: '#5a4921', text: '#f7efd8', muted: '#c2ae76',
-        accent: '#d8ae3f', accentSoft: 'rgba(216,174,63,.18)'
-      }},
-      'gold-light': {{
-        bg: '#fcf7e7', panel: '#fffdf7', panel2: '#f2e5bb', panel3: '#fdf9ef',
-        line: '#e0cd89', text: '#403114', muted: '#8d7941',
-        accent: '#cb981c', accentSoft: 'rgba(203,152,28,.15)'
-      }},
-      titanium: {{
-        bg: '#101317', panel: '#191e24', panel2: '#14181d', panel3: '#0c0f13',
-        line: '#38424d', text: '#e8eef5', muted: '#98a6b5',
-        accent: '#7d92ac', accentSoft: 'rgba(125,146,172,.18)'
-      }},
-      'titanium-light': {{
-        bg: '#eef2f6', panel: '#fbfdff', panel2: '#dce4eb', panel3: '#f4f7fa',
-        line: '#c3ced8', text: '#25313c', muted: '#687887',
-        accent: '#607b95', accentSoft: 'rgba(96,123,149,.15)'
+        accent: '#ffb000', accentSoft: 'rgba(255,176,0,.2)', accentText: '#1f1f1f'
       }},
     }};
 
     function normalizeThemeId(themeId) {{
-      const normalized = String(themeId || 'obsidian-light').trim().toLowerCase();
-      return Object.prototype.hasOwnProperty.call(THEMES, normalized) ? normalized : 'obsidian-light';
+      const normalized = String(themeId || 'light').trim().toLowerCase();
+      if (normalized === 'obsidian-light') return 'light';
+      if (normalized === 'obsidian-dark') return 'dark';
+      return Object.prototype.hasOwnProperty.call(THEMES, normalized) ? normalized : 'light';
     }}
 
     function resolveTheme(themeId) {{
       const normalized = normalizeThemeId(themeId);
-      return THEMES[normalized] || THEMES.copper;
+      return THEMES[normalized] || THEMES.light;
     }}
 
     function applyTheme(themeId) {{
@@ -100,6 +42,7 @@ pub(super) const CONFIG_UI_SCRIPT_A: &str = r#"
       document.documentElement.style.setProperty('--muted', palette.muted);
       document.documentElement.style.setProperty('--accent', palette.accent);
       document.documentElement.style.setProperty('--accent-soft', palette.accentSoft);
+      document.documentElement.style.setProperty('--accent-text', palette.accentText);
     }}
 
     function replaceDescriptorModel(nextModel, syncSelection = true) {{

@@ -88,5 +88,5 @@ fn initial_ui_theme(state: &UiServerState) -> String {
                 .and_then(|value| value.as_str())
                 .map(str::to_string)
         })
-        .unwrap_or_else(|| "obsidian-light".to_string())
+        .unwrap_or_else(|| "light".to_string())
 }

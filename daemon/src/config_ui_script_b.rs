@@ -307,7 +307,7 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
         }}
         readDirtyValue = () => coerceControlValue(control, control.value);
         if (input.id === 'uiTheme') {{
-          applyTheme(control.value || input.default || 'obsidian-light');
+          applyTheme(control.value || input.default || 'light');
         }}
       }} else {{
         control = document.createElement('input');

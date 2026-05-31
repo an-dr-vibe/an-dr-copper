@@ -1,7 +1,7 @@
 pub(super) const CONFIG_UI_STYLE: &str = r#"
   <style>
     :root {{
-      --bg:#ffffff; --panel:#f6f6f6; --panel2:#f7f7f7; --panel3:#ffffff; --line:#dddddd; --text:#1f1f1f; --muted:#6f6f6f; --accent:#705dcf; --accent-soft:rgba(112,93,207,.14);
+      --bg:#ffffff; --panel:#f6f6f6; --panel2:#f7f7f7; --panel3:#ffffff; --line:#dddddd; --text:#1f1f1f; --muted:#6f6f6f; --accent:#ffb000; --accent-soft:rgba(255,176,0,.18); --accent-text:#1f1f1f;
     }}
     * {{ box-sizing:border-box; }}
     body {{
@@ -68,7 +68,7 @@ pub(super) const CONFIG_UI_STYLE: &str = r#"
       border:1px solid var(--line); border-radius:6px; background:var(--panel3); color:var(--text); padding:8px 12px; cursor:pointer; font:inherit;
     }}
     button:hover {{ background:rgba(0,0,0,.045); }}
-    button.primary {{ background:var(--accent); border-color:transparent; color:#ffffff; font-weight:600; }}
+    button.primary {{ background:var(--accent); border-color:transparent; color:var(--accent-text); font-weight:600; }}
     button.primary:hover {{ filter:brightness(.96); }}
     button.primary.is-dirty {{ box-shadow:0 0 0 2px rgba(185,87,109,.35); }}
     [hidden] {{ display:none !important; }}

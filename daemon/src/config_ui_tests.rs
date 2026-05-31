@@ -412,8 +412,13 @@
         assert!(html.contains("Recent status"));
         assert!(html.contains("URLSearchParams(window.location.search)"));
         assert!(html.contains("const THEME_OPTIONS"));
-        assert!(html.contains("Obsidian Light"));
-        assert!(html.contains("Copper Dark"));
+        assert!(html.contains("id: 'light', label: 'Light'"));
+        assert!(html.contains("id: 'dark', label: 'Dark'"));
+        assert!(!html.contains("Copper Dark"));
+        assert!(!html.contains("Brass Dark"));
+        assert!(!html.contains("Silver Dark"));
+        assert!(!html.contains("Gold Dark"));
+        assert!(!html.contains("Titanium Dark"));
         assert!(html.contains("applyTheme"));
         assert!(html.contains("unsaved-badge"));
         assert!(html.contains("refreshDirtyState"));
@@ -435,7 +440,8 @@
         let html = render_html(&state);
 
         assert!(html.contains(r#""coreUiTheme":"obsidian-dark""#));
-        assert!(html.contains("applyTheme(model.coreUiTheme || 'obsidian-light');"));
+        assert!(html.contains("applyTheme(model.coreUiTheme || 'light');"));
+        assert!(html.contains("if (normalized === 'obsidian-dark') return 'dark';"));
     }
 
     #[test]
@@ -884,7 +890,7 @@
             "POST",
             "/config/core",
             &auth_headers,
-            Some(r#"{"uiTheme":"copper"}"#),
+            Some(r#"{"uiTheme":"dark"}"#),
         );
         assert_eq!(status_core_post, 200);
         assert!(body_core_post.contains("\"ok\": true"));
@@ -984,7 +990,7 @@
             &addr,
             "POST",
             "/config/core",
-            Some(r#"{"uiTheme":"copper"}"#),
+            Some(r#"{"uiTheme":"dark"}"#),
         );
         assert_eq!(status_post, 403);
         assert!(body_post.contains("control-plane token"));
