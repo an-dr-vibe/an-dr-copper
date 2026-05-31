@@ -78,6 +78,10 @@ cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents
 cargo run -p copperd -- daemon trigger windows-display-manager --action status --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- daemon trigger windows-display-manager --action toggle-taskbar-autohide --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
+# opens a native Tauri settings window by default:
+cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
+# browser fallback:
+cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions --browser
 cargo run -p copperd -- generate-main extensions/sort-downloads/manifest.json
 cargo run -p copperd -- run
 cargo run -p copperd -- daemon health --bind-addr 127.0.0.1:4765

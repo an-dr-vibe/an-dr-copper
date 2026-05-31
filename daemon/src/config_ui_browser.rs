@@ -52,7 +52,3 @@ pub(super) fn open_in_browser(url: &str) -> Result<(), UiConfigError> {
 fn wide_windows_string(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
-
-pub(crate) fn open_url_in_browser(url: &str) -> Result<(), UiConfigError> {
-    open_in_browser(url)
-}

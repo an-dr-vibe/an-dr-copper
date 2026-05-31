@@ -1,7 +1,7 @@
 #[cfg(windows)]
 use crate::api::windows_display;
 #[cfg(windows)]
-use crate::config_ui::open_url_in_browser;
+use crate::config_ui::open_url_in_native_window_detached;
 use crate::extension::Registry;
 #[cfg(windows)]
 use crate::logging;
@@ -548,7 +548,7 @@ mod windows_impl {
         if command_id == CMD_SETTINGS {
             let settings_url =
                 format!("{}?section=ext:{}", state.daemon_ui_url, state.extension_id);
-            if let Err(err) = open_url_in_browser(&settings_url) {
+            if let Err(err) = open_url_in_native_window_detached(&settings_url) {
                 logging::error(format!("failed to open windows-display settings: {err}"));
             }
             return;

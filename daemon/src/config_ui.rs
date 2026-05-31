@@ -31,13 +31,16 @@ mod server;
 #[cfg(test)]
 #[path = "config_ui_test_support.rs"]
 mod test_support;
+#[path = "config_ui_window.rs"]
+mod window;
 
-pub(crate) use browser::open_url_in_browser;
 #[cfg(test)]
 use server::{
     build_ui_state, find_discoverable_descriptor, parse_json_object, visible_descriptors,
 };
 pub(crate) use server::{open_extension_config, start_daemon_ui_server};
+pub use window::open_in_native_window;
+pub(crate) use window::open_url_in_native_window_detached;
 
 #[cfg(test)]
 use render::render_html;
@@ -54,6 +57,7 @@ pub const DEFAULT_DAEMON_UI_BIND: &str = "127.0.0.1:4766";
 pub struct UiOpenOptions {
     pub bind_addr: String,
     pub open_browser: bool,
+    pub open_window: bool,
     pub idle_timeout: Duration,
 }
 
@@ -61,7 +65,8 @@ impl Default for UiOpenOptions {
     fn default() -> Self {
         Self {
             bind_addr: DEFAULT_UI_BIND.to_string(),
-            open_browser: true,
+            open_browser: false,
+            open_window: true,
             idle_timeout: Duration::from_secs(300),
         }
     }
@@ -83,6 +88,8 @@ pub enum UiConfigError {
     Request(String),
     #[error("failed to open browser: {0}")]
     Browser(String),
+    #[error("failed to open native window: {0}")]
+    Window(String),
 }
 
 #[derive(Debug, Clone)]

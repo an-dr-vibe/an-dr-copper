@@ -126,7 +126,8 @@
     fn ui_open_options_default_values_are_stable() {
         let options = UiOpenOptions::default();
         assert_eq!(options.bind_addr, "127.0.0.1:0");
-        assert!(options.open_browser);
+        assert!(!options.open_browser);
+        assert!(options.open_window);
         assert_eq!(options.idle_timeout, Duration::from_secs(300));
     }
 
@@ -1019,6 +1020,7 @@
                 UiOpenOptions {
                     bind_addr: bind_for_thread,
                     open_browser: false,
+                    open_window: false,
                     idle_timeout: Duration::from_secs(2),
                 },
             )

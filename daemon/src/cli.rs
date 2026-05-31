@@ -164,14 +164,22 @@ enum UiCommands {
         extensions_dir: PathBuf,
         #[arg(long, value_name = "MS", default_value_t = 300_000)]
         idle_timeout_ms: u64,
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["browser", "window"])]
         no_browser: bool,
+        #[arg(long, conflicts_with_all = ["browser", "no_browser"])]
+        window: bool,
+        #[arg(long, conflicts_with_all = ["window", "no_browser"])]
+        browser: bool,
     },
 }
 
 #[derive(Subcommand, Debug)]
 enum InternalCommands {
     RuntimeTrigger,
+    NativeWindow {
+        #[arg(long, value_name = "URL")]
+        url: String,
+    },
 }
 
 pub fn run() -> Result<(), CliError> {
@@ -276,10 +284,13 @@ fn cmd_ui(command: UiCommands) -> Result<(), CliError> {
             extensions_dir,
             idle_timeout_ms,
             no_browser,
+            window,
+            browser,
         } => {
             let options = UiOpenOptions {
                 bind_addr: "127.0.0.1:0".to_string(),
-                open_browser: !no_browser,
+                open_browser: browser,
+                open_window: window || (!browser && !no_browser),
                 idle_timeout: Duration::from_millis(idle_timeout_ms),
             };
             let url = config_ui::open_extension_config(&extensions_dir, &extension, options)?;
@@ -304,6 +315,9 @@ fn cmd_internal(command: InternalCommands) -> Result<(), CliError> {
         InternalCommands::RuntimeTrigger => {
             run_protocol_worker(io::stdin(), io::stdout())
                 .map_err(|err| CliError::Message(err.to_string()))?;
+        }
+        InternalCommands::NativeWindow { url } => {
+            config_ui::open_in_native_window(&url)?;
         }
     }
     Ok(())
@@ -802,7 +816,8 @@ mod tests {
     fn cmd_trigger_errors_for_unknown_action() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
-        let err = cmd_trigger(temp.path(), "alpha-ext", Some("missing"), &[]).expect_err("must fail");
+        let err =
+            cmd_trigger(temp.path(), "alpha-ext", Some("missing"), &[]).expect_err("must fail");
         assert!(err.to_string().contains("not found"));
     }
 
@@ -810,7 +825,8 @@ mod tests {
     fn cmd_trigger_without_action_uses_first_action() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
-        cmd_trigger(temp.path(), "alpha-ext", None, &[]).expect("trigger should select default action");
+        cmd_trigger(temp.path(), "alpha-ext", None, &[])
+            .expect("trigger should select default action");
     }
 
     #[test]

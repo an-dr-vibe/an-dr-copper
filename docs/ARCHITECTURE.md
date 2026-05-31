@@ -20,6 +20,7 @@ Current implementation status:
 
 - Implemented: always-on daemon, extension registry loading, authenticated HTTP control plane, isolated runtime trigger preparation, scheduled reload/background polling, descriptor validation, skeleton generation, local config UI (`ui open`), and main tray icon UI launch on Windows.
 - Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with manifest-driven extension pages, optional manifest-defined tabs, and a core-managed extensions tab for enable/disable and command discovery.
+- Implemented: Tauri-backed native window launcher for the settings UI; `ui open` and tray settings actions open native windows by default, with browser opening retained as an explicit fallback.
 - Planned: embedded `deno_core` runtime execution, richer tray/hotkey integration, on-demand Tauri UI renderer.
 
 ## 3. Implemented Daemon Core
@@ -114,6 +115,7 @@ Type contract for AI generation:
 |  |  |- daemon.rs   # long-running daemon lifecycle root
 |  |  |- cli.rs      # CLI and daemon control commands
 |  |  `- ...
+|- daemon/tauri.conf.json # optional native settings window config
 |- schemas/
 |- sdk/
 |- extensions/
@@ -219,4 +221,3 @@ These must not be broken without a deliberate versioning decision:
 - Some shipped extensions are still intentionally host-native or hybrid rather than purely TypeScript-executed; that ownership is now centralized in `host_extensions.rs` as explicit host capabilities.
 
 These gaps are additive roadmap work and do not change the daemon-first core architecture.
-

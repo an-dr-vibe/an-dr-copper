@@ -1,5 +1,6 @@
 use super::browser::open_in_browser;
 use super::render::render_html;
+use super::window::open_in_native_window;
 use super::{PersistentUiServer, UiConfigError, UiOpenOptions, UiServerState};
 use crate::config_ui_http::{parse_request, write_response, HttpMethod, HttpRequest, HttpResponse};
 use crate::config_ui_service::{apply_extension_settings, build_core_info, build_extension_info};
@@ -182,9 +183,28 @@ pub(crate) fn open_extension_config(
         open_in_browser(&url)?;
     }
 
+    if options.open_window {
+        std::thread::spawn(move || {
+            if let Err(err) = serve_ui_listener(listener, state, options.idle_timeout) {
+                logging::error(format!("config UI server error: {err}"));
+            }
+        });
+        open_in_native_window(&url)?;
+        return Ok(url);
+    }
+
+    serve_ui_listener(listener, state, options.idle_timeout)?;
+    Ok(url)
+}
+
+fn serve_ui_listener(
+    listener: TcpListener,
+    state: UiServerState,
+    idle_timeout: Duration,
+) -> Result<(), UiConfigError> {
     let mut should_stop = false;
     let mut last_activity = Instant::now();
-    while !should_stop && last_activity.elapsed() < options.idle_timeout {
+    while !should_stop && last_activity.elapsed() < idle_timeout {
         match listener.accept() {
             Ok((stream, _)) => {
                 last_activity = Instant::now();
@@ -200,7 +220,7 @@ pub(crate) fn open_extension_config(
         }
     }
 
-    Ok(url)
+    Ok(())
 }
 
 pub(super) fn handle_connection(
@@ -333,8 +353,7 @@ fn handle_trigger_extension(
     let ext = registry
         .get(extension_id)
         .ok_or_else(|| UiConfigError::ExtensionNotFound(extension_id.to_string()))?;
-    let runtime =
-        default_runtime_adapter().map_err(|e| UiConfigError::Request(e.to_string()))?;
+    let runtime = default_runtime_adapter().map_err(|e| UiConfigError::Request(e.to_string()))?;
     let engine = ExecutionEngine::new(runtime.as_ref(), &state.host_extensions, &state.state_store);
     let prepared = engine
         .prepare_trigger(ext, action_id)

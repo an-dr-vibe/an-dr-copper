@@ -43,6 +43,7 @@ Recommended config actions in UI:
 - Daemon-hosted config UI is always on while daemon runs:
   - `http://127.0.0.1:4766`
 - Implemented command: `copperd ui open --extension <id>` (standalone temporary UI server mode).
+- Native window mode is the default for `copperd ui open --extension <id>` and tray settings actions; `--browser` keeps the old browser fallback available.
 - Tray shortcut implemented for `desktop-torrent-organizer`:
   - `Configure Desktop Torrent Organizer`
 - Extension config is stored at:

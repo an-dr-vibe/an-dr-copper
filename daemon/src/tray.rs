@@ -1,4 +1,4 @@
-use crate::config_ui::open_url_in_browser;
+use crate::config_ui::open_url_in_native_window_detached;
 use crate::logging;
 use std::path::PathBuf;
 use std::sync::{
@@ -71,7 +71,7 @@ where
     let ui_url_for_menu = ui_url;
     tray.add_menu_item("Open Copper UI", move || {
         if let Err(err) = open_browser(&ui_url_for_menu) {
-            logging::error(format!("failed to open config UI in browser: {err}"));
+            logging::error(format!("failed to open config UI in native window: {err}"));
         }
     })
     .map_err(TrayError::Init)?;
@@ -95,7 +95,12 @@ impl TrayController {
         let inner = TrayItem::new("Copperd (Running)", default_icon())
             .map_err(|e| TrayError::Init(e.to_string()))?;
         let mut tray = RealTray { inner };
-        configure_tray(&mut tray, running, ui_url, open_url_in_browser)?;
+        configure_tray(
+            &mut tray,
+            running,
+            ui_url,
+            open_url_in_native_window_detached,
+        )?;
         Ok(Self { _inner: tray.inner })
     }
 }
@@ -325,8 +330,8 @@ mod windows_impl {
     }
 
     fn open_ui(state: &WindowsTrayState) {
-        if let Err(err) = open_url_in_browser(&state.ui_url) {
-            logging::error(format!("failed to open Copper UI in browser: {err}"));
+        if let Err(err) = open_url_in_native_window_detached(&state.ui_url) {
+            logging::error(format!("failed to open Copper UI in native window: {err}"));
         }
     }
 

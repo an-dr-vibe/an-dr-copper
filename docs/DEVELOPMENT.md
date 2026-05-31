@@ -13,7 +13,10 @@ cargo build -p copperd --release        # release
 ./scripts/daemon.ps1 -Action run        # start daemon  (terminal A)
 ./scripts/daemon.ps1 -Action health     # health check  (terminal B)
 ./scripts/daemon.ps1 -Action shutdown   # stop daemon
+cargo run -p copperd -- ui open --extension desktop-torrent-organizer
 ```
+
+The settings window is Tauri-backed and enabled by default. Use `ui open --browser` for browser fallback, or build with `--no-default-features` only when intentionally checking a headless/no-native-ui path.
 
 ## Recipe: add a host API module
 
