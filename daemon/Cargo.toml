@@ -4,19 +4,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-default-run = "copperd"
+default-run = "copper"
 
 [lib]
 name = "copperd"
 path = "src/lib.rs"
 
 [[bin]]
-name = "copperd"
+name = "copper"
 path = "src/main.rs"
 
 [[bin]]
-name = "copper"
-path = "src/gui_main.rs"
+name = "copperd"
+path = "src/cli_main.rs"
 
 [dependencies]
 clap = { version = "4.5.40", features = ["derive"] }

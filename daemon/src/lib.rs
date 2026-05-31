@@ -21,4 +21,3 @@ pub mod tray;
 pub mod tray_assets;
 pub mod tray_extension;
 
-pub use cli::run;
