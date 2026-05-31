@@ -1,0 +1,61 @@
+{
+  "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+  "id": "safe-input-key",
+  "name": "Safe Input Key",
+  "version": "1.0.0",
+  "trigger": "safe-input-key",
+  "permissions": ["keyboard", "secure-store", "store", "ui"],
+  "inputs": [
+    {
+      "id": "triggerKey",
+      "type": "text",
+      "label": "Trigger key / combo",
+      "description": "Key or combo to map to this extension in your OS hotkey manager (e.g. scroll_lock, ctrl+alt+f12). Point the OS shortcut at: copperd trigger safe-input-key",
+      "default": "scroll_lock"
+    }
+  ],
+  "actions": [
+    {
+      "id": "type-text",
+      "label": "Type saved text",
+      "description": "Type the securely stored text at the current cursor position.",
+      "script": "typeText"
+    },
+    {
+      "id": "setup",
+      "label": "Save text",
+      "description": "Store the text to type in the OS keychain. Pass the value with --input text=<value>.",
+      "script": "setup"
+    },
+    {
+      "id": "clear",
+      "label": "Clear saved text",
+      "description": "Delete the stored text from the OS keychain.",
+      "script": "clearText"
+    }
+  ],
+  "settings": {
+    "title": "Safe Input Key",
+    "description": "Press a key to securely type a stored text (password, snippet, one-time phrase).",
+    "applyActions": [],
+    "tabs": [
+      {
+        "id": "config",
+        "title": "Configuration",
+        "sections": ["trigger-key"],
+        "showCommands": true
+      }
+    ],
+    "sections": [
+      {
+        "id": "trigger-key",
+        "title": "Trigger key",
+        "description": "The key or combo you will map to 'copperd trigger safe-input-key' in AutoHotkey, Windows keyboard shortcuts, or your OS equivalent.",
+        "inputs": ["triggerKey"]
+      }
+    ]
+  },
+  "ui": {
+    "type": "form"
+  }
+}

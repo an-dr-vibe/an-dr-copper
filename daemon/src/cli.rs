@@ -77,6 +77,9 @@ enum Commands {
         action: Option<String>,
         #[arg(long, value_name = "DIR", default_value_os_t = default_extensions_dir())]
         extensions_dir: PathBuf,
+        /// Pass key=value inputs to the extension (repeatable: --input text=hello --input other=val)
+        #[arg(long = "input", value_name = "KEY=VALUE")]
+        inputs: Vec<String>,
     },
     /// Generate a starter main.ts from a manifest
     GenerateMain {
@@ -204,7 +207,8 @@ fn run_command(command: Commands) -> Result<(), CliError> {
             id,
             action,
             extensions_dir,
-        } => cmd_trigger(&extensions_dir, &id, action.as_deref()),
+            inputs,
+        } => cmd_trigger(&extensions_dir, &id, action.as_deref(), &inputs),
         Commands::GenerateMain { manifest, output } => cmd_generate_main(&manifest, output),
         Commands::Doctor => cmd_doctor(),
         Commands::Daemon { command } => cmd_daemon(command),
@@ -358,7 +362,12 @@ fn cmd_verify(dir: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
-fn cmd_trigger(dir: &Path, id: &str, action: Option<&str>) -> Result<(), CliError> {
+fn cmd_trigger(
+    dir: &Path,
+    id: &str,
+    action: Option<&str>,
+    raw_inputs: &[String],
+) -> Result<(), CliError> {
     let registry = load_runtime_registry(dir)?;
     let ext = registry
         .get(id)
@@ -370,6 +379,15 @@ fn cmd_trigger(dir: &Path, id: &str, action: Option<&str>) -> Result<(), CliErro
     let prepared = engine
         .prepare_trigger(ext, action)
         .map_err(CliError::Message)?;
+
+    // Parse --input key=value pairs into a JSON object.
+    let mut inputs_map = serde_json::Map::new();
+    for raw in raw_inputs {
+        if let Some((key, val)) = raw.split_once('=') {
+            inputs_map.insert(key.to_string(), serde_json::Value::String(val.to_string()));
+        }
+    }
+    let inputs = serde_json::Value::Object(inputs_map);
 
     println!(
         "Trigger: extension='{}' action='{}' permissions={}",
@@ -383,7 +401,7 @@ fn cmd_trigger(dir: &Path, id: &str, action: Option<&str>) -> Result<(), CliErro
     );
 
     engine
-        .execute_trigger(&prepared, &serde_json::json!({}))
+        .execute_trigger(&prepared, &inputs)
         .map_err(CliError::Message)?;
 
     println!("Done: '{}'", prepared.extension_id);
@@ -784,7 +802,7 @@ mod tests {
     fn cmd_trigger_errors_for_unknown_action() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
-        let err = cmd_trigger(temp.path(), "alpha-ext", Some("missing")).expect_err("must fail");
+        let err = cmd_trigger(temp.path(), "alpha-ext", Some("missing"), &[]).expect_err("must fail");
         assert!(err.to_string().contains("not found"));
     }
 
@@ -792,7 +810,7 @@ mod tests {
     fn cmd_trigger_without_action_uses_first_action() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
-        cmd_trigger(temp.path(), "alpha-ext", None).expect("trigger should select default action");
+        cmd_trigger(temp.path(), "alpha-ext", None, &[]).expect("trigger should select default action");
     }
 
     #[test]

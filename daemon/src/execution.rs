@@ -91,11 +91,21 @@ impl<'a> ExecutionEngine<'a> {
             .join("store.json")
             .display()
             .to_string();
+        // Always inject the resolved action_id so extensions can route on inputs.action.
+        // Caller-supplied "action" takes precedence (allows override via --input action=…).
+        let merged = match inputs.clone() {
+            Value::Object(mut map) => {
+                map.entry("action".to_string())
+                    .or_insert_with(|| Value::String(prepared.action_id.clone()));
+                Value::Object(map)
+            }
+            other => serde_json::json!({ "action": prepared.action_id, "_raw": other }),
+        };
         deno_runner::execute_extension(
             &prepared.extension_id,
             &prepared.main_ts_path,
             &store_path,
-            inputs,
+            &merged,
         )
     }
 }
