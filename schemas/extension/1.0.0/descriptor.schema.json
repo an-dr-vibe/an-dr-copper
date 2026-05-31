@@ -36,6 +36,7 @@
               "boolean",
               "folder-picker",
               "file-picker",
+              "hotkey",
               "select",
               "list-select",
               "multi-select"

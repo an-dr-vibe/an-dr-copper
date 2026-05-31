@@ -13,6 +13,7 @@ pub mod descriptor;
 pub mod execution;
 pub mod extension;
 pub mod host_extensions;
+pub mod hotkey;
 pub mod logging;
 pub mod runtime;
 pub mod schema;

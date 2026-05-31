@@ -24,6 +24,7 @@ pub enum InputType {
     Boolean,
     FolderPicker,
     FilePicker,
+    Hotkey,
     Select,
     ListSelect,
     MultiSelect,

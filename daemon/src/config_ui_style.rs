@@ -115,6 +115,14 @@ pub(super) const CONFIG_UI_STYLE: &str = r#"
       background:rgba(255,255,255,.01); color:var(--text);
     }}
     .list-option.active {{ border-color:var(--accent); background:var(--accent-soft); color:var(--text); }}
+    .hotkey-control {{ display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center; }}
+    .hotkey-capture {{
+      min-height:38px; text-align:left; font-family:Consolas, monospace;
+      background:var(--panel3); border:1px solid var(--line); color:var(--text);
+    }}
+    .hotkey-capture.is-empty {{ color:var(--muted); font-family:inherit; }}
+    .hotkey-clear {{ width:38px; height:38px; padding:0; font-weight:700; }}
+    .hotkey-clear:disabled {{ opacity:.45; cursor:not-allowed; }}
     .checkbox-item {{
       display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line);
       border-radius:6px; background:var(--panel3);

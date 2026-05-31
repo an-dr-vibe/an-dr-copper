@@ -37,8 +37,8 @@ export default function (api: Api) {
 
         // ── setup ────────────────────────────────────────────────────────────
         // Stores the text in the OS keychain (Windows Credential Manager /
-        // macOS Keychain / Linux SecretService). Accepts text via inputs.text,
-        // which is passed with --input text=<value> from the CLI.
+        // macOS Keychain / Linux SecretService). Accepts text via inputs.text
+        // from CLI input or the saved settings sent by the config UI.
         case "setup": {
           const text = String(inputs.text ?? "");
           if (!text) {

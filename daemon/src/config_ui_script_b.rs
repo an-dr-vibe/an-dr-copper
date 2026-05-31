@@ -43,6 +43,79 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
       return await res.json();
     }}
 
+    function createCommandRunCard(descriptor, title, description) {{
+      const actions = descriptor.actions || [];
+      const card = createCard(title || descriptor.name, description || descriptor.id);
+      const list = document.createElement('div');
+      list.className = 'command-run-list';
+
+      actions.forEach(action => {{
+        const row = document.createElement('div');
+        row.className = 'command-run-row';
+
+        const info = document.createElement('div');
+        info.className = 'command-run-info';
+        const labelEl = document.createElement('div');
+        labelEl.className = 'command-run-label';
+        labelEl.textContent = action.label || action.id;
+        info.appendChild(labelEl);
+        if (action.description) {{
+          const descEl = document.createElement('div');
+          descEl.className = 'command-run-desc';
+          descEl.textContent = action.description;
+          info.appendChild(descEl);
+        }}
+
+        const runBtn = document.createElement('button');
+        runBtn.className = 'run-btn';
+        runBtn.textContent = action.id === 'clear' ? 'Clear' : 'Run';
+
+        const statusEl = document.createElement('span');
+        statusEl.className = 'run-status';
+
+        runBtn.addEventListener('click', async () => {{
+          runBtn.disabled = true;
+          runBtn.textContent = 'Running...';
+          statusEl.textContent = '';
+          statusEl.className = 'run-status';
+          try {{
+            await runAction(descriptor.id, action.id);
+            runBtn.textContent = action.id === 'clear' ? 'Clear' : 'Run';
+            runBtn.className = 'run-btn run-ok';
+            statusEl.textContent = 'Done';
+            statusEl.className = 'run-status run-ok';
+            setTimeout(() => {{
+              runBtn.className = 'run-btn';
+              runBtn.disabled = false;
+              statusEl.textContent = '';
+              statusEl.className = 'run-status';
+            }}, 2000);
+          }} catch (err) {{
+            runBtn.textContent = action.id === 'clear' ? 'Clear' : 'Run';
+            runBtn.className = 'run-btn';
+            runBtn.disabled = false;
+            statusEl.textContent = err.message || 'Failed';
+            statusEl.className = 'run-status run-error';
+          }}
+        }});
+
+        row.appendChild(info);
+        row.appendChild(runBtn);
+        row.appendChild(statusEl);
+        list.appendChild(row);
+      }});
+
+      if (!actions.length) {{
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No commands are available.';
+        card.appendChild(empty);
+      }} else {{
+        card.appendChild(list);
+      }}
+      return card;
+    }}
+
     function renderCommandsPage() {{
       pageEyebrowEl.textContent = 'System';
       pageTitleEl.textContent = 'Commands';
@@ -65,69 +138,97 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
         const actions = descriptor.actions || [];
         if (!actions.length) return;
 
-        const card = createCard(descriptor.name, descriptor.id);
-        const list = document.createElement('div');
-        list.className = 'command-run-list';
-
-        actions.forEach(action => {{
-          const row = document.createElement('div');
-          row.className = 'command-run-row';
-
-          const info = document.createElement('div');
-          info.className = 'command-run-info';
-          const labelEl = document.createElement('div');
-          labelEl.className = 'command-run-label';
-          labelEl.textContent = action.label || action.id;
-          info.appendChild(labelEl);
-          if (action.description) {{
-            const descEl = document.createElement('div');
-            descEl.className = 'command-run-desc';
-            descEl.textContent = action.description;
-            info.appendChild(descEl);
-          }}
-
-          const runBtn = document.createElement('button');
-          runBtn.className = 'run-btn';
-          runBtn.textContent = '▶ Run';
-
-          const statusEl = document.createElement('span');
-          statusEl.className = 'run-status';
-
-          runBtn.addEventListener('click', async () => {{
-            runBtn.disabled = true;
-            runBtn.textContent = 'Running…';
-            statusEl.textContent = '';
-            statusEl.className = 'run-status';
-            try {{
-              await runAction(descriptor.id, action.id);
-              runBtn.textContent = '▶ Run';
-              runBtn.className = 'run-btn run-ok';
-              statusEl.textContent = '✓ Done';
-              statusEl.className = 'run-status run-ok';
-              setTimeout(() => {{
-                runBtn.className = 'run-btn';
-                runBtn.disabled = false;
-                statusEl.textContent = '';
-                statusEl.className = 'run-status';
-              }}, 2000);
-            }} catch (err) {{
-              runBtn.textContent = '▶ Run';
-              runBtn.className = 'run-btn';
-              runBtn.disabled = false;
-              statusEl.textContent = '✗ ' + (err.message || 'Failed');
-              statusEl.className = 'run-status run-error';
-            }}
-          }});
-
-          row.appendChild(info);
-          row.appendChild(runBtn);
-          row.appendChild(statusEl);
-          list.appendChild(row);
-        }});
-
-        card.appendChild(list);
-        contentViewEl.appendChild(card);
+        contentViewEl.appendChild(createCommandRunCard(descriptor, descriptor.name, descriptor.id));
       }});
+    }}
+
+    function normalizeHotkeyEvent(event) {{
+      const normalizeKey = key => {{
+        const aliases = {{
+          ' ': 'space',
+          'Spacebar': 'space',
+          'Esc': 'esc',
+          'Escape': 'esc',
+          'Control': 'ctrl',
+          'Alt': 'alt',
+          'Shift': 'shift',
+          'Meta': 'meta',
+          'OS': 'meta',
+          'ScrollLock': 'scroll_lock',
+          'PageUp': 'page_up',
+          'PageDown': 'page_down',
+          'ArrowUp': 'arrow_up',
+          'ArrowDown': 'arrow_down',
+          'ArrowLeft': 'arrow_left',
+          'ArrowRight': 'arrow_right'
+        }};
+        const mapped = aliases[key] || key;
+        return String(mapped).toLowerCase().replace(/\s+/g, '_');
+      }};
+
+      const parts = [];
+      if (event.ctrlKey) parts.push('ctrl');
+      if (event.altKey) parts.push('alt');
+      if (event.shiftKey) parts.push('shift');
+      if (event.metaKey) parts.push('meta');
+
+      const key = normalizeKey(event.key);
+      if (key && !['ctrl', 'alt', 'shift', 'meta'].includes(key)) {{
+        parts.push(key);
+      }} else if (!parts.length && key) {{
+        parts.push(key);
+      }}
+      return parts.join('+');
+    }}
+
+    function createHotkeyInput(input, value) {{
+      const initialValue = String(value ?? input.default ?? '');
+      const hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.value = initialValue;
+      hidden.dataset.inputId = input.id;
+      hidden.dataset.inputType = input.type;
+
+      const control = document.createElement('div');
+      control.className = 'hotkey-control';
+
+      const capture = document.createElement('button');
+      capture.type = 'button';
+      capture.className = 'hotkey-capture';
+
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'hotkey-clear';
+      clearBtn.textContent = 'x';
+      clearBtn.title = 'Clear hotkey';
+
+      const updateLabel = () => {{
+        capture.textContent = hidden.value || 'Press keys';
+        capture.classList.toggle('is-empty', !hidden.value);
+        clearBtn.disabled = !hidden.value;
+      }};
+
+      capture.addEventListener('keydown', event => {{
+        event.preventDefault();
+        event.stopPropagation();
+        const combo = normalizeHotkeyEvent(event);
+        if (!combo) return;
+        hidden.value = combo;
+        updateLabel();
+        refreshDirtyState();
+      }});
+      clearBtn.addEventListener('click', () => {{
+        hidden.value = '';
+        updateLabel();
+        refreshDirtyState();
+        capture.focus();
+      }});
+
+      control.appendChild(capture);
+      control.appendChild(clearBtn);
+      control.appendChild(hidden);
+      updateLabel();
+      return {{ control, readValue: () => hidden.value }};
     }}
 
     function createInput(input, value, info) {{
@@ -286,6 +387,10 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
         }}
         control.appendChild(hidden);
         readDirtyValue = () => coerceControlValue(hidden, hidden.value);
+      }} else if (input.type === 'hotkey') {{
+        const hotkey = createHotkeyInput(input, value);
+        control = hotkey.control;
+        readDirtyValue = hotkey.readValue;
       }} else if (input.type === 'select') {{
         control = document.createElement('select');
         resolveInputOptions(input, info).forEach(opt => {{
@@ -319,7 +424,7 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
             : control.value;
       }}
 
-      if (input.type !== 'multi-select' && input.type !== 'extension-toggle' && input.type !== 'list-select') {{
+      if (input.type !== 'multi-select' && input.type !== 'extension-toggle' && input.type !== 'list-select' && input.type !== 'hotkey') {{
         control.dataset.inputId = input.id;
         control.dataset.inputType = input.type;
         if (input.type === 'select') {{
@@ -404,7 +509,8 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
         title: tab.title || fallbackTitle || 'Tab',
         description: tab.description || '',
         sections: Array.isArray(tab.sections) ? tab.sections.map(String) : [],
-        showStatus: Boolean(tab.showStatus)
+        showStatus: Boolean(tab.showStatus),
+        showCommands: Boolean(tab.showCommands)
       }};
     }}
 

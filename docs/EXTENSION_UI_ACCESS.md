@@ -14,13 +14,13 @@ Provide a stable, user-facing way to open an extension configuration UI without 
    - Host reads `manifest.json` inputs and optional `settings` metadata and renders a dedicated extension settings page.
    - If `settings.tabs` is declared, the page renders those user-defined tabs.
    - If no tabs are declared, the page renders a single combined view without a tab strip.
-   - Extension pages render settings and status only; manifest actions are surfaced centrally from **Core -> Extensions**.
+   - Extension pages render settings and status, and can also render action buttons when a tab declares `showCommands`.
    - Stored config is persisted under a dedicated extension config file.
    - Extensions may declare `settings.applyActions` so saving the page can also apply the saved config to the live host state.
 
 ## Why This Works
 
-- Uses already-defined descriptor inputs (`text`, `select`, `list-select`, `folder-picker`, `file-picker`, etc.).
+- Uses already-defined descriptor inputs (`text`, `hotkey`, `select`, `list-select`, `folder-picker`, `file-picker`, etc.).
 - Allows richer settings pages through optional `settings.sections`, `settings.tabs`, per-field descriptions, `settings.status` metadata, and `settings.applyActions`.
 - Keeps extension authoring declarative and AI-friendly.
 - Avoids hardcoding per-extension UI.
@@ -52,6 +52,7 @@ Recommended config actions in UI:
   - `~/.Copper/extensions/<extension-id>/status.json`
 - Legacy `data.json` is still read as a fallback during migration.
 - UI now uses dedicated extension pages with optional manifest-defined tabs.
+- Extension tabs that declare `showCommands` render action buttons next to their settings; UI-triggered actions receive the saved extension config as inputs.
 - Core settings use fixed tabs for **General**, **Package Install**, and **Extensions**.
 - Core **Extensions** renders discoverable extensions as cards with enable/disable controls, a settings shortcut, and lazy-loaded command help generated from manifest actions.
 - Shared package-install inputs now live on the **Core** settings page instead of inside the desktop torrent extension settings.

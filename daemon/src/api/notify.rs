@@ -1,3 +1,9 @@
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 pub fn notify(message: &str) {
     #[cfg(target_os = "windows")]
     notify_windows(message);
@@ -21,16 +27,17 @@ fn notify_windows(message: &str) {
         Start-Sleep -Milliseconds 4500;\
         $n.Dispose()"
     );
-    let _ = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-WindowStyle",
-            "Hidden",
-            "-NonInteractive",
-            "-Command",
-            &script,
-        ])
-        .spawn();
+    let mut command = std::process::Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-NonInteractive",
+        "-Command",
+        &script,
+    ]);
+    command.creation_flags(CREATE_NO_WINDOW);
+    let _ = command.spawn();
 }
 
 #[cfg(target_os = "macos")]

@@ -223,6 +223,13 @@ mod tests {
                         "description": "Choose which resolutions appear in the tray menu.",
                         "default": ["1920x1080@60"],
                         "optionsSource": "dynamicOptions.resolutionModes"
+                    }},
+                    {{
+                        "id": "triggerKey",
+                        "type": "hotkey",
+                        "label": "Trigger key",
+                        "description": "Capture the key or key combination.",
+                        "default": "ctrl+alt+f12"
                     }}
                 ],
                 "actions": [
@@ -314,6 +321,10 @@ mod tests {
         assert_eq!(
             descriptor.inputs[3].options_source.as_deref(),
             Some("dynamicOptions.resolutionModes")
+        );
+        assert_eq!(
+            descriptor.inputs[4].field_type,
+            crate::descriptor::InputType::Hotkey
         );
         let status = settings.status.expect("status metadata");
         assert_eq!(status.fields.len(), 1);

@@ -1,3 +1,9 @@
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[derive(Debug, Clone)]
 pub struct ShellResult {
     pub code: i32,
@@ -6,7 +12,10 @@ pub struct ShellResult {
 }
 
 pub fn run(cmd: &str, args: &[String]) -> ShellResult {
-    match std::process::Command::new(cmd).args(args).output() {
+    let mut command = std::process::Command::new(cmd);
+    command.args(args);
+    apply_hidden_window(&mut command);
+    match command.output() {
         Ok(output) => ShellResult {
             code: output.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -26,15 +35,22 @@ pub fn which(binary: &str) -> Option<String> {
     } else {
         "which"
     };
-    let output = std::process::Command::new(locator)
-        .arg(binary)
-        .output()
-        .ok()?;
+    let mut command = std::process::Command::new(locator);
+    command.arg(binary);
+    apply_hidden_window(&mut command);
+    let output = command.output().ok()?;
     if output.status.success() {
         let path = String::from_utf8_lossy(&output.stdout);
         Some(path.lines().next().unwrap_or("").trim().to_string())
     } else {
         None
+    }
+}
+
+fn apply_hidden_window(command: &mut std::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 

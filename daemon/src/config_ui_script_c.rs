@@ -371,6 +371,19 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
         appendCard(statusHost.firstElementChild, statusTab ? statusTab.id : fallbackTabId, false);
       }}
 
+      const commandsTab = declaredTabs.find(tab => tab.showCommands);
+      if (commandsTab) {{
+        appendCard(
+          createCommandRunCard(
+            descriptor,
+            'Commands',
+            'Run this extension after saving any settings you want the command to use.'
+          ),
+          commandsTab.id,
+          false
+        );
+      }}
+
       if (!currentTabs.some(tab => tab.id === currentTab)) {{
         currentTab = currentTabs[0].id;
       }}

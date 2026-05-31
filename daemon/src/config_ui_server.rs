@@ -326,7 +326,12 @@ pub(super) fn handle_connection(
             if extension_id.is_empty() || !state.extension_ids.contains(extension_id) {
                 HttpResponse::not_found()
             } else {
-                match handle_trigger_extension(state, extension_id, action_id) {
+                let inputs = if request.body.is_empty() {
+                    state.state_store.inspect_config(extension_id)?.value
+                } else {
+                    parse_json_object(&request.body)?
+                };
+                match handle_trigger_extension(state, extension_id, action_id, inputs) {
                     Ok(resp) => resp,
                     Err(err) => HttpResponse::bad_request(err.to_string()),
                 }
@@ -344,6 +349,7 @@ fn handle_trigger_extension(
     state: &UiServerState,
     extension_id: &str,
     action_id: Option<&str>,
+    inputs: serde_json::Value,
 ) -> Result<HttpResponse, UiConfigError> {
     use crate::execution::ExecutionEngine;
     use crate::extension::load_runtime_registry;
@@ -359,7 +365,7 @@ fn handle_trigger_extension(
         .prepare_trigger(ext, action_id)
         .map_err(UiConfigError::Request)?;
     engine
-        .execute_trigger(&prepared, &serde_json::json!({}))
+        .execute_trigger(&prepared, &inputs)
         .map_err(UiConfigError::Request)?;
     Ok(HttpResponse::ok_json(&serde_json::json!({
         "ok": true,

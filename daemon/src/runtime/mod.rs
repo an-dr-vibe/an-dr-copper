@@ -6,11 +6,15 @@ use crate::extension::Extension;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use thiserror::Error;
 
 pub const RUNTIME_ABI_VERSION: &str = "copper.runtime/1";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub trait RuntimeAdapter {
     fn on_load(&self, _extension: &Extension) -> Result<(), RuntimeError> {
@@ -154,12 +158,14 @@ impl RuntimeAdapter for SubprocessRuntime {
             extension: extension.clone(),
             action_id: action_id.map(str::to_string),
         };
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        command
             .args(["internal", "runtime-trigger"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        apply_hidden_window(&mut command);
+        let mut child = command.spawn()?;
 
         if let Some(stdin) = child.stdin.as_mut() {
             serde_json::to_writer(&mut *stdin, &request)?;
@@ -193,6 +199,13 @@ impl RuntimeAdapter for SubprocessRuntime {
             code: error.code,
             message: error.message,
         })
+    }
+}
+
+fn apply_hidden_window(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 

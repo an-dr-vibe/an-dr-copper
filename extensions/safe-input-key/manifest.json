@@ -8,10 +8,17 @@
   "inputs": [
     {
       "id": "triggerKey",
-      "type": "text",
+      "type": "hotkey",
       "label": "Trigger key / combo",
       "description": "Key or combo to map to this extension in your OS hotkey manager (e.g. scroll_lock, ctrl+alt+f12). Point the OS shortcut at: copperd trigger safe-input-key",
       "default": "scroll_lock"
+    },
+    {
+      "id": "text",
+      "type": "text",
+      "label": "Text to save",
+      "description": "Text saved in Copper settings and copied to the OS keychain when you run Save text.",
+      "default": ""
     }
   ],
   "actions": [
@@ -42,7 +49,7 @@
       {
         "id": "config",
         "title": "Configuration",
-        "sections": ["trigger-key"],
+        "sections": ["trigger-key", "saved-text"],
         "showCommands": true
       }
     ],
@@ -52,6 +59,12 @@
         "title": "Trigger key",
         "description": "The key or combo you will map to 'copperd trigger safe-input-key' in AutoHotkey, Windows keyboard shortcuts, or your OS equivalent.",
         "inputs": ["triggerKey"]
+      },
+      {
+        "id": "saved-text",
+        "title": "Saved text",
+        "description": "Save settings first, then run Save text to copy this value into the OS keychain. Run Clear saved text to delete the keychain entry.",
+        "inputs": ["text"]
       }
     ]
   },

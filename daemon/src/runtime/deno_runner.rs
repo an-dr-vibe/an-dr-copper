@@ -1,10 +1,14 @@
 use crate::api;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
 const BRIDGE_TS: &str = include_str!("../../../sdk/bridge.ts");
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn find_deno() -> Option<PathBuf> {
     let locator = if cfg!(target_os = "windows") {
@@ -12,7 +16,10 @@ pub fn find_deno() -> Option<PathBuf> {
     } else {
         "which"
     };
-    if let Ok(output) = Command::new(locator).arg("deno").output() {
+    let mut command = Command::new(locator);
+    command.arg("deno");
+    apply_hidden_window(&mut command);
+    if let Ok(output) = command.output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout);
             let first = path.lines().next().unwrap_or("").trim();
@@ -56,7 +63,8 @@ pub fn execute_extension(
 
     let inputs_json = serde_json::to_string(inputs).unwrap_or_else(|_| "{}".to_string());
 
-    let mut child = Command::new(&deno)
+    let mut command = Command::new(&deno);
+    command
         .args(["run", "--no-check", "--allow-all"])
         .arg(&bridge_path)
         .env("COPPER_EXTENSION_ID", extension_id)
@@ -65,13 +73,22 @@ pub fn execute_extension(
         .env("COPPER_INPUTS", &inputs_json)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    apply_hidden_window(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|e| format!("failed to spawn deno: {e}"))?;
 
     let result = drive_extension(&mut child, extension_id, store_json_path);
     let _ = std::fs::remove_file(&bridge_path);
     result
+}
+
+fn apply_hidden_window(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 fn drive_extension(child: &mut Child, extension_id: &str, store_path: &str) -> Result<(), String> {

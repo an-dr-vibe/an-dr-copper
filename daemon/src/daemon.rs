@@ -7,6 +7,7 @@ use crate::extension::{
     core_extensions_dir, default_extensions_dir, load_runtime_registry, Registry,
 };
 use crate::host_extensions::HostExtensionRegistry;
+use crate::hotkey::HotkeyController;
 use crate::logging;
 use crate::state_store::ExtensionStateStore;
 use crate::tray::TrayController;
@@ -217,6 +218,12 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
         .as_ref()
         .map(|controller| controller.specs().len())
         .unwrap_or(0);
+    let _hotkeys = HotkeyController::initialize(
+        Arc::clone(&running),
+        config.bind_addr.clone(),
+        state.state_store.clone(),
+    )
+    .map_err(DaemonError::Tray)?;
 
     logging::info(format!(
         "Daemon started on {} (user extensions: {}, core extensions: {}, config UI: {}, additional tray icons: {})",
