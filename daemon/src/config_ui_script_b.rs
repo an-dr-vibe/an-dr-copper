@@ -373,56 +373,6 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
       return card;
     }}
 
-    function renderCommands(target, commands) {{
-      if (!commands.length) {{
-        return null;
-      }}
-      const card = createCard('Commands', 'Manual operations exposed by this extension and how to use them.');
-      const list = document.createElement('div');
-      list.className = 'command-list';
-      commands.forEach(command => {{
-        const item = document.createElement('div');
-        item.className = 'command-item';
-
-        const title = document.createElement('div');
-        title.className = 'command-title';
-        title.textContent = command.label || command.id;
-        item.appendChild(title);
-
-        const meta = document.createElement('div');
-        meta.className = 'command-meta mono';
-        meta.textContent = command.id;
-        item.appendChild(meta);
-
-        const desc = document.createElement('p');
-        desc.className = 'command-desc';
-        desc.textContent = command.description || 'No description provided.';
-        item.appendChild(desc);
-
-        const usage = Array.isArray(command.usage) ? command.usage : [];
-        if (usage.length > 0) {{
-          const helpTitle = document.createElement('div');
-          helpTitle.className = 'command-help-title';
-          helpTitle.textContent = 'How to use';
-          item.appendChild(helpTitle);
-
-          const helpList = document.createElement('ul');
-          helpList.className = 'command-help-list';
-          usage.forEach(step => {{
-            const li = document.createElement('li');
-            li.textContent = step;
-            helpList.appendChild(li);
-          }});
-          item.appendChild(helpList);
-        }}
-
-        list.appendChild(item);
-      }});
-      card.appendChild(list);
-      target.appendChild(card);
-      return card;
-    }}
-
     function normalizeTabSpec(tab, fallbackTitle) {{
       return {{
         id: String(tab.id || fallbackTitle || 'tab').trim(),

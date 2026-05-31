@@ -29,62 +29,6 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
     let currentConfig = {{}};
     let currentInfo = {{}};
     let currentTabs = [];
-    const extensionInfoCache = new Map();
-
-    async function loadExtensionInfoCached(extensionId) {{
-      if (extensionInfoCache.has(extensionId)) {{
-        return extensionInfoCache.get(extensionId);
-      }}
-      const info = await loadJson('/info/extension/' + encodeURIComponent(extensionId));
-      extensionInfoCache.set(extensionId, info);
-      return info;
-    }}
-
-    async function toggleExtensionCommands(descriptor, panel, button) {{
-      const shouldExpand = button.dataset.expanded !== 'true';
-      if (!shouldExpand) {{
-        panel.hidden = true;
-        button.dataset.expanded = 'false';
-        button.textContent = 'See commands';
-        return;
-      }}
-
-      button.dataset.expanded = 'true';
-      button.textContent = 'Loading commands...';
-
-      if (panel.dataset.loading === 'true') {{
-        return;
-      }}
-
-      if (!panel.dataset.loaded) {{
-        panel.dataset.loading = 'true';
-        panel.innerHTML = '';
-        try {{
-          const info = await loadExtensionInfoCached(descriptor.id);
-          const commands = Array.isArray(info.commands) ? info.commands : [];
-          if (commands.length === 0) {{
-            const empty = document.createElement('div');
-            empty.className = 'empty';
-            empty.textContent = 'No user-facing commands are available for this extension.';
-            panel.appendChild(empty);
-          }} else {{
-            renderCommands(panel, commands);
-          }}
-          panel.dataset.loaded = 'true';
-        }} catch (err) {{
-          const failure = document.createElement('div');
-          failure.className = 'empty';
-          failure.textContent = 'Failed to load commands: ' + err;
-          panel.appendChild(failure);
-        }} finally {{
-          panel.dataset.loading = 'false';
-        }}
-      }}
-
-      const expanded = button.dataset.expanded === 'true';
-      panel.hidden = !expanded;
-      button.textContent = expanded ? 'Hide commands' : 'See commands';
-    }}
 
     function createCoreExtensionCard(descriptor, enabled) {{
       const card = document.createElement('div');
@@ -136,10 +80,6 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
       disableBtn.type = 'button';
       disableBtn.className = 'mini-btn';
       disableBtn.textContent = 'Disable';
-      const commandsBtn = document.createElement('button');
-      commandsBtn.type = 'button';
-      commandsBtn.className = 'mini-btn';
-      commandsBtn.textContent = 'See commands';
       const settingsBtn = document.createElement('button');
       settingsBtn.type = 'button';
       settingsBtn.className = 'mini-btn';
@@ -171,25 +111,15 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
         renderSection().catch(err => setStatus('Load failed: ' + err));
       }});
 
-      const commandsPanel = document.createElement('div');
-      commandsPanel.className = 'command-panel';
-      commandsPanel.hidden = true;
-      commandsBtn.addEventListener('click', () => {{
-        toggleExtensionCommands(descriptor, commandsPanel, commandsBtn)
-          .catch(err => setStatus('Load failed: ' + err));
-      }});
-
       actions.appendChild(enableBtn);
       actions.appendChild(disableBtn);
       actions.appendChild(settingsBtn);
-      actions.appendChild(commandsBtn);
       actions.appendChild(state);
       updateState();
 
       head.appendChild(summary);
       head.appendChild(actions);
       card.appendChild(head);
-      card.appendChild(commandsPanel);
       registerDirtyTracker(card, () => hidden.value === 'true');
       return card;
     }}

@@ -401,7 +401,7 @@
         assert!(html.contains("Desktop Torrent Organizer"));
         assert!(html.contains("Save settings"));
         assert!(html.contains("Status"));
-        assert!(html.contains("See commands"));
+        assert!(html.contains("renderCommandsPage"));
         assert!(html.contains("Recent status"));
         assert!(html.contains("URLSearchParams(window.location.search)"));
         assert!(html.contains("const THEME_OPTIONS"));
