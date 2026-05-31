@@ -32,3 +32,4 @@ This role does not write code — it produces a clear plan that a developer can 
 - [ ] Does it introduce any new mandatory dependency? If yes, are features explicit?
 - [ ] Does the module stay within the 300–600 line guideline, or is a split needed?
 - [ ] Will CI still pass on all three platforms (Windows, macOS, Linux)?
+- [ ] Does the plan avoid committing changes unless the user explicitly asks for a commit?

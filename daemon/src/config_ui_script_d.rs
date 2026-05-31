@@ -46,7 +46,7 @@ pub(super) const CONFIG_UI_SCRIPT_D: &str = r#"
         const coreDefaults = {{
           userExtensionsDir: '~/.Copper/extensions',
           autoStart: false,
-          uiTheme: 'copper-light',
+          uiTheme: 'obsidian-light',
           disabledExtensions: [],
           extensionPackage: '',
           extensionsInstallDir: '~/.Copper/extensions'
@@ -154,6 +154,7 @@ pub(super) const CONFIG_UI_SCRIPT_D: &str = r#"
       }});
     }}
 
+    applyTheme(model.coreUiTheme || 'obsidian-light');
     updateUrl();
     renderNav();
 "#;

@@ -31,3 +31,4 @@ Enforce the TDD workflow for any change that touches extension behavior.
 - Use `-- --nocapture` (and pipe `2>&1`) to see `eprintln!` output from failing tests.
 - The TDD loop (RED → GREEN → REFACTOR) is required for any change to `daemon/tests/extension_utr.rs`.
 - Do not mark a test as `#[ignore]` to make CI pass — investigate and fix the root cause.
+- Do not create commits unless the user explicitly asks for a commit.

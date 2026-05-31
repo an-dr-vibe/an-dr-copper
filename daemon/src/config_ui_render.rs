@@ -13,8 +13,10 @@ pub(super) fn render_html(state: &UiServerState) -> String {
         "selectedExtensionId": state.selected_extension_id,
         "descriptors": state.descriptors,
         "discoverableDescriptors": state.discoverable_descriptors,
+        "coreExtensionIds": state.core_extension_ids,
         "allowClose": state.allow_close,
         "authToken": state.auth_token,
+        "coreUiTheme": initial_ui_theme(state),
     });
     let model_inline = serde_json::to_string(&model).unwrap_or_else(|_| "{}".to_string());
 
@@ -72,4 +74,19 @@ pub(super) fn render_html(state: &UiServerState) -> String {
 
 fn unescape_template(value: &str) -> String {
     value.replace("{{", "{").replace("}}", "}")
+}
+
+fn initial_ui_theme(state: &UiServerState) -> String {
+    state
+        .state_store
+        .inspect_core_config()
+        .ok()
+        .and_then(|loaded| {
+            loaded
+                .value
+                .get("uiTheme")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "obsidian-light".to_string())
 }

@@ -1,48 +1,61 @@
 pub(super) const CONFIG_UI_STYLE: &str = r#"
   <style>
     :root {{
-      --bg:#14161a; --panel:#1d2026; --panel2:#181b20; --panel3:#111319; --line:#303540; --text:#e6e9ef; --muted:#9aa3b2; --accent:#7aa2f7; --accent-soft:rgba(122,162,247,.14);
+      --bg:#ffffff; --panel:#f6f6f6; --panel2:#f7f7f7; --panel3:#ffffff; --line:#dddddd; --text:#1f1f1f; --muted:#6f6f6f; --accent:#705dcf; --accent-soft:rgba(112,93,207,.14);
     }}
     * {{ box-sizing:border-box; }}
-    body {{ margin:0; background:var(--bg); color:var(--text); font-family:Segoe UI, Arial, sans-serif; }}
-    .layout {{ display:grid; grid-template-columns:280px 1fr; min-height:100vh; }}
-    .sidebar {{ background:var(--panel2); border-right:1px solid var(--line); padding:18px 14px; }}
-    .main {{ padding:28px; max-width:980px; width:100%; }}
-    .title {{ font-size:18px; font-weight:700; margin:4px 0 4px; }}
-    .subtitle {{ color:var(--muted); font-size:13px; margin:0 0 18px; }}
+    body {{
+      margin:0; background:var(--bg); color:var(--text);
+      font-family:Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+      font-size:16px;
+    }}
+    .layout {{ display:grid; grid-template-columns:324px minmax(0, 1fr); min-height:100vh; }}
+    .sidebar {{ background:var(--panel2); border-right:1px solid var(--line); padding:30px 20px 24px; overflow:auto; }}
+    .main {{ padding:48px 56px 40px; max-width:920px; width:100%; }}
+    .title {{ color:var(--muted); font-size:16px; font-weight:700; margin:20px 0 18px; }}
+    .subtitle {{ display:none; }}
+    .nav-section {{ margin:0 0 26px; }}
+    .nav-section-title {{
+      color:var(--muted); font-size:13px; font-weight:700; margin:0 0 8px; padding:0 12px;
+    }}
     .nav-btn {{
-      width:100%; text-align:left; border:1px solid var(--line); background:transparent; color:var(--text);
-      padding:12px; margin-bottom:8px; border-radius:10px; cursor:pointer;
+      width:100%; text-align:left; border:0; background:transparent; color:var(--text);
+      padding:8px 12px; margin-bottom:2px; border-radius:6px; cursor:pointer;
     }}
-    .nav-btn.active {{ background:var(--accent-soft); border-color:var(--accent); }}
-    .nav-name {{ display:block; font-weight:600; }}
-    .nav-meta {{ display:block; color:var(--muted); font-size:12px; margin-top:3px; }}
-    .page-eyebrow {{ color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-size:12px; margin-bottom:10px; }}
-    .page-title {{ font-size:30px; line-height:1.15; margin:0 0 8px; }}
-    .page-sub {{ color:var(--muted); margin:0 0 18px; max-width:720px; }}
-    .tab-row {{ display:flex; gap:8px; margin:0 0 20px; flex-wrap:wrap; }}
+    .nav-btn:hover {{ background:rgba(0,0,0,.045); }}
+    .nav-btn.active {{ background:rgba(0,0,0,.075); }}
+    .nav-name {{ display:block; font-weight:400; line-height:1.25; }}
+    .nav-meta {{ display:none; }}
+    .page-eyebrow {{ color:var(--muted); font-size:13px; margin-bottom:8px; }}
+    .page-title {{ font-size:28px; font-weight:600; line-height:1.2; margin:0 0 6px; }}
+    .page-sub {{ color:var(--muted); margin:0 0 22px; max-width:720px; line-height:1.45; }}
+    .tab-row {{ display:flex; gap:6px; margin:0 0 18px; flex-wrap:wrap; }}
     .tab-btn {{
-      border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--muted);
-      padding:8px 14px; cursor:pointer; font-size:13px; font-weight:600;
+      border:0; border-radius:6px; background:transparent; color:var(--muted);
+      padding:7px 10px; cursor:pointer; font-size:14px; font-weight:500;
     }}
-    .tab-btn.active {{ color:var(--text); border-color:var(--accent); background:var(--accent-soft); }}
-    .card {{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px; }}
-    .card-title {{ font-size:18px; font-weight:700; margin:0 0 6px; }}
-    .card-sub {{ color:var(--muted); margin:0 0 14px; font-size:14px; }}
-    .input-shell {{ margin:0 0 16px; padding:12px; border:1px solid transparent; border-radius:12px; transition:border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }}
-    .input-shell:first-of-type {{ margin-top:-4px; }}
+    .tab-btn:hover {{ background:rgba(0,0,0,.045); color:var(--text); }}
+    .tab-btn.active {{ color:var(--text); background:var(--accent-soft); }}
+    .card {{ background:var(--panel); border:0; border-radius:8px; padding:24px; margin-bottom:14px; }}
+    .card-title {{ font-size:23px; font-weight:500; margin:0 0 6px; }}
+    .card-sub {{ color:var(--muted); margin:0 0 18px; font-size:16px; line-height:1.45; }}
+    .input-shell {{ margin:0 0 14px; padding:0; border:1px solid transparent; border-radius:8px; transition:border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }}
+    .input-shell:first-of-type {{ margin-top:0; }}
     .input-shell.is-dirty {{ border-color:#b9576d; background:rgba(185,87,109,.08); box-shadow:0 0 0 1px rgba(185,87,109,.18) inset; }}
-    .input-head {{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 6px; }}
-    label {{ display:block; font-weight:600; margin:0; }}
+    .input-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 4px; }}
+    label {{ display:block; font-size:16px; font-weight:500; margin:0; }}
     .unsaved-badge {{
       display:inline-flex; align-items:center; gap:6px; border-radius:999px; padding:4px 8px;
       background:rgba(185,87,109,.16); color:#ffb7c6; font-size:12px; font-weight:700; letter-spacing:.02em;
     }}
     .unsaved-badge::before {{ content:'*'; font-size:13px; line-height:1; }}
-    .field-help {{ color:var(--muted); font-size:13px; margin:0 0 8px; }}
+    .field-help {{ color:var(--muted); font-size:14px; line-height:1.45; margin:0 0 10px; max-width:560px; }}
     input, select {{
-      width:100%; border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text);
-      padding:10px;
+      width:100%; border:1px solid var(--line); border-radius:6px; background:var(--panel3); color:var(--text);
+      padding:8px 12px; font:inherit; min-height:38px;
+    }}
+    input:focus, select:focus, button:focus-visible {{
+      outline:2px solid var(--accent-soft); outline-offset:1px; border-color:var(--accent);
     }}
     .input-shell.is-dirty input,
     .input-shell.is-dirty select,
@@ -50,11 +63,13 @@ pub(super) const CONFIG_UI_STYLE: &str = r#"
       border-color:#b9576d;
       box-shadow:0 0 0 1px rgba(185,87,109,.22);
     }}
-    .btn-row {{ display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }}
+    .btn-row {{ display:flex; gap:8px; margin-top:18px; flex-wrap:wrap; }}
     button {{
-      border:1px solid var(--line); border-radius:10px; background:var(--panel3); color:var(--text); padding:10px 14px; cursor:pointer;
+      border:1px solid var(--line); border-radius:6px; background:var(--panel3); color:var(--text); padding:8px 12px; cursor:pointer; font:inherit;
     }}
-    button.primary {{ background:var(--accent); border-color:transparent; color:#0b1020; font-weight:700; }}
+    button:hover {{ background:rgba(0,0,0,.045); }}
+    button.primary {{ background:var(--accent); border-color:transparent; color:#ffffff; font-weight:600; }}
+    button.primary:hover {{ filter:brightness(.96); }}
     button.primary.is-dirty {{ box-shadow:0 0 0 2px rgba(185,87,109,.35); }}
     [hidden] {{ display:none !important; }}
     .status-msg {{ color:var(--muted); margin-top:8px; min-height:20px; }}
@@ -63,7 +78,7 @@ pub(super) const CONFIG_UI_STYLE: &str = r#"
     .kv-key {{ color:var(--muted); }}
     .kv-value {{ word-break:break-word; }}
     .command-list {{ display:grid; gap:10px; }}
-    .command-item {{ border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--panel3); }}
+    .command-item {{ border:1px solid var(--line); border-radius:6px; padding:12px; background:var(--panel3); }}
     .command-title {{ font-weight:700; margin:0 0 4px; }}
     .command-meta {{ color:var(--muted); font-size:12px; margin:0 0 6px; }}
     .command-desc {{ color:var(--text); margin:0; font-size:14px; }}
@@ -79,7 +94,7 @@ pub(super) const CONFIG_UI_STYLE: &str = r#"
     .toggle-btn.active-disable {{ background:#4a2222; border-color:#a25555; color:#ffecec; }}
     .toggle-state {{ color:var(--muted); font-size:13px; }}
     .extension-list {{ display:grid; gap:12px; }}
-    .extension-card {{ border:1px solid var(--line); border-radius:12px; padding:14px; background:var(--panel3); }}
+    .extension-card {{ border:1px solid var(--line); border-radius:6px; padding:14px; background:var(--panel3); }}
     .extension-card.is-dirty {{ border-color:#b9576d; box-shadow:0 0 0 1px rgba(185,87,109,.18) inset; }}
     .extension-head {{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }}
     .extension-title-row {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
@@ -93,22 +108,22 @@ pub(super) const CONFIG_UI_STYLE: &str = r#"
     .command-panel {{ margin-top:12px; display:grid; gap:10px; }}
     .list-select {{
       display:grid; gap:8px; max-height:220px; overflow:auto; padding:6px; border:1px solid var(--line);
-      border-radius:12px; background:var(--panel3);
+      border-radius:6px; background:var(--panel3);
     }}
     .list-option {{
-      width:100%; text-align:left; padding:10px 12px; border-radius:10px; border:1px solid var(--line);
+      width:100%; text-align:left; padding:10px 12px; border-radius:6px; border:1px solid var(--line);
       background:rgba(255,255,255,.01); color:var(--text);
     }}
     .list-option.active {{ border-color:var(--accent); background:var(--accent-soft); color:var(--text); }}
     .checkbox-item {{
       display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line);
-      border-radius:10px; background:var(--panel3);
+      border-radius:6px; background:var(--panel3);
     }}
     .checkbox-item input {{ width:auto; margin-top:3px; }}
     .command-run-list {{ display:grid; gap:8px; }}
     .command-run-row {{
       display:flex; align-items:center; gap:14px; padding:10px 12px;
-      border:1px solid var(--line); border-radius:10px; background:var(--panel3);
+      border:1px solid var(--line); border-radius:6px; background:var(--panel3);
     }}
     .command-run-info {{ flex:1; min-width:0; }}
     .command-run-label {{ font-weight:600; }}
@@ -126,7 +141,7 @@ pub(super) const CONFIG_UI_STYLE: &str = r#"
     @media (max-width: 900px) {{
       .layout {{ grid-template-columns:1fr; }}
       .sidebar {{ border-right:none; border-bottom:1px solid var(--line); }}
-      .main {{ padding:20px; }}
+      .main {{ padding:24px 18px; }}
       .kv-list {{ grid-template-columns:1fr; }}
     }}
   </style>

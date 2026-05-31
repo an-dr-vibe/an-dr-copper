@@ -4,9 +4,34 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
 
     function renderNav() {{
       navEl.innerHTML = '';
-      navEl.appendChild(createNavButton('core', 'Copper'));
-      navEl.appendChild(createNavButton('commands', 'Commands'));
-      descriptors.forEach(d => navEl.appendChild(createNavButton(`ext:${{d.id}}`, d.name)));
+      const appendGroup = (title, children) => {{
+        if (!children.length) return;
+        const group = document.createElement('section');
+        group.className = 'nav-section';
+        const heading = document.createElement('div');
+        heading.className = 'nav-section-title';
+        heading.textContent = title;
+        group.appendChild(heading);
+        children.forEach(child => group.appendChild(child));
+        navEl.appendChild(group);
+      }};
+      const coreIds = new Set(Array.isArray(model.coreExtensionIds) ? model.coreExtensionIds : []);
+      const coreExtensionButtons = [];
+      const otherExtensionButtons = [];
+      descriptors.forEach(d => {{
+        const button = createNavButton(`ext:${{d.id}}`, d.name);
+        if (coreIds.has(d.id)) {{
+          coreExtensionButtons.push(button);
+        }} else {{
+          otherExtensionButtons.push(button);
+        }}
+      }});
+      appendGroup('Copper', [
+        createNavButton('core', 'Settings'),
+        createNavButton('commands', 'Commands')
+      ]);
+      appendGroup('Core Extensions', coreExtensionButtons);
+      appendGroup('Other Extensions', otherExtensionButtons);
     }}
 
     async function runAction(extensionId, actionId) {{
@@ -282,7 +307,7 @@ pub(super) const CONFIG_UI_SCRIPT_B: &str = r#"
         }}
         readDirtyValue = () => coerceControlValue(control, control.value);
         if (input.id === 'uiTheme') {{
-          applyTheme(control.value || input.default || 'copper-light');
+          applyTheme(control.value || input.default || 'obsidian-light');
         }}
       }} else {{
         control = document.createElement('input');

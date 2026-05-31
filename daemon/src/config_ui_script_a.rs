@@ -3,6 +3,8 @@ pub(super) const CONFIG_UI_SCRIPT_A: &str = r#"
     let discoverableDescriptors = [];
     let byId = {{}};
     const THEME_OPTIONS = [
+      {{ id: 'obsidian-light', label: 'Obsidian Light' }},
+      {{ id: 'obsidian-dark', label: 'Obsidian Dark' }},
       {{ id: 'copper', label: 'Copper Dark' }},
       {{ id: 'copper-light', label: 'Copper Light' }},
       {{ id: 'brass', label: 'Brass Dark' }},
@@ -15,6 +17,16 @@ pub(super) const CONFIG_UI_SCRIPT_A: &str = r#"
       {{ id: 'titanium-light', label: 'Titanium Light' }},
     ];
     const THEMES = {{
+      'obsidian-light': {{
+        bg: '#ffffff', panel: '#f6f6f6', panel2: '#f7f7f7', panel3: '#ffffff',
+        line: '#dddddd', text: '#1f1f1f', muted: '#6f6f6f',
+        accent: '#705dcf', accentSoft: 'rgba(112,93,207,.14)'
+      }},
+      'obsidian-dark': {{
+        bg: '#1e1e1e', panel: '#262626', panel2: '#242424', panel3: '#1f1f1f',
+        line: '#3a3a3a', text: '#dcddde', muted: '#a6a6a6',
+        accent: '#8b7cf6', accentSoft: 'rgba(139,124,246,.18)'
+      }},
       copper: {{
         bg: '#181210', panel: '#241b18', panel2: '#1d1613', panel3: '#120c0a',
         line: '#533327', text: '#f5ebe4', muted: '#bc9e8f',
@@ -68,8 +80,8 @@ pub(super) const CONFIG_UI_SCRIPT_A: &str = r#"
     }};
 
     function normalizeThemeId(themeId) {{
-      const normalized = String(themeId || 'copper-light').trim().toLowerCase();
-      return Object.prototype.hasOwnProperty.call(THEMES, normalized) ? normalized : 'copper-light';
+      const normalized = String(themeId || 'obsidian-light').trim().toLowerCase();
+      return Object.prototype.hasOwnProperty.call(THEMES, normalized) ? normalized : 'obsidian-light';
     }}
 
     function resolveTheme(themeId) {{
@@ -96,6 +108,9 @@ pub(super) const CONFIG_UI_SCRIPT_A: &str = r#"
         ? nextModel.discoverableDescriptors
         : descriptors;
       byId = Object.fromEntries(descriptors.map(d => [d.id, d]));
+      model.coreExtensionIds = Array.isArray(nextModel.coreExtensionIds)
+        ? nextModel.coreExtensionIds
+        : (Array.isArray(model.coreExtensionIds) ? model.coreExtensionIds : []);
       model.selectedExtensionId = nextModel.selectedExtensionId || '';
       if (syncSelection && currentSection && currentSection.startsWith('ext:')) {{
         const id = currentSection.slice(4);

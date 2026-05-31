@@ -42,7 +42,8 @@ Before editing code, read these files in order:
 4. Prefer PowerShell (`.ps1`) scripts as the cross-platform default (`pwsh` on Windows/macOS/Linux).
 5. Do not introduce mandatory GUI/runtime dependencies that break headless CI builds.
 6. Update docs (`docs/`) whenever architecture or CLI behavior changes.
-7. Use TDD for extension work: write or update extension UTR tests first, then implement code, then refactor.
+7. Do not create commits unless the user explicitly asks for a commit.
+8. Use TDD for extension work: write or update extension UTR tests first, then implement code, then refactor.
 
 ## Validation Checklist
 
@@ -86,4 +87,3 @@ When generating or editing extensions:
    - `manifest.json`
    - `main.ts`
 4. Keep permissions minimal and explicit.
-

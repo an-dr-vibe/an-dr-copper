@@ -12,8 +12,9 @@ use crate::logging;
 use crate::state_store::{merge_json_object, ExtensionStateStore};
 use serde_json::Value;
 use std::collections::HashSet;
+use std::fs;
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -91,6 +92,19 @@ pub(super) fn build_ui_state(
 
     let core_config = load_core_config()?;
     let descriptors = visible_descriptors(&discoverable_descriptors, &core_config);
+    let user_extensions_root = normalize_path(extensions_dir);
+    let core_extension_ids = registry
+        .list()
+        .filter(|extension| {
+            extension
+                .root
+                .parent()
+                .map(normalize_path)
+                .map(|root| root != user_extensions_root)
+                .unwrap_or(true)
+        })
+        .map(|extension| extension.descriptor.id.clone())
+        .collect::<HashSet<_>>();
 
     let extension_ids = descriptors
         .iter()
@@ -113,6 +127,7 @@ pub(super) fn build_ui_state(
         selected_extension_id,
         descriptors,
         discoverable_descriptors,
+        core_extension_ids,
         extension_ids,
         user_extensions_dir: extensions_dir.to_path_buf(),
         core_extensions_dir: core_extensions_dir(),
@@ -123,6 +138,10 @@ pub(super) fn build_ui_state(
         origin,
         allow_close,
     })
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 pub(super) fn visible_descriptors(
@@ -213,6 +232,7 @@ pub(super) fn handle_connection(
             "selectedExtensionId": state.selected_extension_id,
             "descriptors": state.descriptors,
             "discoverableDescriptors": state.discoverable_descriptors,
+            "coreExtensionIds": state.core_extension_ids,
         }))?
     } else if request.method == HttpMethod::Get && request.path == "/config/core" {
         HttpResponse::ok_json(&state.state_store.inspect_core_config()?.value)?

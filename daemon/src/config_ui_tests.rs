@@ -97,6 +97,9 @@
             extension_ids: [descriptor.id.clone()].into_iter().collect::<HashSet<_>>(),
             descriptors: vec![descriptor.clone()],
             discoverable_descriptors: vec![descriptor],
+            core_extension_ids: ["desktop-torrent-organizer".to_string()]
+                .into_iter()
+                .collect::<HashSet<_>>(),
             user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
             core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
             runtime_extension_roots: vec![
@@ -260,6 +263,7 @@
             extension_ids: [enabled.id.clone()].into_iter().collect::<HashSet<_>>(),
             descriptors: vec![enabled.clone()],
             discoverable_descriptors: vec![enabled, hidden.clone()],
+            core_extension_ids: HashSet::new(),
             user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
             core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
             runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],
@@ -324,6 +328,7 @@
             extension_ids: [enabled.id.clone()].into_iter().collect::<HashSet<_>>(),
             descriptors: vec![enabled],
             discoverable_descriptors: vec![hidden.clone()],
+            core_extension_ids: HashSet::new(),
             user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
             core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
             runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],
@@ -396,6 +401,8 @@
         let html = render_html(&sample_state());
         assert!(html.contains("Settings"));
         assert!(html.contains("Copper"));
+        assert!(html.contains("Core Extensions"));
+        assert!(html.contains("Other Extensions"));
         assert!(html.contains("Launch Copper at login"));
         assert!(html.contains("UI theme"));
         assert!(html.contains("Desktop Torrent Organizer"));
@@ -405,6 +412,7 @@
         assert!(html.contains("Recent status"));
         assert!(html.contains("URLSearchParams(window.location.search)"));
         assert!(html.contains("const THEME_OPTIONS"));
+        assert!(html.contains("Obsidian Light"));
         assert!(html.contains("Copper Dark"));
         assert!(html.contains("applyTheme"));
         assert!(html.contains("unsaved-badge"));
@@ -413,6 +421,21 @@
         assert_eq!(html.matches("<script>").count(), 1);
         assert!(html.contains(UI_AUTH_HEADER));
         assert!(!html.contains("{UI_AUTH_HEADER}"));
+    }
+
+    #[test]
+    fn render_html_applies_saved_core_theme_before_first_section_load() {
+        let temp = tempdir().expect("tempdir");
+        let mut state = sample_state();
+        state.state_store = ExtensionStateStore::new(temp.path().join(".Copper/extensions"));
+        let core_path = state.state_store.core_config_path();
+        fs::create_dir_all(core_path.parent().expect("parent")).expect("create parent");
+        fs::write(&core_path, r#"{"uiTheme":"obsidian-dark"}"#).expect("write core config");
+
+        let html = render_html(&state);
+
+        assert!(html.contains(r#""coreUiTheme":"obsidian-dark""#));
+        assert!(html.contains("applyTheme(model.coreUiTheme || 'obsidian-light');"));
     }
 
     #[test]
@@ -526,6 +549,7 @@
             extension_ids: [descriptor.id.clone()].into_iter().collect::<HashSet<_>>(),
             descriptors: vec![descriptor.clone()],
             discoverable_descriptors: vec![descriptor.clone()],
+            core_extension_ids: HashSet::new(),
             user_extensions_dir: PathBuf::from("C:/tmp/copper-user"),
             core_extensions_dir: Some(PathBuf::from("C:/tmp/copper-core")),
             runtime_extension_roots: vec![PathBuf::from("C:/tmp/copper-user")],

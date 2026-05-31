@@ -39,3 +39,4 @@ Read the relevant recipe before writing any code; don't invent structure.
 - Never add a dependency without explicit feature flags.
 - Never write state files directly; use `ExtensionStateStore`.
 - Stubs are intentional — do not "fix" a stub by adding behavior unless that is the task.
+- Do not create commits unless the user explicitly asks for a commit.

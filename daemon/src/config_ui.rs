@@ -90,6 +90,7 @@ pub(crate) struct UiServerState {
     pub(crate) selected_extension_id: String,
     pub(crate) descriptors: Vec<Descriptor>,
     pub(crate) discoverable_descriptors: Vec<Descriptor>,
+    pub(crate) core_extension_ids: HashSet<String>,
     pub(crate) extension_ids: HashSet<String>,
     pub(crate) user_extensions_dir: PathBuf,
     pub(crate) core_extensions_dir: Option<PathBuf>,

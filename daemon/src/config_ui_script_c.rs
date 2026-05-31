@@ -29,6 +29,7 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
     let currentConfig = {{}};
     let currentInfo = {{}};
     let currentTabs = [];
+    let renderGeneration = 0;
 
     function createCoreExtensionCard(descriptor, enabled) {{
       const card = document.createElement('div');
@@ -125,10 +126,12 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
     }}
 
     async function renderSection() {{
+      const generation = ++renderGeneration;
+      const sectionAtStart = currentSection;
       contentViewEl.innerHTML = '';
       setStatus('');
 
-      if (currentSection === 'commands') {{
+      if (sectionAtStart === 'commands') {{
         renderCommandsPage();
         return;
       }}
@@ -167,7 +170,7 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
                 type: 'select',
                 options: THEME_OPTIONS.map(theme => theme.id),
                 optionLabels: Object.fromEntries(THEME_OPTIONS.map(theme => [theme.id, theme.label])),
-                default: 'copper-light'
+                default: 'obsidian-light'
               }}
             ]
           }},
@@ -201,22 +204,25 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
         ];
       }}
 
-      const configTarget = currentSection === 'core'
+      const configTarget = sectionAtStart === 'core'
         ? '/config/core'
-        : '/config/extension/' + encodeURIComponent(currentSection.slice(4));
-      const infoTarget = currentSection === 'core'
+        : '/config/extension/' + encodeURIComponent(sectionAtStart.slice(4));
+      const infoTarget = sectionAtStart === 'core'
         ? '/info/core'
-        : '/info/extension/' + encodeURIComponent(currentSection.slice(4));
+        : '/info/extension/' + encodeURIComponent(sectionAtStart.slice(4));
       const [config, info] = await Promise.all([loadJson(configTarget), loadJson(infoTarget)]);
+      if (generation !== renderGeneration || sectionAtStart !== currentSection) {{
+        return;
+      }}
       currentConfig = config || {{}};
       currentInfo = info || {{}};
 
-      if (currentSection === 'core') {{
+      if (sectionAtStart === 'core') {{
         pageEyebrowEl.textContent = 'Core';
         pageTitleEl.textContent = 'Copper';
         pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
         saveBtn.textContent = 'Save settings';
-        applyTheme((config && config.uiTheme) || 'copper-light');
+        applyTheme((config && config.uiTheme) || 'obsidian-light');
 
         const sections = coreSections(config);
         const coreRows = [
@@ -280,7 +286,7 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
         return;
       }}
 
-      const extensionId = currentSection.slice(4);
+      const extensionId = sectionAtStart.slice(4);
       const descriptor = byId[extensionId];
       if (!descriptor) {{
         throw new Error('Unknown extension section: ' + extensionId);
