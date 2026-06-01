@@ -1,6 +1,7 @@
 #!/usr/bin/env pwsh
 param(
-  [string]$OutputDir = "./dist/release"
+  [string]$OutputDir = "./dist/release",
+  [string]$Target = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,25 +46,51 @@ function Publish-ExtensionArchives {
   }
 }
 
-cargo build --workspace --release
+function Set-MsvcCrossEnv {
+  param([string]$Arch)
+  $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+  if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found; install Visual Studio" }
+  $vsPath = (& $vswhere -latest -property installationPath).Trim()
+  $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
+  if (-not (Test-Path $vcvarsall)) { throw "vcvarsall.bat not found at: $vcvarsall" }
+  Write-Host "Configuring MSVC cross-compile environment: $Arch"
+  $envLines = cmd /c "`"$vcvarsall`" $Arch > nul 2>&1 && set"
+  foreach ($line in $envLines) {
+    if ($line -match '^([^=]+)=(.*)$') {
+      [System.Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
+    }
+  }
+}
+
+$hostTriple = (rustc -vV | Select-String "^host: ").ToString().Split(" ")[1].Trim()
+$buildTarget = if ($Target -ne "") { $Target } else { $hostTriple }
+
+if ($buildTarget -ne $hostTriple) {
+  if ($buildTarget -eq 'aarch64-pc-windows-msvc' -and $hostTriple -match 'x86_64.*windows') {
+    Set-MsvcCrossEnv -Arch 'x64_arm64'
+  }
+  rustup target add $buildTarget
+  if ($LASTEXITCODE -ne 0) { throw "rustup target add $buildTarget failed" }
+  cargo build --workspace --release --target $buildTarget
+} else {
+  cargo build --workspace --release
+}
 if ($LASTEXITCODE -ne 0) {
   throw "Release build failed with exit code $LASTEXITCODE"
 }
 
-$releaseExtensionsDir = Join-Path $repoRoot "target/release/extensions"
-if (Test-Path $releaseExtensionsDir) {
-  Remove-Item $releaseExtensionsDir -Recurse -Force
+$binaryDir = if ($buildTarget -ne $hostTriple) {
+  Join-Path $repoRoot "target/$buildTarget/release"
+} else {
+  Join-Path $repoRoot "target/release"
 }
-Copy-Item -Path (Join-Path $repoRoot "extensions") -Destination $releaseExtensionsDir -Recurse -Force
 
-$hostTriple = (rustc -vV | Select-String "^host: ").ToString().Split(" ")[1].Trim()
-$exeName = if ($IsWindows) { "copperd.exe" } else { "copperd" }
-$binaryPath = Join-Path $repoRoot "target/release/$exeName"
+$targetIsWindows = $buildTarget -match "windows"
+$exeName = if ($targetIsWindows) { "copper.exe" } else { "copper" }
+$binaryPath = Join-Path $binaryDir $exeName
 if (-not (Test-Path $binaryPath)) {
   throw "Release binary not found: $binaryPath"
 }
-$guiExeName = if ($IsWindows) { "copper.exe" } else { "copper" }
-$guiBinaryPath = Join-Path $repoRoot "target/release/$guiExeName"
 
 $resolvedOutputDir = (Resolve-Path -Path $OutputDir -ErrorAction SilentlyContinue)
 if (-not $resolvedOutputDir) {
@@ -71,7 +98,7 @@ if (-not $resolvedOutputDir) {
   $resolvedOutputDir = Resolve-Path -Path $OutputDir
 }
 $releaseRoot = [string]$resolvedOutputDir
-$bundleName = "copper-$hostTriple"
+$bundleName = "copper-$buildTarget"
 $bundlePath = Join-Path $releaseRoot $bundleName
 
 if (Test-Path $bundlePath) {
@@ -80,9 +107,6 @@ if (Test-Path $bundlePath) {
 
 New-Item -ItemType Directory -Path $bundlePath -Force | Out-Null
 Copy-Item -Path $binaryPath -Destination (Join-Path $bundlePath $exeName) -Force
-if (Test-Path $guiBinaryPath) {
-  Copy-Item -Path $guiBinaryPath -Destination (Join-Path $bundlePath $guiExeName) -Force
-}
 Copy-Item -Path (Join-Path $repoRoot "README.md") -Destination (Join-Path $bundlePath "README.md") -Force
 Copy-Item -Path (Join-Path $repoRoot "docs/QUICKSTART.md") -Destination (Join-Path $bundlePath "QUICKSTART.md") -Force
 

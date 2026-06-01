@@ -50,16 +50,19 @@ jobs:
         run: ./scripts/run-tests.ps1
 
   release:
-    name: Release Bundle (${{ matrix.os }})
+    name: Package (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     needs: test
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
 
     steps:
       - name: Checkout
@@ -70,6 +73,8 @@ jobs:
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -79,15 +84,15 @@ jobs:
 
       - name: Build release bundle
         shell: pwsh
-        run: ./scripts/build-release.ps1 -OutputDir ./dist/release-ci
+        run: ./scripts/build-release.ps1 -OutputDir ./dist/release-ci -Target ${{ matrix.target }}
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.os }}
+          name: release-${{ matrix.target }}
           path: |
             dist/release-ci/*.zip
-            dist/release-ci/copper-*
+            dist/release-ci/copper-*/
 
   coverage:
     name: Coverage
