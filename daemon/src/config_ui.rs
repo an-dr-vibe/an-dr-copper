@@ -16,16 +16,6 @@ use thiserror::Error;
 mod browser;
 #[path = "config_ui_render.rs"]
 mod render;
-#[path = "config_ui_script_a.rs"]
-mod render_script_a;
-#[path = "config_ui_script_b.rs"]
-mod render_script_b;
-#[path = "config_ui_script_c.rs"]
-mod render_script_c;
-#[path = "config_ui_script_d.rs"]
-mod render_script_d;
-#[path = "config_ui_style.rs"]
-mod render_style;
 #[path = "config_ui_server.rs"]
 mod server;
 #[cfg(test)]

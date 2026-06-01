@@ -47,6 +47,7 @@ fn configured_hotkey(store: &ExtensionStateStore) -> Result<String, std::io::Err
         .and_then(Value::as_str)
         .unwrap_or("scroll_lock")
         .trim()
+        .to_ascii_lowercase()
         .to_string())
 }
 
@@ -54,9 +55,11 @@ fn configured_hotkey(store: &ExtensionStateStore) -> Result<String, std::io::Err
 mod windows_impl {
     use super::*;
     use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, PeekMessageW, RegisterHotKey, TranslateMessage, UnregisterHotKey, MSG,
-        MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, PM_REMOVE, WM_HOTKEY,
+        DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE, WM_HOTKEY,
     };
 
     const HOTKEY_ID: i32 = 0xC022;
@@ -143,7 +146,10 @@ mod windows_impl {
             },
         ) {
             Ok(response) if response.ok => {}
-            Ok(response) => logging::error(format!("Safe Input Key trigger failed: {}", response.message)),
+            Ok(response) => logging::error(format!(
+                "Safe Input Key trigger failed: {}",
+                response.message
+            )),
             Err(err) => logging::error(format!("Safe Input Key trigger request failed: {err}")),
         }
     }
@@ -151,7 +157,11 @@ mod windows_impl {
     fn parse_hotkey(combo: &str) -> Option<(u32, u32)> {
         let mut modifiers = 0;
         let mut key = None;
-        for part in combo.split('+').map(str::trim).filter(|part| !part.is_empty()) {
+        for part in combo
+            .split('+')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
             match part {
                 "ctrl" | "control" => modifiers |= MOD_CONTROL,
                 "alt" => modifiers |= MOD_ALT,

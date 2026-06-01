@@ -1,12 +1,57 @@
-use super::render_script_a::CONFIG_UI_SCRIPT_A;
-use super::render_script_b::CONFIG_UI_SCRIPT_B;
-use super::render_script_c::CONFIG_UI_SCRIPT_C;
-use super::render_script_d::CONFIG_UI_SCRIPT_D;
-use super::render_style::CONFIG_UI_STYLE;
-use super::UiServerState;
-use crate::control_plane::UI_AUTH_HEADER;
+use std::path::Path;
 
+use super::UiServerState;
 use serde_json;
+
+struct UiAssets {
+    scripts: Vec<String>,
+    style: String,
+}
+
+impl UiAssets {
+    fn bundled() -> Self {
+        Self {
+            scripts: vec![
+                include_str!("../ui/utils.js").to_string(),
+                include_str!("../ui/nav.js").to_string(),
+                include_str!("../ui/controls.js").to_string(),
+                include_str!("../ui/sections.js").to_string(),
+                include_str!("../ui/handlers.js").to_string(),
+            ],
+            style: include_str!("../ui/style.css").to_string(),
+        }
+    }
+
+    fn from_dir(dir: &Path) -> Option<Self> {
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
+        Some(Self {
+            scripts: vec![
+                read("utils.js")?,
+                read("nav.js")?,
+                read("controls.js")?,
+                read("sections.js")?,
+                read("handlers.js")?,
+            ],
+            style: read("style.css")?,
+        })
+    }
+
+    fn load() -> Self {
+        if let Ok(dir) = std::env::var("COPPER_UI_DIR") {
+            if let Some(assets) = Self::from_dir(Path::new(&dir)) {
+                return assets;
+            }
+        }
+        if let Some(assets) = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("ui")))
+            .and_then(|dir| Self::from_dir(&dir))
+        {
+            return assets;
+        }
+        Self::bundled()
+    }
+}
 
 pub(super) fn render_html(state: &UiServerState) -> String {
     let model = serde_json::json!({
@@ -20,17 +65,9 @@ pub(super) fn render_html(state: &UiServerState) -> String {
     });
     let model_inline = serde_json::to_string(&model).unwrap_or_else(|_| "{}".to_string());
 
-    let style = unescape_template(CONFIG_UI_STYLE);
-    let script = [
-        CONFIG_UI_SCRIPT_A,
-        CONFIG_UI_SCRIPT_B,
-        CONFIG_UI_SCRIPT_C,
-        CONFIG_UI_SCRIPT_D,
-    ]
-    .into_iter()
-    .map(unescape_template)
-    .collect::<String>()
-    .replace("{UI_AUTH_HEADER}", UI_AUTH_HEADER);
+    let assets = UiAssets::load();
+    let style = &assets.style;
+    let script = assets.scripts.join("\n");
 
     format!(
         r#"<!doctype html>
@@ -39,7 +76,9 @@ pub(super) fn render_html(state: &UiServerState) -> String {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Copper Settings</title>
+  <style>
 {style}
+  </style>
 </head>
 <body>
   <div class="layout">
@@ -56,6 +95,7 @@ pub(super) fn render_html(state: &UiServerState) -> String {
       <section id="contentView"></section>
       <div class="btn-row">
         <button class="primary" id="saveBtn">Save settings</button>
+        <button id="reloadExtensionsBtn">Reload extensions</button>
         <button id="closeBtn">Close UI Server</button>
       </div>
       <div class="status-msg" id="statusMsg"></div>
@@ -70,10 +110,6 @@ pub(super) fn render_html(state: &UiServerState) -> String {
 </html>
 "#
     )
-}
-
-fn unescape_template(value: &str) -> String {
-    value.replace("{{", "{").replace("}}", "}")
 }
 
 fn initial_ui_theme(state: &UiServerState) -> String {

@@ -367,11 +367,11 @@ fn handle_trigger_extension(
     engine
         .execute_trigger(&prepared, &inputs)
         .map_err(UiConfigError::Request)?;
-    Ok(HttpResponse::ok_json(&serde_json::json!({
+    HttpResponse::ok_json(&serde_json::json!({
         "ok": true,
         "extensionId": prepared.extension_id,
         "actionId": prepared.action_id,
-    }))?)
+    }))
 }
 
 fn request_is_authorized(request: &HttpRequest, state: &UiServerState) -> bool {

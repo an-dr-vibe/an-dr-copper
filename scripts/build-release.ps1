@@ -89,6 +89,9 @@ Copy-Item -Path (Join-Path $repoRoot "docs/QUICKSTART.md") -Destination (Join-Pa
 $bundleExtensions = Join-Path $bundlePath "extensions"
 Copy-Item -Path (Join-Path $repoRoot "extensions") -Destination $bundleExtensions -Recurse -Force
 
+$bundleUiDir = Join-Path $bundlePath "ui"
+Copy-Item -Path (Join-Path $repoRoot "daemon/ui") -Destination $bundleUiDir -Recurse -Force
+
 $publishedExtensionsPath = Join-Path $bundlePath "extensions-published"
 Publish-ExtensionArchives -ExtensionsRoot (Join-Path $repoRoot "extensions") -PublishRoot $publishedExtensionsPath
 

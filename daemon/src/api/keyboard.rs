@@ -76,13 +76,66 @@ pub fn key_label(name: &str) -> String {
 }
 
 /// Types a string of text at the current cursor position.
-pub fn type_text(_text: &str) {}
+pub fn type_text(text: &str) {
+    platform::type_text(text);
+}
 
 /// Sends a single key press and release.
 pub fn send_key(_key: &str) {}
 
 /// Sends a key combination, e.g. "ctrl+c".
 pub fn send_combo(_combo: &str) {}
+
+#[cfg(target_os = "windows")]
+mod platform {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+    };
+
+    pub(super) fn type_text(text: &str) {
+        if cfg!(test) {
+            return;
+        }
+        for unit in text.encode_utf16() {
+            send_unicode_unit(unit, false);
+            send_unicode_unit(unit, true);
+        }
+    }
+
+    fn send_unicode_unit(unit: u16, key_up: bool) {
+        let flags = if key_up {
+            KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+        } else {
+            KEYEVENTF_UNICODE
+        };
+        let input = INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: 0,
+                    wScan: unit,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        unsafe {
+            SendInput(
+                1,
+                &input,
+                std::mem::size_of::<INPUT>()
+                    .try_into()
+                    .expect("INPUT size fits i32"),
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+mod platform {
+    pub(super) fn type_text(_text: &str) {}
+}
 
 #[cfg(test)]
 mod tests {

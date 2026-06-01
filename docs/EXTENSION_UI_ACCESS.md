@@ -53,6 +53,7 @@ Recommended config actions in UI:
 - Legacy `data.json` is still read as a fallback during migration.
 - UI now uses dedicated extension pages with optional manifest-defined tabs.
 - Extension tabs that declare `showCommands` render action buttons next to their settings; UI-triggered actions receive the saved extension config as inputs.
+- Hotkey inputs render with a shared capture control. Safe Input Key uses its saved hotkey to register a daemon-managed Windows global hotkey.
 - Core settings use fixed tabs for **General**, **Package Install**, and **Extensions**.
 - Core **Extensions** renders discoverable extensions as cards with enable/disable controls, a settings shortcut, and lazy-loaded command help generated from manifest actions.
 - Shared package-install inputs now live on the **Core** settings page instead of inside the desktop torrent extension settings.

@@ -1,37 +1,111 @@
-pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
-    }}
+    function renderKeyValueCard(target, title, description, rows) {
+      const card = createCard(title, description);
+      if (!rows.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'Nothing to show yet.';
+        card.appendChild(empty);
+      } else {
+        const list = document.createElement('div');
+        list.className = 'kv-list';
+        rows.forEach(row => {
+          const keyEl = document.createElement('div');
+          keyEl.className = 'kv-key';
+          keyEl.textContent = row.label;
+          const valueEl = document.createElement('div');
+          valueEl.className = 'kv-value' + (row.format === 'path' || row.mono ? ' mono' : '');
+          valueEl.textContent = formatValue(row.value, row.format);
+          list.appendChild(keyEl);
+          list.appendChild(valueEl);
+        });
+        card.appendChild(list);
+      }
+      target.appendChild(card);
+      return card;
+    }
 
-    function buildStatusRows(statusMeta, status) {{
+    function normalizeTabSpec(tab, fallbackTitle) {
+      return {
+        id: String(tab.id || fallbackTitle || 'tab').trim(),
+        title: tab.title || fallbackTitle || 'Tab',
+        description: tab.description || '',
+        sections: Array.isArray(tab.sections) ? tab.sections.map(String) : [],
+        showStatus: Boolean(tab.showStatus),
+        showCommands: Boolean(tab.showCommands)
+      };
+    }
+
+    function renderTabs(tabs) {
+      tabsEl.innerHTML = '';
+      tabsEl.hidden = !tabs.length;
+      tabs.forEach(tab => {
+        const btn = document.createElement('button');
+        btn.className = 'tab-btn' + (currentTab === tab.id ? ' active' : '');
+        btn.textContent = tab.title;
+        btn.addEventListener('click', () => {
+          currentTab = tab.id;
+          updateUrl();
+          renderTabs(tabs);
+          applyTabVisibility(tabs);
+        });
+        tabsEl.appendChild(btn);
+      });
+    }
+
+    function applyTabVisibility(tabs) {
+      const cards = Array.from(contentViewEl.querySelectorAll('[data-tab-id]'));
+      if (!tabs.length) {
+        cards.forEach(card => {
+          card.hidden = false;
+        });
+        saveBtn.hidden = !contentViewEl.querySelector('[data-editable="true"]');
+        updateUrl();
+        refreshDirtyState();
+        return;
+      }
+
+      const activeTab = tabs.find(tab => tab.id === currentTab) || tabs[0];
+      currentTab = activeTab.id;
+      cards.forEach(card => {
+        card.hidden = card.dataset.tabId !== currentTab;
+      });
+      saveBtn.hidden = !cards.some(card =>
+        card.dataset.tabId === currentTab && card.dataset.editable === 'true'
+      );
+      updateUrl();
+      refreshDirtyState();
+    }
+
+    function appendCard(card, tabId, editable = false) {
+      if (tabId) {
+        card.dataset.tabId = tabId;
+      }
+      if (editable) {
+        card.dataset.editable = 'true';
+      }
+      contentViewEl.appendChild(card);
+    }
+
+    function createSettingsCard(section, config, info) {
+      const card = createCard(section.title, section.description);
+      section.inputDefs.forEach(input => {
+        card.appendChild(createInput(input, config[input.id], info));
+      });
+      return card;
+    }
+
+    function buildStatusRows(statusMeta, status) {
       const fieldDefs = (statusMeta.fields && statusMeta.fields.length)
         ? statusMeta.fields
-        : Object.keys(status).sort().map(key => ({{ key, label: humanizeKey(key) }}));
-      return fieldDefs.map(field => ({{
+        : Object.keys(status).sort().map(key => ({ key, label: humanizeKey(key) }));
+      return fieldDefs.map(field => ({
         label: field.label || humanizeKey(field.key),
         value: status[field.key],
         format: field.format
-      }}));
-    }}
+      }));
+    }
 
-    async function loadJson(url) {{
-      const res = await fetch(url, {{
-        headers: {{ '{UI_AUTH_HEADER}': model.authToken }}
-      }});
-      if (!res.ok) {{
-        throw new Error((await res.text()) || ('HTTP ' + res.status));
-      }}
-      return await res.json();
-    }}
-
-    async function refreshDescriptorModel() {{
-      replaceDescriptorModel(await loadJson('/descriptor'));
-    }}
-
-    let currentConfig = {{}};
-    let currentInfo = {{}};
-    let currentTabs = [];
-    let renderGeneration = 0;
-
-    function createCoreExtensionCard(descriptor, enabled) {{
+    function createCoreExtensionCard(descriptor, enabled) {
       const card = document.createElement('div');
       card.className = 'extension-card';
 
@@ -62,7 +136,7 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
       const platforms = Array.isArray(descriptor.platforms) && descriptor.platforms.length > 0
         ? descriptor.platforms.join(', ')
         : 'windows, macos, linux';
-      description.textContent = `Platforms: ${{platforms}}`;
+      description.textContent = `Platforms: ${platforms}`;
       titleRow.appendChild(title);
       titleRow.appendChild(dirtyBadge);
       summary.appendChild(titleRow);
@@ -86,31 +160,31 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
       settingsBtn.className = 'mini-btn';
       settingsBtn.textContent = 'Open settings';
 
-      const updateState = () => {{
+      const updateState = () => {
         const isEnabled = hidden.value === 'true';
         enableBtn.className = 'mini-btn' + (isEnabled ? ' active-enable' : '');
         disableBtn.className = 'mini-btn' + (!isEnabled ? ' active-disable' : '');
         state.textContent = isEnabled ? 'Enabled in runtime' : 'Disabled in runtime';
         settingsBtn.hidden = !isEnabled;
-      }};
+      };
 
-      enableBtn.addEventListener('click', () => {{
+      enableBtn.addEventListener('click', () => {
         hidden.value = 'true';
         updateState();
         refreshDirtyState();
-      }});
-      disableBtn.addEventListener('click', () => {{
+      });
+      disableBtn.addEventListener('click', () => {
         hidden.value = 'false';
         updateState();
         refreshDirtyState();
-      }});
-      settingsBtn.addEventListener('click', () => {{
-        currentSection = `ext:${{descriptor.id}}`;
+      });
+      settingsBtn.addEventListener('click', () => {
+        currentSection = `ext:${descriptor.id}`;
         currentTab = '';
         updateUrl();
         renderNav();
         renderSection().catch(err => setStatus('Load failed: ' + err));
-      }});
+      });
 
       actions.appendChild(enableBtn);
       actions.appendChild(disableBtn);
@@ -123,47 +197,47 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
       card.appendChild(head);
       registerDirtyTracker(card, () => hidden.value === 'true');
       return card;
-    }}
+    }
 
-    async function renderSection() {{
+    async function renderSection() {
       const generation = ++renderGeneration;
       const sectionAtStart = currentSection;
       contentViewEl.innerHTML = '';
       setStatus('');
 
-      if (sectionAtStart === 'commands') {{
+      if (sectionAtStart === 'commands') {
         renderCommandsPage();
         return;
-      }}
+      }
 
-      function coreSections(config) {{
+      function coreSections(config) {
         const disabledExtensions = new Set(Array.isArray(config.disabledExtensions) ? config.disabledExtensions : []);
-        const extensionItems = discoverableDescriptors.map(descriptor => ({{
+        const extensionItems = discoverableDescriptors.map(descriptor => ({
           descriptor,
           enabled: !disabledExtensions.has(descriptor.id)
-        }}));
+        }));
 
         return [
-          {{
+          {
             id: 'general',
             title: 'General',
             description: 'Core Copper configuration.',
             fields: [
-              {{
+              {
                 id: 'userExtensionsDir',
                 label: 'User extensions directory',
                 description: 'Folder where user-installed extensions are discovered.',
                 type: 'text',
                 default: '~/.Copper/extensions'
-              }},
-              {{
+              },
+              {
                 id: 'autoStart',
                 label: 'Launch Copper at login',
                 description: 'Register or remove Copper autostart for the current user when you save these settings.',
                 type: 'boolean',
                 default: false
-              }},
-              {{
+              },
+              {
                 id: 'uiTheme',
                 label: 'UI theme',
                 description: 'Built-in look and feel for the Copper settings UI.',
@@ -171,38 +245,38 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
                 options: THEME_OPTIONS.map(theme => theme.id),
                 optionLabels: Object.fromEntries(THEME_OPTIONS.map(theme => [theme.id, theme.label])),
                 default: 'light'
-              }}
+              }
             ]
-          }},
-          {{
+          },
+          {
             id: 'package-install',
             title: 'Package install',
             description: 'Shared extension package installation inputs belong to Copper core settings, not to a torrent workflow extension.',
             fields: [
-              {{
+              {
                 id: 'extensionPackage',
                 label: 'Extension package (.zip or .tar.gz)',
                 description: 'Package file path used when installing an extension manually.',
                 type: 'text',
                 default: ''
-              }},
-              {{
+              },
+              {
                 id: 'extensionsInstallDir',
                 label: 'Extensions install directory',
                 description: 'Target folder for installed extension packages.',
                 type: 'text',
                 default: '~/.Copper/extensions'
-              }}
+              }
             ]
-          }},
-          {{
+          },
+          {
             id: 'extensions',
             title: 'Extensions',
             description: 'Extensions can stay discoverable in the UI while being disabled for the active runtime.',
             items: extensionItems
-          }}
+          }
         ];
-      }}
+      }
 
       const configTarget = sectionAtStart === 'core'
         ? '/config/core'
@@ -211,13 +285,13 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
         ? '/info/core'
         : '/info/extension/' + encodeURIComponent(sectionAtStart.slice(4));
       const [config, info] = await Promise.all([loadJson(configTarget), loadJson(infoTarget)]);
-      if (generation !== renderGeneration || sectionAtStart !== currentSection) {{
+      if (generation !== renderGeneration || sectionAtStart !== currentSection) {
         return;
-      }}
-      currentConfig = config || {{}};
-      currentInfo = info || {{}};
+      }
+      currentConfig = config || {};
+      currentInfo = info || {};
 
-      if (sectionAtStart === 'core') {{
+      if (sectionAtStart === 'core') {
         pageEyebrowEl.textContent = 'Core';
         pageTitleEl.textContent = 'Copper';
         pageSubEl.textContent = 'Application-wide settings stay separate from extension settings.';
@@ -226,27 +300,27 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
 
         const sections = coreSections(config);
         const coreRows = [
-          {{ label: 'Extensions loaded', value: info.extensionsLoaded ?? 0 }},
-          {{ label: 'Host platform', value: info.hostPlatform || 'unknown' }},
-          {{ label: 'Launch at login', value: config.autoStart ?? false, format: 'boolean' }},
-          {{ label: 'User extensions directory', value: info.userExtensionsDir, format: 'path', mono: true }},
-          {{ label: 'Core extensions directory', value: info.coreExtensionsDir || 'Not available', format: 'path', mono: true }},
-          {{ label: 'Runtime extension roots', value: (info.runtimeExtensionRoots || []).join(', '), format: 'path', mono: true }}
+          { label: 'Extensions loaded', value: info.extensionsLoaded ?? 0 },
+          { label: 'Host platform', value: info.hostPlatform || 'unknown' },
+          { label: 'Launch at login', value: config.autoStart ?? false, format: 'boolean' },
+          { label: 'User extensions directory', value: info.userExtensionsDir, format: 'path', mono: true },
+          { label: 'Core extensions directory', value: info.coreExtensionsDir || 'Not available', format: 'path', mono: true },
+          { label: 'Runtime extension roots', value: (info.runtimeExtensionRoots || []).join(', '), format: 'path', mono: true }
         ];
 
         currentTabs = [
-          {{ id: 'general', title: 'General' }},
-          {{ id: 'package-install', title: 'Package Install' }},
-          {{ id: 'extensions', title: 'Extensions' }}
+          { id: 'general', title: 'General' },
+          { id: 'package-install', title: 'Package Install' },
+          { id: 'extensions', title: 'Extensions' }
         ];
         const generalSection = sections.find(section => section.id === 'general');
-        if (generalSection) {{
+        if (generalSection) {
           const card = createCard(generalSection.title, generalSection.description);
-          generalSection.fields.forEach(field => {{
+          generalSection.fields.forEach(field => {
             card.appendChild(createInput(field, config[field.id], info));
-          }});
+          });
           appendCard(card, 'general', true);
-        }}
+        }
         const generalStatusHost = document.createElement('div');
         renderKeyValueCard(
           generalStatusHost,
@@ -258,41 +332,41 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
 
         sections
           .filter(section => section.id !== 'general')
-          .forEach(section => {{
-            if (section.id === 'extensions') {{
+          .forEach(section => {
+            if (section.id === 'extensions') {
               const card = createCard(section.title, section.description);
               const list = document.createElement('div');
               list.className = 'extension-list';
-              (section.items || []).forEach(item => {{
+              (section.items || []).forEach(item => {
                 list.appendChild(createCoreExtensionCard(item.descriptor, item.enabled));
-              }});
+              });
               card.appendChild(list);
               appendCard(card, section.id, true);
               return;
-            }}
+            }
             const card = createCard(section.title, section.description);
-            section.fields.forEach(field => {{
+            section.fields.forEach(field => {
               card.appendChild(createInput(field, config[field.id], info));
-            }});
+            });
             appendCard(card, section.id, true);
-          }});
+          });
 
-        if (!currentTabs.some(tab => tab.id === currentTab)) {{
+        if (!currentTabs.some(tab => tab.id === currentTab)) {
           currentTab = currentTabs[0].id;
-        }}
+        }
         renderTabs(currentTabs);
         applyTabVisibility(currentTabs);
         refreshDirtyState();
         return;
-      }}
+      }
 
       const extensionId = sectionAtStart.slice(4);
       const descriptor = byId[extensionId];
-      if (!descriptor) {{
+      if (!descriptor) {
         throw new Error('Unknown extension section: ' + extensionId);
-      }}
+      }
 
-      const settingsMeta = descriptor.settings || {{}};
+      const settingsMeta = descriptor.settings || {};
       const applyActions = Array.isArray(settingsMeta.applyActions) ? settingsMeta.applyActions : [];
       pageEyebrowEl.textContent = 'Extension';
       pageTitleEl.textContent = settingsMeta.title || descriptor.name;
@@ -302,41 +376,41 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
       saveBtn.textContent = applyActions.length > 0 ? 'Save and apply' : 'Save settings';
 
       const sections = inferSections(descriptor.inputs || [], descriptor);
-      const statusMeta = (info && info.statusMeta) || ((settingsMeta || {{}}).status) || {{}};
-      const status = (info && info.status) || {{}};
+      const statusMeta = (info && info.statusMeta) || ((settingsMeta || {}).status) || {};
+      const status = (info && info.status) || {};
       const statusRows = buildStatusRows(statusMeta, status);
       const declaredTabs = Array.isArray(settingsMeta.tabs)
         ? settingsMeta.tabs.map(tab => normalizeTabSpec(tab, 'Tab')).filter(tab => tab.id)
         : [];
       const sectionToTab = new Map();
-      declaredTabs.forEach(tab => {{
-        tab.sections.forEach(sectionId => {{
-          if (!sectionToTab.has(sectionId)) {{
+      declaredTabs.forEach(tab => {
+        tab.sections.forEach(sectionId => {
+          if (!sectionToTab.has(sectionId)) {
             sectionToTab.set(sectionId, tab.id);
-          }}
-        }});
-      }});
+          }
+        });
+      });
 
-      currentTabs = declaredTabs.map(tab => ({{
+      currentTabs = declaredTabs.map(tab => ({
         id: tab.id,
         title: tab.title,
         description: tab.description || ''
-      }}));
+      }));
 
-      if (!declaredTabs.length) {{
-        if (sections.length === 0) {{
+      if (!declaredTabs.length) {
+        if (sections.length === 0) {
           const emptyCard = createCard('Settings', 'This extension does not expose editable settings yet.');
           const empty = document.createElement('div');
           empty.className = 'empty';
           empty.textContent = 'No configurable fields were declared in the manifest.';
           emptyCard.appendChild(empty);
           appendCard(emptyCard, '', false);
-        }} else {{
-          sections.forEach(section => {{
+        } else {
+          sections.forEach(section => {
             appendCard(createSettingsCard(section, config, info), '', true);
-          }});
-        }}
-        if (statusRows.length > 0) {{
+          });
+        }
+        if (statusRows.length > 0) {
           const statusHost = document.createElement('div');
           renderKeyValueCard(
             statusHost,
@@ -345,22 +419,22 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
             statusRows
           );
           appendCard(statusHost.firstElementChild, '', false);
-        }}
+        }
         currentTab = '';
         renderTabs([]);
         applyTabVisibility([]);
         refreshDirtyState();
         return;
-      }}
+      }
 
       const fallbackTabId = declaredTabs[0].id;
-      sections.forEach(section => {{
+      sections.forEach(section => {
         const tabId = sectionToTab.get(section.id) || fallbackTabId;
         appendCard(createSettingsCard(section, config, info), tabId, true);
-      }});
+      });
 
       const statusTab = declaredTabs.find(tab => tab.showStatus);
-      if (statusRows.length > 0) {{
+      if (statusRows.length > 0) {
         const statusHost = document.createElement('div');
         renderKeyValueCard(
             statusHost,
@@ -369,10 +443,10 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
             statusRows
         );
         appendCard(statusHost.firstElementChild, statusTab ? statusTab.id : fallbackTabId, false);
-      }}
+      }
 
       const commandsTab = declaredTabs.find(tab => tab.showCommands);
-      if (commandsTab) {{
+      if (commandsTab) {
         appendCard(
           createCommandRunCard(
             descriptor,
@@ -382,13 +456,12 @@ pub(super) const CONFIG_UI_SCRIPT_C: &str = r#"
           commandsTab.id,
           false
         );
-      }}
+      }
 
-      if (!currentTabs.some(tab => tab.id === currentTab)) {{
+      if (!currentTabs.some(tab => tab.id === currentTab)) {
         currentTab = currentTabs[0].id;
-      }}
+      }
       renderTabs(currentTabs);
       applyTabVisibility(currentTabs);
       refreshDirtyState();
-    }}
-"#;
+    }

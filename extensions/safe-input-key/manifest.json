@@ -10,7 +10,7 @@
       "id": "triggerKey",
       "type": "hotkey",
       "label": "Trigger key / combo",
-      "description": "Key or combo to map to this extension in your OS hotkey manager (e.g. scroll_lock, ctrl+alt+f12). Point the OS shortcut at: copperd trigger safe-input-key",
+      "description": "Key or combo registered by the Copper daemon on Windows (e.g. scroll_lock, ctrl+alt+f12).",
       "default": "scroll_lock"
     },
     {
@@ -57,7 +57,7 @@
       {
         "id": "trigger-key",
         "title": "Trigger key",
-        "description": "The key or combo you will map to 'copperd trigger safe-input-key' in AutoHotkey, Windows keyboard shortcuts, or your OS equivalent.",
+        "description": "The key or combo the Copper daemon registers for Safe Input Key on Windows.",
         "inputs": ["triggerKey"]
       },
       {
