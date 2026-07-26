@@ -1,6 +1,6 @@
 # Copper on Bones Migration Plan
 
-Status: Accepted direction; implementation not started  
+Status: Implementation in progress
 Plan owner: Copper maintainers  
 Last updated: 2026-07-26
 
@@ -156,10 +156,10 @@ Statuses: `NOT STARTED`, `IN PROGRESS`, `BLOCKED`, `DONE`.
 
 ### M0 — Freeze the behavioral baseline
 
-Status: **NOT STARTED**  
+Status: **IN PROGRESS**
 Depends on: none
 
-- [ ] Correct stale runtime descriptions in `README.md` and
+- [x] Correct stale runtime descriptions in `README.md` and
   `docs/ARCHITECTURE.md`.
 - [ ] Record the supported CLI, HTTP, UI, state, tray, hotkey, and extension
   behavior as executable parity tests.
@@ -434,3 +434,4 @@ When updating this plan:
 |---|---|
 | 2026-07-26 | Initial plan: Copper as an external Bones distribution, incremental construction, single release cutover. |
 | 2026-07-26 | Made migration of the settings UI to Bones' `wry`-backed web presentation module an accepted target. |
+| 2026-07-26 | Started implementation and recorded the shipped extension contract baseline plus ADR-001. |

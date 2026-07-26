@@ -16,8 +16,7 @@ pub fn set(store_path: &str, key: &str, value: serde_json::Value) -> Result<(), 
         std::fs::create_dir_all(parent)?;
     }
     obj.insert(key.to_string(), value);
-    let serialized = serde_json::to_string_pretty(&obj)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let serialized = serde_json::to_string_pretty(&obj).map_err(std::io::Error::other)?;
     std::fs::write(store_path, serialized)
 }
 

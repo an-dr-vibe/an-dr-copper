@@ -1,13 +1,18 @@
 # Copper Architecture
 
 Version: 0.3.2  
-Last updated: 2026-05-31
+Last updated: 2026-07-26
 
 ## 1. Overview
 
-Copper is a cross-platform desktop automation platform optimized for AI-authored TypeScript extensions.
+Copper is a cross-platform desktop automation platform optimized for
+AI-authored extensions.
 
-The core runtime is a long-running Rust daemon. Extensions are manifest-first (`manifest.json`) with a minimal API contract and schema validation.
+The current runtime is a long-running Rust daemon with Deno-backed TypeScript
+execution. Extensions are manifest-first (`manifest.json`) with a minimal API
+contract and schema validation. The accepted replacement architecture embeds
+Bones and runs product extensions as WASM Components; see
+`docs/BONES_MIGRATION_PLAN.md`.
 
 ## 2. Process Model
 
@@ -21,7 +26,11 @@ Current implementation status:
 - Implemented: always-on daemon, extension registry loading, authenticated HTTP control plane, isolated runtime trigger preparation, scheduled reload/background polling, descriptor validation, skeleton generation, local config UI (`ui open`), and main tray icon UI launch on Windows.
 - Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with manifest-driven extension pages, optional manifest-defined tabs, and a core-managed extensions tab for enable/disable and command discovery.
 - Implemented: Tauri-backed native window launcher for the settings UI; `ui open` and tray settings actions open native windows by default, with browser opening retained as an explicit fallback.
-- Planned: embedded `deno_core` runtime execution, richer cross-platform tray/hotkey integration, on-demand Tauri UI renderer.
+- Implemented: action execution through an external Deno subprocess and the
+  host JSON-RPC bridge in `sdk/bridge.ts`.
+- Planned: Bones-hosted WASM Components, richer cross-platform tray/hotkey
+  integration, and on-demand settings presentation through the Bones web
+  module.
 
 ## 3. Implemented Daemon Core
 
@@ -38,6 +47,10 @@ Daemon capabilities:
 - Filters runtime activation through manifest-declared host platforms and core config disable rules.
 - Routes trigger preparation through a single `ExecutionEngine`, which combines the isolated runtime adapter, host capability registry, and shared state store.
 - Uses a structured runtime ABI (`copper.runtime/1`) and executes trigger preparation through a subprocess runtime worker, so runtime planning is isolated from the daemon process.
+- Executes the prepared TypeScript entrypoint in a separate Deno process. The
+  bridge currently starts Deno with `--allow-all`; manifest permission
+  enforcement at the replacement capability boundary is a required migration
+  gate.
 - Routes daemon IPC request policy through a dedicated `DaemonControlService` so transport handling stays separate from registry/runtime/state orchestration.
 - Routes config UI information and apply workflows through a dedicated `config_ui_service` layer so the HTTP/UI server stays thinner.
 - Routes config UI HTTP parsing/serialization through `config_ui_http.rs` so UI transport concerns are separated from route/business logic.
@@ -215,9 +228,12 @@ These must not be broken without a deliberate versioning decision:
 
 ## 12. Known Gaps vs Full Target Architecture
 
-- `deno_core` is not embedded yet (the runtime boundary and ABI exist, but trigger preparation still uses a dry-run worker rather than executing TypeScript).
-- On-demand Tauri renderer is not wired yet.
+- Manifest permissions are serialized during trigger preparation, but current
+  Deno execution uses `--allow-all`; permissions are not yet enforced as a
+  runtime security boundary.
+- Bones WASM execution and on-demand `wry` presentation are not integrated yet.
 - Safe Input Key registers its saved hotkey through the daemon on Windows; richer cross-platform global hotkey behavior is still roadmap work.
 - Some shipped extensions are still intentionally host-native or hybrid rather than purely TypeScript-executed; that ownership is now centralized in `host_extensions.rs` as explicit host capabilities.
 
-These gaps are additive roadmap work and do not change the daemon-first core architecture.
+The migration preserves the daemon-first product contract while replacing its
+runtime and presentation implementation.

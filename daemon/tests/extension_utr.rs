@@ -41,6 +41,101 @@ fn extension_folders(root: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
+fn shipped_extension_contract_matrix_is_stable() {
+    let expected = [
+        (
+            "desktop-torrent-organizer",
+            "desktop-torrents",
+            vec![
+                Permission::Fs,
+                Permission::Shell,
+                Permission::Store,
+                Permission::Ui,
+            ],
+            vec!["move-torrents", "show-config"],
+        ),
+        (
+            "safe-input-key",
+            "safe-input-key",
+            vec![
+                Permission::Keyboard,
+                Permission::SecureStore,
+                Permission::Store,
+                Permission::Ui,
+            ],
+            vec!["type-text", "setup", "clear"],
+        ),
+        (
+            "session-counter",
+            "session-count",
+            vec![Permission::Store, Permission::Ui],
+            vec!["increment"],
+        ),
+        (
+            "sort-downloads",
+            "sort-dl",
+            vec![Permission::Fs, Permission::Ui],
+            vec!["sort"],
+        ),
+        (
+            "windows-display-manager",
+            "windows-display",
+            vec![Permission::Ui, Permission::Store],
+            vec![
+                "status",
+                "toggle-taskbar-autohide",
+                "set-taskbar-autohide",
+                "set-resolution",
+                "set-scale",
+            ],
+        ),
+    ];
+
+    assert_eq!(
+        extension_folders(&extensions_root()).len(),
+        expected.len(),
+        "adding or removing a shipped extension requires an explicit parity decision"
+    );
+
+    for (id, trigger, permissions, action_ids) in expected {
+        let descriptor = read_descriptor(id);
+        assert_eq!(descriptor.trigger, trigger, "{id} trigger changed");
+        assert_eq!(
+            descriptor.permissions, permissions,
+            "{id} permissions changed"
+        );
+        assert_eq!(
+            descriptor
+                .actions
+                .iter()
+                .map(|action| action.id.as_str())
+                .collect::<Vec<_>>(),
+            action_ids,
+            "{id} actions changed"
+        );
+    }
+}
+
+#[test]
+fn legacy_typescript_entrypoints_expose_trigger_handlers() {
+    for extension in extension_folders(&extensions_root()) {
+        let id = extension
+            .file_name()
+            .expect("extension folder name")
+            .to_string_lossy();
+        let source = read_main_ts(&id);
+        assert!(
+            source.contains("export default function"),
+            "{id} should export the Copper TypeScript factory"
+        );
+        assert!(
+            source.contains("onTrigger"),
+            "{id} should expose the legacy trigger handler"
+        );
+    }
+}
+
+#[test]
 fn every_extension_has_valid_descriptor_and_main() {
     for ext in extension_folders(&extensions_root()) {
         let descriptor_path = ext.join("manifest.json");

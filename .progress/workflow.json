@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 1,
+  "flow": "DetailedAuto",
+  "phase": "COMMIT",
+  "baseBranch": "feature/bones-migration",
+  "baseCommit": "82f455152ee994166af40a7f59b40bc387e717b6",
+  "featureBranch": "feature/bones-migration-implementation",
+  "requirements": {
+    "goal": "Migrate Copper into a Bones-based application with external native Copper modules, a Bones wry-backed settings UI, and the existing Copper extensions rewritten as WASM Components while preserving observable functionality.",
+    "constraints": "Preserve manifest-first compatibility, state and security boundaries, authenticated loopback control, headless cross-platform builds, and existing supported platform behavior; use TDD for extension changes; update Bones only for generic reusable gaps; no push or merge before final user approval.",
+    "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
+    "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
+  },
+  "currentIncrementId": "45917f16e9d949d0928910a43b9810fc",
+  "commitBaseline": "82f455152ee994166af40a7f59b40bc387e717b6",
+  "increments": [
+    {
+      "id": "45917f16e9d949d0928910a43b9810fc",
+      "number": 1,
+      "status": "verified",
+      "scope": "Architecture record and behavioral baseline",
+      "description": "~280 lines: add the Copper-on-Bones ADR/design record, correct stale runtime documentation, and add baseline registry/action parity tests before runtime changes."
+    },
+    {
+      "id": "d4e0e7a63ac9492b92ffad5319eaddf2",
+      "number": 2,
+      "status": "planned",
+      "scope": "State and security parity fixtures",
+      "description": "~260 lines: add atomic state migration fixtures plus control-plane authentication and undeclared-permission regression tests."
+    },
+    {
+      "id": "6b8349136daf470cb6601a3c8d2ddb31",
+      "number": 3,
+      "status": "planned",
+      "scope": "External Bones module foundation",
+      "description": "~280 lines: add pinned public Bones crate dependencies, a focused Copper facade/control module, and headless construction tests."
+    },
+    {
+      "id": "fd505c480ddb4e59ad6ce4194edfd7b4",
+      "number": 4,
+      "status": "planned",
+      "scope": "Headless Bones daemon driver",
+      "description": "~300 lines: integrate a stepped/event-driven Bones engine into daemon start, health, reload, and shutdown without activating product extensions."
+    },
+    {
+      "id": "d7cfa65969954c659360982de5ee3818",
+      "number": 5,
+      "status": "planned",
+      "scope": "Versioned runtime artifacts",
+      "description": "~280 lines: extend the manifest contract compatibly for WASM artifacts, validate ID/artifact pairing, and update registry tests and SDK documentation."
+    },
+    {
+      "id": "79ea68a576a44a1393673eab0838b93d",
+      "number": 6,
+      "status": "planned",
+      "scope": "Bones catalog lifecycle bridge",
+      "description": "~300 lines: map validated manifests and disabled/platform policy to Bones activation, observe lifecycle events, and make reload transactions testable."
+    },
+    {
+      "id": "0884000e80af4c049ada5429e34fb618",
+      "number": 7,
+      "status": "planned",
+      "scope": "Capability protocol and authorization",
+      "description": "~300 lines: define versioned action/job envelopes and enforce host-stamped sender permissions with adversarial tests."
+    },
+    {
+      "id": "4bbd6c75c4cd468fb35f4929df18179d",
+      "number": 8,
+      "status": "planned",
+      "scope": "Asynchronous jobs and scoped state",
+      "description": "~300 lines: execute blocking work away from the Bones loop and expose scoped Copper config/status/store operations."
+    },
+    {
+      "id": "97c8336e032b44abadacd2e8ce874848",
+      "number": 9,
+      "status": "planned",
+      "scope": "Filesystem shell notification and UI capabilities",
+      "description": "~300 lines: provide permissioned job handlers for filesystem, shell, notification, and UI result operations with negative tests."
+    },
+    {
+      "id": "54103589b898411c864667654907284b",
+      "number": 10,
+      "status": "planned",
+      "scope": "Keyboard secure-store and display capabilities",
+      "description": "~300 lines: expose platform-gated keyboard, keychain, and Windows display operations through the capability broker."
+    },
+    {
+      "id": "af58ef98df3143d7aa6b248232152a07",
+      "number": 11,
+      "status": "planned",
+      "scope": "Bones-backed control plane and scheduling",
+      "description": "~300 lines: route Copper trigger/background workflows through Bones messages while preserving authenticated CLI/HTTP behavior."
+    },
+    {
+      "id": "9f04ca6a83004adaafc38c4625de64bb",
+      "number": 12,
+      "status": "planned",
+      "scope": "On-demand Bones wry presentation",
+      "description": "~300 lines: upstream generic lazy web/window lifecycle support to Bones and verify a headless engine can repeatedly open and close wry presentation."
+    },
+    {
+      "id": "92b973d1924f4213890ed5ed4fa0f3e6",
+      "number": 13,
+      "status": "planned",
+      "scope": "Copper settings UI on Bones web",
+      "description": "~300 lines: port settings frontend transport to Bones web messages, preserve settings behavior, and remove Tauri window use."
+    },
+    {
+      "id": "9dc7486e797e445380385c672126b9af",
+      "number": 14,
+      "status": "planned",
+      "scope": "WASM guest SDK and packaging",
+      "description": "~300 lines: add the versioned Copper guest contract, generated Rust bindings/templates, deterministic component builds, and manifest-plus-WASM packaging."
+    },
+    {
+      "id": "34399f311fcd4dac99f9e0118109bf5b",
+      "number": 15,
+      "status": "planned",
+      "scope": "Session counter and sort downloads WASM ports",
+      "description": "~280 lines: write UTR tests first, port both extensions to WASM Components, and remove their legacy execution paths after parity."
+    },
+    {
+      "id": "f7f9373ae4e14d7e8742326a18b7d1dc",
+      "number": 16,
+      "status": "planned",
+      "scope": "Desktop torrent organizer WASM port",
+      "description": "~300 lines: test then port actions, background monitoring, scoped file moves, settings, and status behavior."
+    },
+    {
+      "id": "49361c1ec0c64d44a02731336047c108",
+      "number": 17,
+      "status": "planned",
+      "scope": "Safe Input Key and Windows display WASM ports",
+      "description": "~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities."
+    },
+    {
+      "id": "bfa9cca7d66e46a3a9cc8ceb4a9a3b0b",
+      "number": 18,
+      "status": "planned",
+      "scope": "Cutover cleanup release and full verification",
+      "description": "~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates."
+    }
+  ],
+  "approvals": [],
+  "history": [
+    {
+      "at": "2026-07-26T20:01:12.7317577Z",
+      "action": "start",
+      "detail": "Started DetailedAuto workflow."
+    },
+    {
+      "at": "2026-07-26T20:01:25.1021521Z",
+      "action": "advance",
+      "detail": "Advanced from START to DESIGN."
+    },
+    {
+      "at": "2026-07-26T20:02:01.4004756Z",
+      "action": "advance",
+      "detail": "Advanced from DESIGN to SPLIT."
+    },
+    {
+      "at": "2026-07-26T20:03:15.9185736Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 1: Architecture record and behavioral baseline"
+    },
+    {
+      "at": "2026-07-26T20:03:16.8197804Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 2: State and security parity fixtures"
+    },
+    {
+      "at": "2026-07-26T20:03:17.7001081Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 3: External Bones module foundation"
+    },
+    {
+      "at": "2026-07-26T20:03:18.6085425Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 4: Headless Bones daemon driver"
+    },
+    {
+      "at": "2026-07-26T20:03:19.4787945Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 5: Versioned runtime artifacts"
+    },
+    {
+      "at": "2026-07-26T20:03:20.3824451Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 6: Bones catalog lifecycle bridge"
+    },
+    {
+      "at": "2026-07-26T20:03:21.3030845Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 7: Capability protocol and authorization"
+    },
+    {
+      "at": "2026-07-26T20:03:22.2381831Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 8: Asynchronous jobs and scoped state"
+    },
+    {
+      "at": "2026-07-26T20:03:23.1290521Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 9: Filesystem shell notification and UI capabilities"
+    },
+    {
+      "at": "2026-07-26T20:03:24.0599931Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 10: Keyboard secure-store and display capabilities"
+    },
+    {
+      "at": "2026-07-26T20:03:24.9529499Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 11: Bones-backed control plane and scheduling"
+    },
+    {
+      "at": "2026-07-26T20:03:25.823714Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 12: On-demand Bones wry presentation"
+    },
+    {
+      "at": "2026-07-26T20:03:26.6949302Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 13: Copper settings UI on Bones web"
+    },
+    {
+      "at": "2026-07-26T20:03:27.6116586Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 14: WASM guest SDK and packaging"
+    },
+    {
+      "at": "2026-07-26T20:03:28.5161771Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 15: Session counter and sort downloads WASM ports"
+    },
+    {
+      "at": "2026-07-26T20:03:29.455965Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 16: Desktop torrent organizer WASM port"
+    },
+    {
+      "at": "2026-07-26T20:03:30.3378486Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 17: Safe Input Key and Windows display WASM ports"
+    },
+    {
+      "at": "2026-07-26T20:03:31.2242699Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 18: Cutover cleanup release and full verification"
+    },
+    {
+      "at": "2026-07-26T20:04:58.3827074Z",
+      "action": "advance",
+      "detail": "Advanced from SPLIT to BRANCH."
+    },
+    {
+      "at": "2026-07-26T20:05:07.6992292Z",
+      "action": "advance",
+      "detail": "Advanced from BRANCH to BUILD."
+    },
+    {
+      "at": "2026-07-26T20:09:54.1530388Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-26T20:13:01.7006039Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
+    }
+  ],
+  "createdAt": "2026-07-26T20:01:12.6841587Z",
+  "updatedAt": "2026-07-26T20:13:01.7070583Z"
+}

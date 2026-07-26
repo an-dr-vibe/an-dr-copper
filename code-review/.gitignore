@@ -1,0 +1,4 @@
+# Managed code-review artifacts
+*.review.json
+*.review.md
+.review-*.tmp

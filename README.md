@@ -1,13 +1,19 @@
 # Copper
 
-Copper is a cross-platform, manifest-first automation host focused on AI-generated extensions.
+Copper is a cross-platform, manifest-first automation host focused on
+AI-generated extensions.
 
-Current status: implemented MVP for schema validation, extension discovery, dry-run triggering, and TypeScript skeleton generation.
+Current status: the daemon, authenticated control plane, settings UI, extension
+discovery, TypeScript execution, native host capabilities, tray integration,
+and extension generation are implemented. Copper executes `main.ts` through a
+Deno subprocess and a host JSON-RPC bridge while the
+[Bones migration](docs/BONES_MIGRATION_PLAN.md) replaces that runtime with WASM
+Components.
 
 ## Requirements
 
 - Rust toolchain (rustup, cargo, rustc)
-- Optional: Deno (only for future runtime execution of `main.ts`)
+- Deno (required to execute current `main.ts` extension actions)
 
 ## Quick Start (Cross-Platform PowerShell)
 
