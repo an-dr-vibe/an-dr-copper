@@ -2,6 +2,11 @@
 members = ["daemon"]
 exclude = [
   "bones/core/bus",
+  "bones/core/contract",
+  "bones/core/logging",
+  "bones/core/runner",
+  "bones/core/wasm-extensions",
+  "bones/shared/bones-messages",
   "bones/vendor/pubsub-bus",
 ]
 resolver = "2"

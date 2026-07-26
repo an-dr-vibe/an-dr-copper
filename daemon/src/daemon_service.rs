@@ -1,3 +1,4 @@
+use crate::bones_integration::BonesRuntimeStatus;
 use crate::config_ui::DEFAULT_DAEMON_UI_BIND;
 use crate::execution::{permissions_as_strings, ExecutionEngine};
 use crate::extension::Registry;
@@ -13,6 +14,7 @@ pub struct DaemonControlService<'a> {
     registry: &'a Registry,
     host_extensions: &'a HostExtensionRegistry,
     state_store: &'a ExtensionStateStore,
+    bones_status: BonesRuntimeStatus,
 }
 
 impl<'a> DaemonControlService<'a> {
@@ -22,6 +24,7 @@ impl<'a> DaemonControlService<'a> {
         registry: &'a Registry,
         host_extensions: &'a HostExtensionRegistry,
         state_store: &'a ExtensionStateStore,
+        bones_status: BonesRuntimeStatus,
     ) -> Self {
         Self {
             user_extensions_dir,
@@ -29,6 +32,7 @@ impl<'a> DaemonControlService<'a> {
             registry,
             host_extensions,
             state_store,
+            bones_status,
         }
     }
 
@@ -43,6 +47,7 @@ impl<'a> DaemonControlService<'a> {
                 .core_extensions_dir
                 .map(|path| path.display().to_string()),
             "extensionsLoaded": self.registry.list().count(),
+            "bones": self.bones_status,
             "configUiUrl": format!(
                 "http://{}",
                 std::env::var("COPPERD_DAEMON_UI_BIND")
@@ -102,12 +107,23 @@ impl<'a> DaemonControlService<'a> {
 #[cfg(test)]
 mod tests {
     use super::DaemonControlService;
+    use crate::bones_integration::BonesRuntimeStatus;
     use crate::extension::Registry;
     use crate::host_extensions::HostExtensionRegistry;
     use crate::state_store::ExtensionStateStore;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
+
+    fn bones_status() -> BonesRuntimeStatus {
+        BonesRuntimeStatus {
+            headless: true,
+            frames: 4,
+            registry_reloads: 1,
+            lifecycle_events: 0,
+            shutdown: false,
+        }
+    }
 
     fn write_extension(root: &Path) {
         let ext_root = root.join("alpha-ext");
@@ -144,6 +160,7 @@ mod tests {
             &registry,
             &host_extensions,
             &store,
+            bones_status(),
         );
 
         let payload = service.health_payload().expect("health payload");
@@ -155,6 +172,13 @@ mod tests {
         assert_eq!(
             warnings[0].get("code").and_then(|value| value.as_str()),
             Some("invalid-json")
+        );
+        assert_eq!(
+            payload
+                .get("bones")
+                .and_then(|value| value.get("headless"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
         );
     }
 
@@ -171,6 +195,7 @@ mod tests {
             &registry,
             &host_extensions,
             &store,
+            bones_status(),
         );
 
         let payload = service

@@ -11,8 +11,8 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "6b8349136daf470cb6601a3c8d2ddb31",
-  "commitBaseline": "4f64dee4e207a87d278e2346fa35d67e3b1b22da",
+  "currentIncrementId": "fd505c480ddb4e59ad6ce4194edfd7b4",
+  "commitBaseline": "d3affcb6517cdd7a64914f0da5f503d95ead9401",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
@@ -31,14 +31,14 @@
     {
       "id": "6b8349136daf470cb6601a3c8d2ddb31",
       "number": 3,
-      "status": "verified",
+      "status": "completed",
       "scope": "External Bones module foundation",
       "description": "~280 lines: add pinned public Bones crate dependencies, a focused Copper facade/control module, and headless construction tests."
     },
     {
       "id": "fd505c480ddb4e59ad6ce4194edfd7b4",
       "number": 4,
-      "status": "planned",
+      "status": "verified",
       "scope": "Headless Bones daemon driver",
       "description": "~300 lines: integrate a stepped/event-driven Bones engine into daemon start, health, reload, and shutdown without activating product extensions."
     },
@@ -297,8 +297,23 @@
       "at": "2026-07-26T20:26:49.8587776Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-26T20:27:10.9207308Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to BUILD."
+    },
+    {
+      "at": "2026-07-26T20:54:50.0847675Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-26T20:59:29.3916813Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-26T20:26:49.8649642Z"
+  "updatedAt": "2026-07-26T20:59:29.3999657Z"
 }

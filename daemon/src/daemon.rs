@@ -1,4 +1,5 @@
 use crate::autostart;
+use crate::bones_integration::BonesDaemonDriver;
 use crate::config_ui::{start_daemon_ui_server, DEFAULT_DAEMON_UI_BIND};
 use crate::control_plane::ControlPlaneAuth;
 use crate::core_config::{load_core_config, CoreConfig};
@@ -18,7 +19,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tiny_http::Server;
 
@@ -71,6 +72,8 @@ pub enum DaemonError {
     Protocol(String),
     #[error("tray error: {0}")]
     Tray(String),
+    #[error("Bones runtime error: {0}")]
+    Bones(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,7 +113,6 @@ impl IpcResponse {
     }
 }
 
-#[derive(Debug)]
 struct DaemonState {
     user_extensions_dir: PathBuf,
     core_extensions_dir: Option<PathBuf>,
@@ -119,12 +121,14 @@ struct DaemonState {
     auth_token: Option<String>,
     state_store: ExtensionStateStore,
     host_extensions: HostExtensionRegistry,
+    bones: BonesDaemonDriver,
 }
 
 impl DaemonState {
     fn load(user_extensions_dir: &Path) -> Result<Self, DaemonError> {
         let registry = load_runtime_registry(user_extensions_dir)?;
         let core_config = load_core_config().unwrap_or_default();
+        let bones = BonesDaemonDriver::new().map_err(DaemonError::Bones)?;
         Ok(Self {
             user_extensions_dir: user_extensions_dir.to_path_buf(),
             core_extensions_dir: core_extensions_dir(),
@@ -133,6 +137,7 @@ impl DaemonState {
             auth_token: None,
             state_store: ExtensionStateStore::for_current_user()?,
             host_extensions: HostExtensionRegistry::new(),
+            bones,
         })
     }
 
@@ -140,6 +145,7 @@ impl DaemonState {
         self.registry = load_runtime_registry(&self.user_extensions_dir)?;
         self.core_extensions_dir = core_extensions_dir();
         self.core_config = load_core_config().unwrap_or_default();
+        self.bones.note_registry_reload();
         Ok(self.registry.list().count())
     }
 }
@@ -239,6 +245,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     ));
 
     let mut scheduler = DaemonScheduler::new(config.reload_interval);
+    let mut last_bones_step = Instant::now();
     while running.load(Ordering::Relaxed) {
         match server.recv_timeout(Duration::from_millis(50)) {
             Ok(Some(request)) => handle_http_request(request, &mut state, &running)?,
@@ -259,8 +266,14 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             &state.state_store,
             &state.core_config,
         );
+        let now = Instant::now();
+        state
+            .bones
+            .step(now.saturating_duration_since(last_bones_step));
+        last_bones_step = now;
     }
 
+    state.bones.shutdown();
     logging::info("Daemon stopped");
     Ok(())
 }

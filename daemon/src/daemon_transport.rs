@@ -142,6 +142,7 @@ pub(super) fn handle_request(
         &state.registry,
         &state.host_extensions,
         &state.state_store,
+        state.bones.status(),
     );
     Ok(match ipc_request {
         IpcRequest::Health => match service.health_payload() {

@@ -105,7 +105,7 @@ Statuses: `ACCEPTED`, `PROPOSED`, `BLOCKED`, `SUPERSEDED`.
 | D-007 | PROPOSED | Introduce a versioned manifest runtime/artifact field while keeping schema 1.0 extensions valid during construction. |
 | D-008 | PROPOSED | TypeScript remains an authoring option by compiling to a WASM Component; Deno is construction-only compatibility scaffolding. |
 | D-009 | PROPOSED | Encode Copper control messages with a versioned binary or JSON envelope over the Bones byte-payload bus. |
-| D-010 | PROPOSED | Run the daemon through an event-driven headless Bones driver rather than a fixed 60 Hz loop. |
+| D-010 | ACCEPTED | Run the daemon through an event-driven headless Bones driver rather than a fixed 60 Hz loop. |
 | D-011 | ACCEPTED | Migrate the Copper settings UI to the Bones web presentation module, currently backed by `wry`; Copper owns the frontend and message contract, while Bones owns native window/webview presentation. |
 | D-012 | PROPOSED | Open the Bones presentation stack on demand from Copper tray/CLI actions so the daemon remains headless while the UI is closed. |
 
@@ -174,17 +174,17 @@ suite independently identifies missing behavior.
 
 ### M1 — Establish the external Bones composition root
 
-Status: **IN PROGRESS**
+Status: **DONE**
 Depends on: M0
 
 - [x] Add pinned Bones crates to the Copper workspace without adding Copper
   code to the Bones application.
-- [ ] Build Copper with a headless Bones engine.
+- [x] Build Copper with a headless Bones engine.
 - [x] Inject a minimal external Copper control module through the public Bones
   module API.
-- [ ] Preserve daemon start, health, and shutdown behavior.
-- [ ] Decide D-010.
-- [ ] Prove headless builds do not require a window or display server.
+- [x] Preserve daemon start, health, reload, and shutdown behavior.
+- [x] Decide D-010.
+- [x] Prove headless builds do not require a window or display server.
 
 Exit criterion: Copper runs its existing daemon lifecycle around an embedded,
 headless Bones engine with no product extensions activated.
@@ -437,3 +437,4 @@ When updating this plan:
 | 2026-07-26 | Started implementation and recorded the shipped extension contract baseline plus ADR-001. |
 | 2026-07-26 | Completed M0 with state fixtures, security regressions, and restricted Deno permissions. |
 | 2026-07-26 | Accepted D-006 and added Copper's first external module against the public Bones bus contract. |
+| 2026-07-26 | Completed M1: accepted D-010, added the stepped daemon driver, and upstreamed an optional Bones presentation dependency boundary in ADR-027. |

@@ -106,6 +106,12 @@ mod tests {
                 .is_some(),
             "health should surface state diagnostics"
         );
+        assert_eq!(
+            data.get("bones")
+                .and_then(|value| value.get("headless"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]
@@ -143,6 +149,7 @@ mod tests {
             .and_then(|v| v.as_u64())
             .expect("count");
         assert_eq!(count, baseline_count + 1);
+        assert_eq!(state.bones.status().registry_reloads, 1);
     }
 
     #[test]
@@ -341,6 +348,7 @@ mod tests {
             &state.registry,
             &state.host_extensions,
             &state.state_store,
+            state.bones.status(),
         );
 
         let result = service.trigger_payload("windows-display-manager", Some("status"));

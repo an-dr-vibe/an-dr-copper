@@ -22,43 +22,66 @@ function Invoke-Step {
   }
 }
 
+function Invoke-Copper {
+  param([string[]]$Arguments, [string]$Description, [switch]$Rebuild)
+  $binaryName = if ($IsWindows) { "copper.exe" } else { "copper" }
+  $binaryPath = Join-Path $repoRoot "target/debug/$binaryName"
+  if ($Rebuild -or -not (Test-Path -LiteralPath $binaryPath)) {
+    Invoke-Step { cargo build -p copperd } "build copperd"
+  }
+  Invoke-Step { & $binaryPath @Arguments } $Description
+}
+
 switch ($Action) {
   "run" {
-    Invoke-Step {
-      cargo run -p copperd -- run --extensions-dir $ExtensionsDir --bind-addr $BindAddr --reload-interval-ms $ReloadIntervalMs
-    } "run"
+    Invoke-Copper -Arguments @(
+      "run",
+      "--extensions-dir", $ExtensionsDir,
+      "--bind-addr", $BindAddr,
+      "--reload-interval-ms", $ReloadIntervalMs
+    ) -Description "run" -Rebuild
   }
   "health" {
-    Invoke-Step { cargo run -p copperd -- daemon health --bind-addr $BindAddr } "daemon health"
+    Invoke-Copper -Arguments @("daemon", "health", "--bind-addr", $BindAddr) -Description "daemon health"
   }
   "list" {
-    Invoke-Step { cargo run -p copperd -- daemon list --bind-addr $BindAddr } "daemon list"
+    Invoke-Copper -Arguments @("daemon", "list", "--bind-addr", $BindAddr) -Description "daemon list"
   }
   "trigger" {
     if ([string]::IsNullOrWhiteSpace($ExtensionId)) {
       throw "ExtensionId is required for trigger"
     }
     if ([string]::IsNullOrWhiteSpace($ActionId)) {
-      Invoke-Step { cargo run -p copperd -- daemon trigger $ExtensionId --bind-addr $BindAddr } "daemon trigger"
+      Invoke-Copper -Arguments @(
+        "daemon", "trigger", $ExtensionId,
+        "--bind-addr", $BindAddr
+      ) -Description "daemon trigger"
     } else {
-      Invoke-Step { cargo run -p copperd -- daemon trigger $ExtensionId --action $ActionId --bind-addr $BindAddr } "daemon trigger"
+      Invoke-Copper -Arguments @(
+        "daemon", "trigger", $ExtensionId,
+        "--action", $ActionId,
+        "--bind-addr", $BindAddr
+      ) -Description "daemon trigger"
     }
   }
   "reload" {
-    Invoke-Step { cargo run -p copperd -- daemon reload --bind-addr $BindAddr } "daemon reload"
+    Invoke-Copper -Arguments @("daemon", "reload", "--bind-addr", $BindAddr) -Description "daemon reload"
   }
   "verify" {
-    Invoke-Step { cargo run -p copperd -- daemon verify --bind-addr $BindAddr } "daemon verify"
+    Invoke-Copper -Arguments @("daemon", "verify", "--bind-addr", $BindAddr) -Description "daemon verify"
   }
   "shutdown" {
-    Invoke-Step { cargo run -p copperd -- daemon shutdown --bind-addr $BindAddr } "daemon shutdown"
+    Invoke-Copper -Arguments @("daemon", "shutdown", "--bind-addr", $BindAddr) -Description "daemon shutdown"
   }
   "ui-open" {
     if ([string]::IsNullOrWhiteSpace($ExtensionId)) {
       throw "ExtensionId is required for ui-open"
     }
-    Invoke-Step {
-      cargo run -p copperd -- ui open --extension $ExtensionId --extensions-dir $ExtensionsDir --idle-timeout-ms $UiIdleTimeoutMs
-    } "ui open"
+    Invoke-Copper -Arguments @(
+      "ui", "open",
+      "--extension", $ExtensionId,
+      "--extensions-dir", $ExtensionsDir,
+      "--idle-timeout-ms", $UiIdleTimeoutMs
+    ) -Description "ui open"
   }
 }
