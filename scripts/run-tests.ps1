@@ -16,7 +16,9 @@ function Invoke-Step {
   }
 }
 
-Invoke-Step { cargo fmt --all --check } "cargo fmt"
+# Bones is a pinned external workspace with its own formatting policy. Scope
+# Copper's formatting gate to the package maintained by this repository.
+Invoke-Step { cargo fmt -p copperd --check } "cargo fmt"
 if (-not $SkipClippy) {
   Invoke-Step { cargo clippy --workspace --all-targets -- -D warnings } "cargo clippy"
 }

@@ -54,7 +54,7 @@ dependencies, decisions, or exit criteria change.
 
 Run this before finalizing changes:
 
-1. `cargo fmt --all --check`
+1. `cargo fmt -p copperd --check` (Bones is a pinned external workspace)
 2. `cargo test -p copperd --test extension_utr`
 3. `./scripts/run-tests.ps1`
 4. `cargo build --workspace --release`

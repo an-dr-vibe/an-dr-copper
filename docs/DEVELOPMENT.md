@@ -18,6 +18,10 @@ cargo run -p copperd -- ui open --extension desktop-torrent-organizer
 
 The settings window is Tauri-backed and enabled by default. Use `ui open --browser` for browser fallback, or build with `--no-default-features` only when intentionally checking a headless/no-native-ui path.
 
+Run `cargo fmt -p copperd --check` for Copper's formatting gate. The pinned
+`bones/` checkout is an external workspace with its own formatting policy and
+must not be rewritten by Copper's validation scripts.
+
 ## Recipe: add a host API module
 
 Five touch-points in Rust, then schema + SDK:
@@ -92,6 +96,7 @@ Write state only through `ExtensionStateStore`. Never write JSON files directly.
 | File | Purpose |
 |---|---|
 | `daemon/src/api/mod.rs` | API module registry |
+| `daemon/src/bones_integration/` | External Copper modules built on public Bones contracts |
 | `daemon/src/descriptor.rs` | Manifest types + Permission enum |
 | `daemon/src/execution.rs` | Trigger preparation + permission serialization |
 | `daemon/src/host_extensions.rs` | Built-in host capability registry |

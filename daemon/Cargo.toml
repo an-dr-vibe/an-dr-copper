@@ -15,6 +15,7 @@ name = "copper"
 path = "src/main.rs"
 
 [dependencies]
+bones-bus = { package = "bus", path = "../bones/core/bus" }
 clap = { version = "4.5.40", features = ["derive"] }
 ctrlc = "3.4.7"
 dirs = "6.0.0"

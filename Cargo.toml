@@ -1,5 +1,9 @@
 [workspace]
 members = ["daemon"]
+exclude = [
+  "bones/core/bus",
+  "bones/vendor/pubsub-bus",
+]
 resolver = "2"
 
 [workspace.package]

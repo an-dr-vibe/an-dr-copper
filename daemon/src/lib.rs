@@ -1,5 +1,6 @@
 pub mod api;
 pub mod autostart;
+pub mod bones_integration;
 pub mod cli;
 pub mod config_ui;
 pub mod config_ui_http;

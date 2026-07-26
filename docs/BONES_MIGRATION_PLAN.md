@@ -101,7 +101,7 @@ Statuses: `ACCEPTED`, `PROPOSED`, `BLOCKED`, `SUPERSEDED`.
 | D-003 | ACCEPTED | `manifest.json` remains the source of truth for extension metadata and permissions. |
 | D-004 | ACCEPTED | Copper retains its control plane, settings UI, and structured state store. |
 | D-005 | ACCEPTED | Blocking or long-running capabilities use asynchronous jobs and result events rather than synchronous Bones handlers. |
-| D-006 | PROPOSED | Expose a small Copper facade crate while splitting control, capability, state, and platform responsibilities into focused modules or crates. |
+| D-006 | ACCEPTED | Expose a small Copper integration facade while splitting control, capability, state, and platform responsibilities into focused modules or crates. |
 | D-007 | PROPOSED | Introduce a versioned manifest runtime/artifact field while keeping schema 1.0 extensions valid during construction. |
 | D-008 | PROPOSED | TypeScript remains an authoring option by compiling to a WASM Component; Deno is construction-only compatibility scaffolding. |
 | D-009 | PROPOSED | Encode Copper control messages with a versioned binary or JSON envelope over the Bones byte-payload bus. |
@@ -174,16 +174,16 @@ suite independently identifies missing behavior.
 
 ### M1 — Establish the external Bones composition root
 
-Status: **NOT STARTED**  
+Status: **IN PROGRESS**
 Depends on: M0
 
-- [ ] Add pinned Bones crates to the Copper workspace without adding Copper
+- [x] Add pinned Bones crates to the Copper workspace without adding Copper
   code to the Bones application.
 - [ ] Build Copper with a headless Bones engine.
-- [ ] Inject a minimal external Copper control module through the public Bones
+- [x] Inject a minimal external Copper control module through the public Bones
   module API.
 - [ ] Preserve daemon start, health, and shutdown behavior.
-- [ ] Decide D-006 and D-010.
+- [ ] Decide D-010.
 - [ ] Prove headless builds do not require a window or display server.
 
 Exit criterion: Copper runs its existing daemon lifecycle around an embedded,
@@ -382,7 +382,7 @@ Every implementation milestone runs the checks proportionate to its scope.
 Before M7 completes, all of these are mandatory:
 
 ```powershell
-cargo fmt --all --check
+cargo fmt -p copperd --check
 cargo test -p copperd --test extension_utr
 ./scripts/run-tests.ps1
 cargo build --workspace --release
@@ -436,3 +436,4 @@ When updating this plan:
 | 2026-07-26 | Made migration of the settings UI to Bones' `wry`-backed web presentation module an accepted target. |
 | 2026-07-26 | Started implementation and recorded the shipped extension contract baseline plus ADR-001. |
 | 2026-07-26 | Completed M0 with state fixtures, security regressions, and restricted Deno permissions. |
+| 2026-07-26 | Accepted D-006 and added Copper's first external module against the public Bones bus contract. |

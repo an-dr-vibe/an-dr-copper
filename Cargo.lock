@@ -304,6 +304,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
+name = "bus"
+version = "0.1.0"
+dependencies = [
+ "pubsub-bus",
+]
+
+[[package]]
 name = "bytecount"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -598,6 +605,7 @@ name = "copperd"
 version = "0.3.1"
 dependencies = [
  "assert_cmd",
+ "bus",
  "clap 4.5.60",
  "ctrlc",
  "dirs",
@@ -3238,6 +3246,10 @@ checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "pubsub-bus"
+version = "3.2.0"
 
 [[package]]
 name = "quick-error"

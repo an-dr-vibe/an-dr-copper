@@ -110,6 +110,7 @@ Type contract for AI generation:
 |- daemon/
 |  |- src/
 |  |  |- api/        # host-side API modules (fs/shell/ui/notify/store/keyboard/secure_store)
+|  |  |- bones_integration/ # external native modules registered with Bones
 |  |  |- runtime/    # runtime adapter abstraction
 |  |  |- execution.rs        # shared trigger preparation and execution orchestration
 |  |  |- daemon_scheduler.rs # reload/background scheduling policy
