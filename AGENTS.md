@@ -19,6 +19,7 @@ Pick the file that matches your task. Each agent file describes the role behavio
 | Doc | Contains |
 |---|---|
 | `docs/ARCHITECTURE.md` | System overview, module layout, API surface table, design invariants, known gaps |
+| `docs/BONES_MIGRATION_PLAN.md` | Accepted Copper-on-Bones direction, decisions, milestones, risks, and cutover gates |
 | `docs/DEVELOPMENT.md` | Build commands, change recipes, state file locations, key source files |
 | `docs/TESTING.md` | Test commands, file locations, TDD workflow, coverage rules, known failures |
 | `docs/AI_AUTHORING.md` | How to generate and verify extensions |
@@ -33,6 +34,10 @@ Before editing code, read these files in order:
 2. `docs/DEVELOPMENT.md`
 3. `sdk/api.d.ts`
 4. `schemas/extension/1.0.0/descriptor.schema.json`
+
+Before work related to the Bones migration, also read
+`docs/BONES_MIGRATION_PLAN.md` and update its tracker when milestone status,
+dependencies, decisions, or exit criteria change.
 
 ## Operating Rules
 

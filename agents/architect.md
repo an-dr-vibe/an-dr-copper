@@ -22,6 +22,7 @@ This role does not write code — it produces a clear plan that a developer can 
 | Current API surface and status (stub vs real) | `docs/ARCHITECTURE.md` §6 Host API Surface |
 | Extension contract and manifest rules | `docs/ARCHITECTURE.md` §4 Extension Contract |
 | Known gaps and planned work | `docs/ARCHITECTURE.md` §12 Known Gaps |
+| Copper-on-Bones migration | `docs/BONES_MIGRATION_PLAN.md` |
 | Where each type of change belongs | `docs/DEVELOPMENT.md` (key source files table) |
 
 ## Checklist before approving a plan

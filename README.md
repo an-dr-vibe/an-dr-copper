@@ -128,6 +128,7 @@ Windows host extension note:
 ## Documentation
 
 - `docs/ARCHITECTURE.md`
+- `docs/BONES_MIGRATION_PLAN.md`
 - `docs/QUICKSTART.md`
 - `docs/AI_AUTHORING.md`
 - `docs/EXTENSION_UI_ACCESS.md`
