@@ -110,4 +110,11 @@ mod tests {
         let auth = ControlPlaneAuth::ephemeral();
         assert_eq!(auth.token().len(), 64);
     }
+
+    #[test]
+    fn ephemeral_auth_tokens_are_unique() {
+        let first = ControlPlaneAuth::ephemeral();
+        let second = ControlPlaneAuth::ephemeral();
+        assert_ne!(first.token(), second.token());
+    }
 }

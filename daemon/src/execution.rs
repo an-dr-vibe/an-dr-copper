@@ -105,6 +105,7 @@ impl<'a> ExecutionEngine<'a> {
             &prepared.extension_id,
             &prepared.main_ts_path,
             &store_path,
+            &prepared.permissions,
             &merged,
         )
     }

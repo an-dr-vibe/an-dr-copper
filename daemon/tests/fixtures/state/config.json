@@ -1,0 +1,6 @@
+{
+  "autoRun": true,
+  "desktopFolder": "~/Desktop",
+  "pollIntervalSeconds": 5,
+  "torrentsFolder": "~/Desktop/Torrents"
+}

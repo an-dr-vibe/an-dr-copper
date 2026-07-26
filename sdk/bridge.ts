@@ -69,7 +69,6 @@ function _toFileUrl(path: string): string {
 }
 
 const _mainTs = Deno.env.get("COPPER_MAIN_TS") ?? "";
-const _storePath = Deno.env.get("COPPER_STORE_PATH") ?? "";
 const _inputs = JSON.parse(Deno.env.get("COPPER_INPUTS") ?? "{}");
 const _isWindows = Deno.build.os === "windows";
 

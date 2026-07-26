@@ -156,18 +156,18 @@ Statuses: `NOT STARTED`, `IN PROGRESS`, `BLOCKED`, `DONE`.
 
 ### M0 — Freeze the behavioral baseline
 
-Status: **IN PROGRESS**
+Status: **DONE**
 Depends on: none
 
 - [x] Correct stale runtime descriptions in `README.md` and
   `docs/ARCHITECTURE.md`.
-- [ ] Record the supported CLI, HTTP, UI, state, tray, hotkey, and extension
+- [x] Record the supported CLI, HTTP, UI, state, tray, hotkey, and extension
   behavior as executable parity tests.
-- [ ] Add negative security tests for undeclared permissions and unauthorized
+- [x] Add negative security tests for undeclared permissions and unauthorized
   control-plane access.
-- [ ] Capture representative state fixtures for config, status, store, and
+- [x] Capture representative state fixtures for config, status, store, and
   legacy fallback migration.
-- [ ] Record platform-specific expectations for Windows, macOS, and Linux.
+- [x] Record platform-specific expectations for Windows, macOS, and Linux.
 
 Exit criterion: the current implementation can be replaced while the parity
 suite independently identifies missing behavior.
@@ -435,3 +435,4 @@ When updating this plan:
 | 2026-07-26 | Initial plan: Copper as an external Bones distribution, incremental construction, single release cutover. |
 | 2026-07-26 | Made migration of the settings UI to Bones' `wry`-backed web presentation module an accepted target. |
 | 2026-07-26 | Started implementation and recorded the shipped extension contract baseline plus ADR-001. |
+| 2026-07-26 | Completed M0 with state fixtures, security regressions, and restricted Deno permissions. |

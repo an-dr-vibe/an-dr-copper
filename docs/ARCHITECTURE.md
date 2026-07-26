@@ -48,9 +48,9 @@ Daemon capabilities:
 - Routes trigger preparation through a single `ExecutionEngine`, which combines the isolated runtime adapter, host capability registry, and shared state store.
 - Uses a structured runtime ABI (`copper.runtime/1`) and executes trigger preparation through a subprocess runtime worker, so runtime planning is isolated from the daemon process.
 - Executes the prepared TypeScript entrypoint in a separate Deno process. The
-  bridge currently starts Deno with `--allow-all`; manifest permission
-  enforcement at the replacement capability boundary is a required migration
-  gate.
+  process may read only its own entrypoint and the bridge checks manifest
+  permissions before dispatching protected host API methods. The replacement
+  Bones capability boundary retains and strengthens this policy.
 - Routes daemon IPC request policy through a dedicated `DaemonControlService` so transport handling stays separate from registry/runtime/state orchestration.
 - Routes config UI information and apply workflows through a dedicated `config_ui_service` layer so the HTTP/UI server stays thinner.
 - Routes config UI HTTP parsing/serialization through `config_ui_http.rs` so UI transport concerns are separated from route/business logic.
@@ -228,9 +228,9 @@ These must not be broken without a deliberate versioning decision:
 
 ## 12. Known Gaps vs Full Target Architecture
 
-- Manifest permissions are serialized during trigger preparation, but current
-  Deno execution uses `--allow-all`; permissions are not yet enforced as a
-  runtime security boundary.
+- Deno permissions and host dispatch checks reduce the current TypeScript
+  runtime's ambient access, but the replacement still needs sender-authorized,
+  deny-by-default Bones capability modules.
 - Bones WASM execution and on-demand `wry` presentation are not integrated yet.
 - Safe Input Key registers its saved hotkey through the daemon on Windows; richer cross-platform global hotkey behavior is still roadmap work.
 - Some shipped extensions are still intentionally host-native or hybrid rather than purely TypeScript-executed; that ownership is now centralized in `host_extensions.rs` as explicit host capabilities.

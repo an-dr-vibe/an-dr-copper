@@ -11,20 +11,20 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "45917f16e9d949d0928910a43b9810fc",
-  "commitBaseline": "82f455152ee994166af40a7f59b40bc387e717b6",
+  "currentIncrementId": "d4e0e7a63ac9492b92ffad5319eaddf2",
+  "commitBaseline": "dbd1982d87980ffcf7e498ea86bd18d94afb980e",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
       "number": 1,
-      "status": "verified",
+      "status": "completed",
       "scope": "Architecture record and behavioral baseline",
       "description": "~280 lines: add the Copper-on-Bones ADR/design record, correct stale runtime documentation, and add baseline registry/action parity tests before runtime changes."
     },
     {
       "id": "d4e0e7a63ac9492b92ffad5319eaddf2",
       "number": 2,
-      "status": "planned",
+      "status": "verified",
       "scope": "State and security parity fixtures",
       "description": "~260 lines: add atomic state migration fixtures plus control-plane authentication and undeclared-permission regression tests."
     },
@@ -267,8 +267,23 @@
       "at": "2026-07-26T20:13:01.7006039Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-26T20:13:32.7531026Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to BUILD."
+    },
+    {
+      "at": "2026-07-26T20:16:39.2145854Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-26T20:18:11.3133263Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-26T20:13:01.7070583Z"
+  "updatedAt": "2026-07-26T20:18:11.3200690Z"
 }

@@ -1,0 +1,11 @@
+{
+  "_stateContract": {
+    "capability": "desktop-torrent-monitor",
+    "owner": "host",
+    "version": 1
+  },
+  "lastScanFailed": 0,
+  "lastScanFound": 2,
+  "lastScanMoved": 2,
+  "lastScanUnix": 1767225600
+}
