@@ -209,11 +209,11 @@ catalog and lifecycle without executing Copper actions.
 
 ### M3 — Permissioned capability broker
 
-Status: **NOT STARTED**  
+Status: **IN PROGRESS**
 Depends on: M2
 
-- [ ] Define versioned action request, job, result, and error envelopes.
-- [ ] Authorize every request using the Bones host-stamped sender and its
+- [x] Define versioned action request, job, result, and error envelopes.
+- [x] Authorize every request using the Bones host-stamped sender and its
   validated Copper manifest.
 - [ ] Implement asynchronous job execution outside the Bones event loop.
 - [ ] Add scoped store/config/status access backed by `ExtensionStateStore`.
@@ -440,3 +440,4 @@ When updating this plan:
 | 2026-07-26 | Completed M1: accepted D-010, added the stepped daemon driver, and upstreamed an optional Bones presentation dependency boundary in ADR-027. |
 | 2026-07-26 | Started M2 and accepted D-007 with an optional, identity-bound `copper.component/1` manifest artifact contract. |
 | 2026-07-26 | Completed M2: Copper now supplies its filtered multi-root catalog to Bones, observes typed lifecycle state, delegates in-place component replacement to Bones' transactional supervisor, and accepted D-009 for versioned Copper-owned JSON envelopes. |
+| 2026-07-26 | Started M3 with the `copper.bus/1` JSON envelope contract and a bounded direct-call capability queue that authorizes the Bones host-stamped sender against the active WASM manifest. |

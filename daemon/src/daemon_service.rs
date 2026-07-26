@@ -130,6 +130,9 @@ mod tests {
             lifecycle_events: 0,
             lifecycle_decode_errors: 0,
             extensions: BTreeMap::new(),
+            capability_accepted: 0,
+            capability_rejected: 0,
+            capability_pending: 0,
             shutdown: false,
         }
     }

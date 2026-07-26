@@ -54,6 +54,10 @@ Daemon capabilities:
   and lifecycle state, and performs orderly Bones shutdown with the daemon.
   Catalog topology changes build a candidate engine before cutover; component
   updates at a stable path use Bones' transactional supervisor reload.
+- Registers the external `copper-capabilities` Bones module. Its synchronous
+  validation boundary accepts only `copper.bus/1` capability requests from
+  active WASM senders, checks the sender's manifest permission, rejects recent
+  request replays, and returns a job ID without doing blocking work.
 - Filters runtime activation through manifest-declared host platforms and core config disable rules.
 - Routes trigger preparation through a single `ExecutionEngine`, which combines the isolated runtime adapter, host capability registry, and shared state store.
 - Uses a structured runtime ABI (`copper.runtime/1`) and executes trigger preparation through a subprocess runtime worker, so runtime planning is isolated from the daemon process.
@@ -248,6 +252,7 @@ These must not be broken without a deliberate versioning decision:
 | Trigger preparation runs in a subprocess, not in-process | Failures in runtime planning cannot crash the daemon |
 | Cross-platform build must pass on Windows, macOS, and Linux | Platform-specific code goes behind `#[cfg]` or target sections in Cargo.toml |
 | No mandatory GUI dependency in headless build path | CI must build without a display server |
+| Bones sender identity is the capability principal | Guest payloads cannot select or impersonate an extension identity |
 
 ## 12. Known Gaps vs Full Target Architecture
 

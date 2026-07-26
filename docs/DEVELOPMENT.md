@@ -39,6 +39,15 @@ the latest typed lifecycle state for each active component. Registry reloads
 that keep the same ID-to-path catalog do not rebuild Bones; file changes are
 left to Bones' transactional component supervisor.
 
+WASM guests request native work with a direct Bones `send` to
+`copper-capabilities`. The payload is a `copper.bus/1` `capability-request`;
+the host ignores any identity-like values inside `args` and authorizes only the
+sender stamped by Bones. Validation is synchronous and bounded to 64 KiB; an
+accepted request returns `job-accepted`, while execution and `job-result`
+delivery are asynchronous. `notify` retains Copper's permissionless legacy
+behavior; all other defined capabilities require the matching manifest
+permission. Health exposes accepted, rejected, and pending request counts.
+
 ## Recipe: add a host API module
 
 Five touch-points in Rust, then schema + SDK:

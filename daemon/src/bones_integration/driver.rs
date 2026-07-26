@@ -1,4 +1,7 @@
-use super::{CopperControlHandle, CopperControlModule, CopperLifecycleState};
+use super::{
+    CopperCapabilityHandle, CopperCapabilityModule, CopperControlHandle, CopperControlModule,
+    CopperLifecycleState,
+};
 use crate::extension::Registry;
 use bones_logging::{Level, LogSink, Logger};
 use bones_runner::{BuiltEngine, Engine};
@@ -35,6 +38,9 @@ pub struct BonesRuntimeStatus {
     pub lifecycle_events: usize,
     pub lifecycle_decode_errors: usize,
     pub extensions: BTreeMap<String, CopperLifecycleState>,
+    pub capability_accepted: u64,
+    pub capability_rejected: u64,
+    pub capability_pending: usize,
     pub shutdown: bool,
 }
 
@@ -42,6 +48,7 @@ pub struct BonesRuntimeStatus {
 pub struct BonesDaemonDriver {
     engine: BuiltEngine,
     control: CopperControlHandle,
+    capabilities: CopperCapabilityHandle,
     catalog: CatalogSnapshot,
     frames: u64,
     registry_reloads: u64,
@@ -52,12 +59,14 @@ pub struct BonesDaemonDriver {
 impl BonesDaemonDriver {
     pub fn new(registry: &Registry) -> Result<Self, String> {
         let (control_module, control) = CopperControlModule::new();
+        let (capability_module, capabilities) = CopperCapabilityModule::new(registry);
         let catalog = catalog_snapshot(registry);
-        let mut engine = build_engine(registry, control_module)?;
+        let mut engine = build_engine(registry, control_module, capability_module)?;
         dispatch_pending(&mut engine);
         Ok(Self {
             engine,
             control,
+            capabilities,
             catalog,
             frames: 0,
             registry_reloads: 0,
@@ -76,14 +85,17 @@ impl BonesDaemonDriver {
         self.registry_reloads = self.registry_reloads.saturating_add(1);
         let catalog = catalog_snapshot(registry);
         if catalog == self.catalog {
+            self.capabilities.replace_registry(registry);
             return Ok(false);
         }
 
         let module = CopperControlModule::from_handle(self.control.clone());
-        let mut candidate = build_engine(registry, module)?;
+        let (capability_module, capabilities) = CopperCapabilityModule::new(registry);
+        let mut candidate = build_engine(registry, module, capability_module)?;
         self.engine.shutdown();
         dispatch_pending(&mut candidate);
         self.engine = candidate;
+        self.capabilities = capabilities;
         self.catalog = catalog;
         self.catalog_rebuilds = self.catalog_rebuilds.saturating_add(1);
         Ok(true)
@@ -110,6 +122,9 @@ impl BonesDaemonDriver {
             lifecycle_events: self.control.lifecycle_event_count(),
             lifecycle_decode_errors: self.control.lifecycle_decode_errors(),
             extensions: self.control.extensions(),
+            capability_accepted: self.capabilities.accepted_count(),
+            capability_rejected: self.capabilities.rejected_count(),
+            capability_pending: self.capabilities.pending_count(),
             shutdown: self.shutdown,
         }
     }
@@ -126,10 +141,12 @@ impl BonesDaemonDriver {
 fn build_engine(
     registry: &Registry,
     control_module: CopperControlModule,
+    capability_module: CopperCapabilityModule,
 ) -> Result<BuiltEngine, String> {
     let mut builder = Engine::new()
         .logger(Logger::new(Arc::new(CopperBonesLogSink)))
         .module(control_module)
+        .module(capability_module)
         .extension_controller(super::COPPER_CONTROL_ENDPOINT)
         .read_only_persistence()
         .saves_dir(crate::extension::default_extensions_dir().join("copper-core/bones-saves"));
