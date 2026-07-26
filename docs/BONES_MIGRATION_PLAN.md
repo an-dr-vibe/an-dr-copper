@@ -219,9 +219,9 @@ Depends on: M2
 - [x] Add scoped store/config/status access backed by `ExtensionStateStore`.
 - [x] Add notification and UI result routing.
 - [x] Add filesystem and shell capabilities with least-privilege policy.
-- [ ] Add keyboard and secure-store capabilities.
-- [ ] Add Windows display capabilities behind platform gates.
-- [ ] Verify undeclared, cross-extension, malformed, and replayed requests fail
+- [x] Add keyboard and secure-store capabilities.
+- [x] Add Windows display capabilities behind platform gates.
+- [x] Verify undeclared, cross-extension, malformed, and replayed requests fail
   safely.
 
 Exit criterion: a test WASM component can execute each authorized Copper
@@ -443,3 +443,4 @@ When updating this plan:
 | 2026-07-26 | Started M3 with the `copper.bus/1` JSON envelope contract and a bounded direct-call capability queue that authorizes the Bones host-stamped sender against the active WASM manifest. |
 | 2026-07-26 | Added the M3 asynchronous worker boundary and sender-scoped store, config, and status operations with direct targeted job-result delivery. |
 | 2026-07-26 | Routed filesystem, shell, notification, and UI requests through the M3 worker with strict argument validation, manifest permission checks, and bounded shutdown behavior. |
+| 2026-07-26 | Completed the M3 native handler set with keyboard and keychain operations plus a Windows-gated display family protected by the new additive `windows-display` permission. |

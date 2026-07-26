@@ -402,6 +402,36 @@ mod tests {
     }
 
     #[test]
+    fn windows_display_requires_its_dedicated_manifest_permission() {
+        let temp = tempdir().expect("tempdir");
+        write_component(temp.path(), "display", &["windows-display"]);
+        write_component(temp.path(), "generic-ui", &["ui"]);
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let (mut module, handle) = CopperCapabilityModule::new(&registry);
+
+        assert!(matches!(
+            respond(
+                &mut module,
+                "display",
+                capability_request("request-1", "windows-display")
+            ),
+            CopperEnvelope::JobAccepted { .. }
+        ));
+        assert_error(
+            respond(
+                &mut module,
+                "generic-ui",
+                capability_request("request-2", "windows-display"),
+            ),
+            "permission-denied",
+        );
+        assert_eq!(
+            handle.pop_pending().expect("display job").capability,
+            Capability::WindowsDisplay
+        );
+    }
+
+    #[test]
     fn replay_and_protocol_mismatch_fail_without_duplicate_jobs() {
         let temp = tempdir().expect("tempdir");
         write_component(temp.path(), "allowed", &["store"]);

@@ -17,8 +17,8 @@
 - [x] **Bones catalog lifecycle bridge** (completed) — ~300 lines: map validated manifests and disabled/platform policy to Bones activation, observe lifecycle events, and make reload transactions testable.
 - [x] **Capability protocol and authorization** (completed) — ~300 lines: define versioned action/job envelopes and enforce host-stamped sender permissions with adversarial tests.
 - [x] **Asynchronous jobs and scoped state** (completed) — ~300 lines: execute blocking work away from the Bones loop and expose scoped Copper config/status/store operations.
-- [ ] **Filesystem shell notification and UI capabilities** (verified) — ~300 lines: provide permissioned job handlers for filesystem, shell, notification, and UI result operations with negative tests.
-- [ ] **Keyboard secure-store and display capabilities** (planned) — ~300 lines: expose platform-gated keyboard, keychain, and Windows display operations through the capability broker.
+- [x] **Filesystem shell notification and UI capabilities** (completed) — ~300 lines: provide permissioned job handlers for filesystem, shell, notification, and UI result operations with negative tests.
+- [ ] **Keyboard secure-store and display capabilities** (verified) — ~300 lines: expose platform-gated keyboard, keychain, and Windows display operations through the capability broker.
 - [ ] **Bones-backed control plane and scheduling** (planned) — ~300 lines: route Copper trigger/background workflows through Bones messages while preserving authenticated CLI/HTTP behavior.
 - [ ] **On-demand Bones wry presentation** (planned) — ~300 lines: upstream generic lazy web/window lifecycle support to Bones and verify a headless engine can repeatedly open and close wry presentation.
 - [ ] **Copper settings UI on Bones web** (planned) — ~300 lines: port settings frontend transport to Bones web messages, preserve settings behavior, and remove Tauri window use.
@@ -28,4 +28,4 @@
 - [ ] **Safe Input Key and Windows display WASM ports** (planned) — ~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities.
 - [ ] **Cutover cleanup release and full verification** (planned) — ~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates.
 
-_Last updated: 2026-07-26T22:36:00.7627220Z_
+_Last updated: 2026-07-26T22:50:30.0794421Z_

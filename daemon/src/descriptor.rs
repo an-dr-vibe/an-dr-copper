@@ -28,6 +28,7 @@ pub enum Permission {
     Shell,
     Store,
     Ui,
+    WindowsDisplay,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

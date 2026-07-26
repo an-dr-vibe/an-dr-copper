@@ -31,7 +31,7 @@
     },
     "permissions": {
       "type": "array",
-      "items": { "enum": ["fs", "keyboard", "network", "secure-store", "shell", "store", "ui"] },
+      "items": { "enum": ["fs", "keyboard", "network", "secure-store", "shell", "store", "ui", "windows-display"] },
       "uniqueItems": true
     },
     "inputs": {

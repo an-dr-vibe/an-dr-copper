@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "trigger": "windows-display",
   "platforms": ["windows"],
-  "permissions": ["ui", "store"],
+  "permissions": ["ui", "store", "windows-display"],
   "inputs": [
     {
       "id": "taskbarAutoHide",

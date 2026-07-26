@@ -69,11 +69,23 @@ Native operation names and argument objects are:
   contract, but the sender must still be an active WASM extension.
 - `ui`: `show {markup}` and `update {state}`. Both require `ui`; the current
   host sink preserves legacy no-op behavior until Bones presentation lands.
+- `keyboard`: `type-text {text}`, `send-key {key}`, `send-combo {combo}`, and
+  `normalize-combo {combo}`.
+- `secure-store`: `get {service,key}`, `set {service,key,value}`, and
+  `delete {service,key}`. Results are delivered only to the requesting sender.
+- `windows-display`: `status`, `toggle-taskbar-autohide`,
+  `set-taskbar-autohide {autoHide}`,
+  `set-resolution {width,height,refreshRate}`, and
+  `set-scale {scalePercent}`. This family requires the dedicated
+  `windows-display` permission and returns `platform-unsupported` away from
+  Windows.
 
 Paths, commands, messages, arrays, and structured UI values are type- and
 size-checked before native execution. Filesystem, shell, and UI requests still
 require their manifest permissions. Worker shutdown waits briefly for ordinary
 jobs and then detaches a blocking native call so daemon shutdown cannot hang.
+`windows-display` is an additive schema 1.0 permission: older manifests remain
+valid, while extensions requesting display control must declare it explicitly.
 
 ## Recipe: add a host API module
 

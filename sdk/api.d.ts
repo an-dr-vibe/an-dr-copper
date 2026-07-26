@@ -1,4 +1,12 @@
-export type Permission = "fs" | "keyboard" | "network" | "secure-store" | "shell" | "store" | "ui";
+export type Permission =
+  | "fs"
+  | "keyboard"
+  | "network"
+  | "secure-store"
+  | "shell"
+  | "store"
+  | "ui"
+  | "windows-display";
 
 /** Optional manifest runtime block. Omit it for the legacy main.ts runtime. */
 export interface WasmComponentRuntime {
@@ -89,6 +97,7 @@ export interface Api {
   };
   windows?: {
     display: {
+      /** Requires `"windows-display"` permission and is available only on Windows. */
       status(): Promise<{
         taskbarAutoHide: boolean;
         taskbarPinned: boolean;

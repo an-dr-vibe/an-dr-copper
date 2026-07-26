@@ -281,6 +281,8 @@ fn authorize_method(method: &str, permissions: &[String]) -> Result<(), String> 
         Some("keyboard")
     } else if method.starts_with("secureStore.") {
         Some("secure-store")
+    } else if method.starts_with("windows.display.") {
+        Some("windows-display")
     } else {
         None
     };
@@ -350,5 +352,13 @@ mod tests {
     #[test]
     fn authorization_allows_permissionless_notification() {
         authorize_method("notify", &[]).expect("notification has no manifest permission");
+    }
+
+    #[test]
+    fn authorization_requires_explicit_windows_display_permission() {
+        authorize_method("windows.display.status", &["windows-display".to_string()])
+            .expect("declared permission");
+        let error = authorize_method("windows.display.status", &[]).expect_err("denied");
+        assert!(error.contains("permission 'windows-display'"));
     }
 }

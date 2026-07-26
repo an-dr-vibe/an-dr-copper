@@ -17,6 +17,7 @@ pub enum Capability {
     Shell,
     Store,
     Ui,
+    WindowsDisplay,
 }
 
 impl Capability {
@@ -31,6 +32,7 @@ impl Capability {
             Self::Shell => Some(Permission::Shell),
             Self::Store => Some(Permission::Store),
             Self::Ui => Some(Permission::Ui),
+            Self::WindowsDisplay => Some(Permission::WindowsDisplay),
         }
     }
 }
@@ -98,6 +100,7 @@ impl CopperEnvelope {
 #[cfg(test)]
 mod tests {
     use super::{Capability, CopperEnvelope, COPPER_BUS_PROTOCOL_V1};
+    use crate::descriptor::Permission;
     use serde_json::json;
 
     #[test]
@@ -135,5 +138,11 @@ mod tests {
                 ..
             }
         ));
+
+        assert_eq!(
+            Capability::WindowsDisplay.required_permission(),
+            Some(Permission::WindowsDisplay)
+        );
+        assert_eq!(Capability::Notify.required_permission(), None);
     }
 }

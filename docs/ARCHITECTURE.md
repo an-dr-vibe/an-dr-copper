@@ -187,11 +187,14 @@ Adding a module requires 5 touch-points — see `agents/developer.md`.
 | `notify` | — | — | native worker: platform notification |
 | `ui` | `ui` | — | native worker route; presentation remains placeholder until M4 |
 | `store` | `store` | — | native worker: scoped store/config/status |
-| `keyboard` | `keyboard` | — | partial: Windows `typeText` real |
-| `secure_store` | `secure-store` | Windows Credential Manager / GNOME SecretService / macOS Keychain | **real** |
+| `keyboard` | `keyboard` | — | native worker: normalization and platform input |
+| `secure_store` | `secure-store` | Windows Credential Manager / GNOME SecretService / macOS Keychain | native worker: get/set/delete |
+| `windows_display` | `windows-display` | — | Windows-gated native worker |
 
 `secure_store` uses the `keyring` crate (`v3`, features `windows-native apple-native linux-native`).
-`keyboard.typeText` uses host input on Windows. UI calls already cross the
+`keyboard.typeText` uses host input on Windows; the other input functions retain
+their current platform behavior. The additive `windows-display` permission
+separates display mutation from generic UI access. UI calls already cross the
 authorized asynchronous boundary, but their placeholder host sink is replaced
 by Bones web/wry presentation in M4.
 

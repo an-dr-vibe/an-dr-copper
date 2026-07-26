@@ -1,4 +1,7 @@
 use super::capability::{build_policies, is_capability_authorized, CapabilityPolicies};
+use super::platform_jobs::{
+    execute_keyboard_operation, execute_secure_store_operation, execute_windows_display_operation,
+};
 use super::{AuthorizedCapabilityJob, Capability, CopperEnvelope, COPPER_BUS_PROTOCOL_V1};
 use crate::api;
 use crate::extension::Registry;
@@ -147,11 +150,14 @@ fn execute_capability_job(
     } else {
         match job.capability {
             Capability::Fs => execute_fs_operation(&job),
+            Capability::Keyboard => execute_keyboard_operation(&job),
             Capability::Notify => execute_notify_operation(&job),
+            Capability::SecureStore => execute_secure_store_operation(&job),
             Capability::Shell => execute_shell_operation(&job),
             Capability::Store => execute_store_operation(store, &job),
             Capability::Ui => execute_ui_operation(&job),
-            _ => Err((
+            Capability::WindowsDisplay => execute_windows_display_operation(&job),
+            Capability::Network => Err((
                 "unsupported-capability",
                 "capability has no native worker handler yet".to_string(),
             )),
@@ -196,7 +202,7 @@ fn job_remains_authorized(
         .is_some_and(|permissions| is_capability_authorized(&permissions, job.capability))
 }
 
-type JobResult = Result<Value, (&'static str, String)>;
+pub(super) type JobResult = Result<Value, (&'static str, String)>;
 
 fn execute_fs_operation(job: &AuthorizedCapabilityJob) -> JobResult {
     match job.operation.as_str() {
@@ -354,7 +360,7 @@ fn read_binary_name(args: &Map<String, Value>) -> Result<&str, (&'static str, St
     Ok(binary)
 }
 
-fn read_string<'a>(
+pub(super) fn read_string<'a>(
     args: &'a Map<String, Value>,
     field: &str,
     max_bytes: usize,
@@ -418,7 +424,7 @@ fn read_object(args: &Map<String, Value>) -> Result<Map<String, Value>, (&'stati
     read_object_field(args, "value")
 }
 
-fn read_object_field(
+pub(super) fn read_object_field(
     args: &Map<String, Value>,
     field: &str,
 ) -> Result<Map<String, Value>, (&'static str, String)> {

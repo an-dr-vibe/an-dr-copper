@@ -122,6 +122,7 @@ pub fn permissions_as_strings(permissions: &[Permission]) -> Vec<String> {
             Permission::Shell => "shell".to_string(),
             Permission::Store => "store".to_string(),
             Permission::Ui => "ui".to_string(),
+            Permission::WindowsDisplay => "windows-display".to_string(),
         })
         .collect()
 }

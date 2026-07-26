@@ -500,6 +500,7 @@ fn format_permissions(perms: &[Permission]) -> String {
             Permission::Shell => "shell",
             Permission::Store => "store",
             Permission::Ui => "ui",
+            Permission::WindowsDisplay => "windows-display",
         })
         .collect::<Vec<_>>()
         .join(",")
@@ -801,8 +802,9 @@ mod tests {
             Permission::Network,
             Permission::Store,
             Permission::Ui,
+            Permission::WindowsDisplay,
         ]);
-        assert_eq!(formatted, "fs,shell,network,store,ui");
+        assert_eq!(formatted, "fs,shell,network,store,ui,windows-display");
     }
 
     #[test]

@@ -81,7 +81,11 @@ fn shipped_extension_contract_matrix_is_stable() {
         (
             "windows-display-manager",
             "windows-display",
-            vec![Permission::Ui, Permission::Store],
+            vec![
+                Permission::Ui,
+                Permission::Store,
+                Permission::WindowsDisplay,
+            ],
             vec![
                 "status",
                 "toggle-taskbar-autohide",
@@ -419,7 +423,11 @@ fn windows_display_manager_descriptor_matches_required_contract() {
     assert_eq!(platforms, vec!["windows"]);
     assert_eq!(
         descriptor.permissions,
-        vec![Permission::Ui, Permission::Store]
+        vec![
+            Permission::Ui,
+            Permission::Store,
+            Permission::WindowsDisplay
+        ]
     );
 
     let action_ids = descriptor
