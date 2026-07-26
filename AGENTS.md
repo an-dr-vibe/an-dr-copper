@@ -88,7 +88,8 @@ When generating or editing extensions:
 1. Validate manifest against `schemas/extension/1.0.0/descriptor.schema.json`.
 2. Keep `$schema` set to:
    `https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json`
-3. Ensure every extension has both files:
-   - `manifest.json`
-   - `main.ts`
+3. Ensure every extension has `manifest.json` plus its declared runtime
+   artifact:
+   - no `runtime` block: `main.ts`
+   - `runtime.kind = "wasm-component"`: `<extension-id>.wasm`
 4. Keep permissions minimal and explicit.

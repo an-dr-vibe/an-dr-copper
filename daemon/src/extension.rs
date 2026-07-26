@@ -13,6 +13,20 @@ pub struct Extension {
     pub root: PathBuf,
     pub descriptor: Descriptor,
     pub main_ts_path: PathBuf,
+    #[serde(default)]
+    pub wasm_component_path: Option<PathBuf>,
+}
+
+impl Extension {
+    pub fn wasm_component_path(&self) -> Option<&Path> {
+        self.wasm_component_path.as_deref()
+    }
+
+    pub fn runtime_artifact_path(&self) -> &Path {
+        self.wasm_component_path
+            .as_deref()
+            .unwrap_or(&self.main_ts_path)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -23,6 +37,8 @@ pub enum ExtensionError {
     Validation(#[from] ValidationError),
     #[error("extension is missing required file: {0}")]
     MissingFile(String),
+    #[error("invalid extension runtime artifact: {0}")]
+    InvalidArtifact(String),
 }
 
 #[derive(Debug, Clone)]
@@ -65,20 +81,59 @@ impl Registry {
                 if !descriptor_path.exists() {
                     continue;
                 }
-                if !main_ts_path.exists() {
-                    return Err(ExtensionError::MissingFile(format!(
-                        "{} does not contain main.ts",
-                        folder.display()
-                    )));
-                }
                 let descriptor_raw = fs::read_to_string(&descriptor_path)?;
                 let descriptor = parse_and_validate(&descriptor_raw)?;
+                let wasm_component_path = match &descriptor.runtime {
+                    Some(runtime) => {
+                        let expected = format!("{}.wasm", descriptor.id);
+                        if runtime.artifact != expected {
+                            return Err(ExtensionError::InvalidArtifact(format!(
+                                "extension {} artifact must be named {expected}, got {}",
+                                descriptor.id, runtime.artifact
+                            )));
+                        }
+                        let artifact_path = folder.join(&runtime.artifact);
+                        if !artifact_path.exists() {
+                            return Err(ExtensionError::MissingFile(format!(
+                                "{} does not contain {}",
+                                folder.display(),
+                                runtime.artifact
+                            )));
+                        }
+                        if !fs::metadata(&artifact_path)?.is_file() {
+                            return Err(ExtensionError::InvalidArtifact(format!(
+                                "extension {} artifact {} is not a file",
+                                descriptor.id,
+                                artifact_path.display()
+                            )));
+                        }
+                        let canonical_root = fs::canonicalize(&folder)?;
+                        let canonical_artifact = fs::canonicalize(&artifact_path)?;
+                        if canonical_artifact.parent() != Some(canonical_root.as_path()) {
+                            return Err(ExtensionError::InvalidArtifact(format!(
+                                "extension {} artifact resolves outside its package",
+                                descriptor.id
+                            )));
+                        }
+                        Some(artifact_path)
+                    }
+                    None => {
+                        if !main_ts_path.exists() {
+                            return Err(ExtensionError::MissingFile(format!(
+                                "{} does not contain main.ts",
+                                folder.display()
+                            )));
+                        }
+                        None
+                    }
+                };
                 entries.insert(
                     descriptor.id.clone(),
                     Extension {
                         root: folder,
                         descriptor,
                         main_ts_path,
+                        wasm_component_path,
                     },
                 );
             }

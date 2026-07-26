@@ -102,7 +102,7 @@ Statuses: `ACCEPTED`, `PROPOSED`, `BLOCKED`, `SUPERSEDED`.
 | D-004 | ACCEPTED | Copper retains its control plane, settings UI, and structured state store. |
 | D-005 | ACCEPTED | Blocking or long-running capabilities use asynchronous jobs and result events rather than synchronous Bones handlers. |
 | D-006 | ACCEPTED | Expose a small Copper integration facade while splitting control, capability, state, and platform responsibilities into focused modules or crates. |
-| D-007 | PROPOSED | Introduce a versioned manifest runtime/artifact field while keeping schema 1.0 extensions valid during construction. |
+| D-007 | ACCEPTED | Use optional `runtime: { kind, abi, artifact }` metadata for WASM Components; absence retains schema 1.0 TypeScript compatibility. |
 | D-008 | PROPOSED | TypeScript remains an authoring option by compiling to a WASM Component; Deno is construction-only compatibility scaffolding. |
 | D-009 | PROPOSED | Encode Copper control messages with a versioned binary or JSON envelope over the Bones byte-payload bus. |
 | D-010 | ACCEPTED | Run the daemon through an event-driven headless Bones driver rather than a fixed 60 Hz loop. |
@@ -191,11 +191,11 @@ headless Bones engine with no product extensions activated.
 
 ### M2 — Manifest catalog and lifecycle bridge
 
-Status: **NOT STARTED**  
+Status: **IN PROGRESS**
 Depends on: M1
 
-- [ ] Scan and validate Copper manifests before constructing the Bones engine.
-- [ ] Enforce manifest ID to artifact identity.
+- [x] Scan and validate Copper manifests before constructing the Bones engine.
+- [x] Enforce manifest ID to artifact identity.
 - [ ] Map Copper disabled/platform-filtered extensions to the Bones startup
   allow-list.
 - [ ] Authorize the Copper controller for Bones runtime load, unload, and reload
@@ -438,3 +438,4 @@ When updating this plan:
 | 2026-07-26 | Completed M0 with state fixtures, security regressions, and restricted Deno permissions. |
 | 2026-07-26 | Accepted D-006 and added Copper's first external module against the public Bones bus contract. |
 | 2026-07-26 | Completed M1: accepted D-010, added the stepped daemon driver, and upstreamed an optional Bones presentation dependency boundary in ADR-027. |
+| 2026-07-26 | Started M2 and accepted D-007 with an optional, identity-bound `copper.component/1` manifest artifact contract. |

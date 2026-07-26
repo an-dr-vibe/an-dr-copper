@@ -3,6 +3,20 @@ use serde::{Deserialize, Serialize};
 
 pub const SUPPORTED_SCHEMA_URL: &str =
     "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json";
+pub const COMPONENT_ABI_V1: &str = "copper.component/1";
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeKind {
+    WasmComponent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeDescriptor {
+    pub kind: RuntimeKind,
+    pub abi: String,
+    pub artifact: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -168,6 +182,8 @@ pub struct Descriptor {
     pub name: String,
     pub version: String,
     pub trigger: String,
+    #[serde(default)]
+    pub runtime: Option<RuntimeDescriptor>,
     #[serde(default)]
     pub platforms: Vec<Platform>,
     #[serde(default)]

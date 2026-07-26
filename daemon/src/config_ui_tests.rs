@@ -36,6 +36,7 @@
             name: "Desktop Torrent Organizer".to_string(),
             version: "1.0.0".to_string(),
             trigger: "desktop-torrents".to_string(),
+            runtime: None,
             platforms: vec![],
             permissions: vec![],
             inputs: vec![InputField {
@@ -291,6 +292,7 @@
             name: "Hidden Extension".to_string(),
             version: "1.0.0".to_string(),
             trigger: "hidden-trigger".to_string(),
+            runtime: None,
             platforms: vec![],
             permissions: vec![],
             inputs: vec![],
@@ -519,6 +521,7 @@
             name: "Windows Display Manager".to_string(),
             version: "1.0.0".to_string(),
             trigger: "windows-display".to_string(),
+            runtime: None,
             platforms: vec![],
             permissions: vec![],
             inputs: vec![],

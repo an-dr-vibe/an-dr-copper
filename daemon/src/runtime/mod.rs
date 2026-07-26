@@ -107,6 +107,15 @@ impl RuntimeAdapter for DryRunRuntime {
         extension: &Extension,
         action_id: Option<&str>,
     ) -> Result<RuntimeTriggerResult, RuntimeError> {
+        if extension.wasm_component_path().is_some() {
+            return Err(RuntimeError::Execution {
+                code: "runtime-owned-by-bones".to_string(),
+                message: format!(
+                    "extension '{}' is a WASM Component and must be triggered through Bones",
+                    extension.descriptor.id
+                ),
+            });
+        }
         let action =
             select_action(extension, action_id).map_err(|message| RuntimeError::Execution {
                 code: "invalid-action".to_string(),
@@ -301,7 +310,7 @@ mod tests {
         run_protocol_worker, DryRunRuntime, RuntimeAdapter, RuntimeProtocolRequest,
         RuntimeProtocolResponse, RuntimeTriggerResult, RUNTIME_ABI_VERSION,
     };
-    use crate::descriptor::{Action, Descriptor};
+    use crate::descriptor::{Action, Descriptor, RuntimeDescriptor, RuntimeKind, COMPONENT_ABI_V1};
     use crate::extension::Extension;
     use std::path::PathBuf;
 
@@ -309,12 +318,14 @@ mod tests {
         Extension {
             root: PathBuf::from("C:/tmp/ext"),
             main_ts_path: PathBuf::from("C:/tmp/ext/main.ts"),
+            wasm_component_path: None,
             descriptor: Descriptor {
                 schema: None,
                 id: "sample".to_string(),
                 name: "Sample".to_string(),
                 version: "1.0.0".to_string(),
                 trigger: "sample".to_string(),
+                runtime: None,
                 platforms: vec![],
                 permissions: vec![],
                 inputs: vec![],
@@ -324,6 +335,30 @@ mod tests {
                 tray: None,
             },
         }
+    }
+
+    #[test]
+    fn legacy_runtime_refuses_wasm_component_execution() {
+        let runtime = DryRunRuntime;
+        let mut extension = extension_with_actions(vec![Action {
+            id: "run".to_string(),
+            label: "Run".to_string(),
+            description: None,
+            script: "run".to_string(),
+        }]);
+        extension.wasm_component_path = Some(PathBuf::from("C:/tmp/ext/sample.wasm"));
+        extension.descriptor.runtime = Some(RuntimeDescriptor {
+            kind: RuntimeKind::WasmComponent,
+            abi: COMPONENT_ABI_V1.to_string(),
+            artifact: "sample.wasm".to_string(),
+        });
+
+        let error = runtime
+            .prepare_trigger(&extension, None)
+            .expect_err("WASM execution belongs to Bones");
+        assert!(error
+            .to_string()
+            .contains("must be triggered through Bones"));
     }
 
     fn prepare(

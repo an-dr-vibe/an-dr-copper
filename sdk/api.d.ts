@@ -1,5 +1,13 @@
 export type Permission = "fs" | "keyboard" | "network" | "secure-store" | "shell" | "store" | "ui";
 
+/** Optional manifest runtime block. Omit it for the legacy main.ts runtime. */
+export interface WasmComponentRuntime {
+  kind: "wasm-component";
+  abi: "copper.component/1";
+  /** Package-local artifact; it must be named `<manifest id>.wasm`. */
+  artifact: `${string}.wasm`;
+}
+
 export interface FileEntry {
   name: string;
   path: string;

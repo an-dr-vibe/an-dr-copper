@@ -12,8 +12,8 @@
 - [x] **Architecture record and behavioral baseline** (completed) — ~280 lines: add the Copper-on-Bones ADR/design record, correct stale runtime documentation, and add baseline registry/action parity tests before runtime changes.
 - [x] **State and security parity fixtures** (completed) — ~260 lines: add atomic state migration fixtures plus control-plane authentication and undeclared-permission regression tests.
 - [x] **External Bones module foundation** (completed) — ~280 lines: add pinned public Bones crate dependencies, a focused Copper facade/control module, and headless construction tests.
-- [ ] **Headless Bones daemon driver** (verified) — ~300 lines: integrate a stepped/event-driven Bones engine into daemon start, health, reload, and shutdown without activating product extensions.
-- [ ] **Versioned runtime artifacts** (planned) — ~280 lines: extend the manifest contract compatibly for WASM artifacts, validate ID/artifact pairing, and update registry tests and SDK documentation.
+- [x] **Headless Bones daemon driver** (completed) — ~300 lines: integrate a stepped/event-driven Bones engine into daemon start, health, reload, and shutdown without activating product extensions.
+- [ ] **Versioned runtime artifacts** (verified) — ~280 lines: extend the manifest contract compatibly for WASM artifacts, validate ID/artifact pairing, and update registry tests and SDK documentation.
 - [ ] **Bones catalog lifecycle bridge** (planned) — ~300 lines: map validated manifests and disabled/platform policy to Bones activation, observe lifecycle events, and make reload transactions testable.
 - [ ] **Capability protocol and authorization** (planned) — ~300 lines: define versioned action/job envelopes and enforce host-stamped sender permissions with adversarial tests.
 - [ ] **Asynchronous jobs and scoped state** (planned) — ~300 lines: execute blocking work away from the Bones loop and expose scoped Copper config/status/store operations.
@@ -28,4 +28,4 @@
 - [ ] **Safe Input Key and Windows display WASM ports** (planned) — ~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities.
 - [ ] **Cutover cleanup release and full verification** (planned) — ~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates.
 
-_Last updated: 2026-07-26T20:59:29.3999657Z_
+_Last updated: 2026-07-26T21:11:51.6420224Z_

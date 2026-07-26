@@ -94,7 +94,15 @@ Extension folder:
 ```text
 <extension>/
 |- manifest.json
-`- main.ts
+`- main.ts              # compatibility runtime when manifest.runtime is absent
+```
+
+or:
+
+```text
+<extension>/
+|- manifest.json
+`- <extension-id>.wasm  # runtime.kind = "wasm-component"
 ```
 
 Schema source:
@@ -104,6 +112,10 @@ Schema source:
 Runtime gating:
 
 - Optional manifest field `platforms`: restricts runtime activation to `windows`, `macos`, and/or `linux`.
+- Optional manifest object `runtime` selects a versioned WASM Component ABI and
+  package-local artifact. Absence retains the legacy TypeScript contract.
+- WASM artifacts are identity-bound to the manifest ID and cannot resolve
+  outside their package.
 - Config UI still shows platform-restricted extensions so users can inspect settings on any host.
 
 Type contract for AI generation:

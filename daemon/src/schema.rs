@@ -18,6 +18,8 @@ pub enum ValidationError {
     UnsupportedSchema(String),
     #[error("version field is not valid semver: {0}")]
     InvalidVersion(String),
+    #[error("runtime artifact identity mismatch: {0}")]
+    RuntimeArtifactIdentity(String),
 }
 
 pub fn validator() -> Result<&'static JSONSchema, ValidationError> {
@@ -55,13 +57,23 @@ pub fn parse_and_validate(raw: &str) -> Result<Descriptor, ValidationError> {
         .parsed_version()
         .map_err(|_| ValidationError::InvalidVersion(descriptor.version.clone()))?;
 
+    if let Some(runtime) = &descriptor.runtime {
+        let expected = format!("{}.wasm", descriptor.id);
+        if runtime.artifact != expected {
+            return Err(ValidationError::RuntimeArtifactIdentity(format!(
+                "extension {} artifact must be named {expected}, got {}",
+                descriptor.id, runtime.artifact
+            )));
+        }
+    }
+
     Ok(descriptor)
 }
 
 #[cfg(test)]
 mod tests {
     use super::parse_and_validate;
-    use crate::descriptor::SUPPORTED_SCHEMA_URL;
+    use crate::descriptor::{COMPONENT_ABI_V1, SUPPORTED_SCHEMA_URL};
 
     #[test]
     fn validates_valid_descriptor() {
@@ -86,6 +98,30 @@ mod tests {
         let descriptor = parse_and_validate(&raw).expect("descriptor should pass validation");
         assert_eq!(descriptor.id, "sort-downloads");
         assert_eq!(descriptor.trigger, "sort-dl");
+    }
+
+    #[test]
+    fn rejects_wasm_artifact_name_that_does_not_match_extension_id() {
+        let raw = format!(
+            r#"{{
+                "$schema": "{SUPPORTED_SCHEMA_URL}",
+                "id": "counter",
+                "name": "Counter",
+                "version": "1.0.0",
+                "trigger": "counter",
+                "runtime": {{
+                    "kind": "wasm-component",
+                    "abi": "{COMPONENT_ABI_V1}",
+                    "artifact": "other.wasm"
+                }},
+                "actions": [
+                    {{ "id": "increment", "label": "Increment", "script": "increment" }}
+                ]
+            }}"#
+        );
+
+        let error = parse_and_validate(&raw).expect_err("artifact identity should fail");
+        assert!(error.to_string().contains("must be named counter.wasm"));
     }
 
     #[test]

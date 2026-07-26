@@ -11,6 +11,19 @@
     "name": { "type": "string", "minLength": 1 },
     "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "trigger": { "type": "string", "minLength": 1 },
+    "runtime": {
+      "type": "object",
+      "required": ["kind", "abi", "artifact"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "wasm-component" },
+        "abi": { "const": "copper.component/1" },
+        "artifact": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+\\.wasm$"
+        }
+      }
+    },
     "platforms": {
       "type": "array",
       "items": { "enum": ["windows", "macos", "linux"] },

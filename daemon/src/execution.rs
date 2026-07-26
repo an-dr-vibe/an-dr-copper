@@ -143,12 +143,14 @@ mod tests {
         let extension = Extension {
             root: PathBuf::from("C:/tmp/ext"),
             main_ts_path: PathBuf::from("C:/tmp/ext/main.ts"),
+            wasm_component_path: None,
             descriptor: Descriptor {
                 schema: None,
                 id: "session-counter".to_string(),
                 name: "Session Counter".to_string(),
                 version: "1.0.0".to_string(),
                 trigger: "session".to_string(),
+                runtime: None,
                 platforms: vec![],
                 permissions: vec![],
                 inputs: vec![],

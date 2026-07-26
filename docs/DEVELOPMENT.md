@@ -52,7 +52,8 @@ Verify: `cargo test -p copperd --lib api::<name>` must pass.
 ```
 extensions/<id>/
   manifest.json
-  main.ts         ← scaffold: cargo run -p copperd -- generate-main extensions/<id>/manifest.json
+  main.ts         ← compatibility runtime; scaffold with generate-main
+  <id>.wasm       ← component runtime alternative declared by manifest.runtime
 ```
 
 Minimal manifest:
@@ -68,6 +69,11 @@ Minimal manifest:
 ```
 
 Verify: `cargo run -p copperd -- validate extensions/<id>/manifest.json`
+
+For a WASM Component package, add
+`runtime: { "kind": "wasm-component", "abi": "copper.component/1",
+"artifact": "<id>.wasm" }`. The registry rejects missing, renamed, traversing,
+or package-external artifacts.
 
 ## Recipe: add a built-in host extension
 

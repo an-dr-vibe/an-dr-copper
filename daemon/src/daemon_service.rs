@@ -81,9 +81,13 @@ impl<'a> DaemonControlService<'a> {
             if ext.descriptor.actions.is_empty() {
                 return Err(format!("extension {} has no actions", ext.descriptor.id));
             }
-            if !ext.main_ts_path.exists() {
+            if !ext.runtime_artifact_path().exists() {
+                let missing = ext
+                    .wasm_component_path()
+                    .map(|path| format!("runtime artifact {}", path.display()))
+                    .unwrap_or_else(|| "main.ts".to_string());
                 return Err(format!(
-                    "extension {} is missing main.ts",
+                    "extension {} is missing {missing}",
                     ext.descriptor.id
                 ));
             }

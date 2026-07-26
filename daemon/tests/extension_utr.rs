@@ -1,4 +1,5 @@
-use copperd::descriptor::{Descriptor, Permission};
+use copperd::descriptor::{Descriptor, Permission, RuntimeKind, COMPONENT_ABI_V1};
+use copperd::extension::Registry;
 use copperd::schema::parse_and_validate;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -99,6 +100,10 @@ fn shipped_extension_contract_matrix_is_stable() {
 
     for (id, trigger, permissions, action_ids) in expected {
         let descriptor = read_descriptor(id);
+        assert!(
+            descriptor.runtime.is_none(),
+            "{id} should stay on the compatibility runtime until its WASM port lands"
+        );
         assert_eq!(descriptor.trigger, trigger, "{id} trigger changed");
         assert_eq!(
             descriptor.permissions, permissions,
@@ -114,6 +119,105 @@ fn shipped_extension_contract_matrix_is_stable() {
             "{id} actions changed"
         );
     }
+}
+
+#[test]
+fn wasm_component_manifest_resolves_an_id_matched_artifact_without_main_ts() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let extension = temp.path().join("counter");
+    fs::create_dir_all(&extension).expect("extension directory");
+    fs::write(
+        extension.join("manifest.json"),
+        format!(
+            r#"{{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "counter",
+                "name": "Counter",
+                "version": "1.0.0",
+                "trigger": "counter",
+                "runtime": {{
+                    "kind": "wasm-component",
+                    "abi": "{COMPONENT_ABI_V1}",
+                    "artifact": "counter.wasm"
+                }},
+                "actions": [{{ "id": "increment", "label": "Increment", "script": "increment" }}]
+            }}"#
+        ),
+    )
+    .expect("manifest");
+    fs::write(extension.join("counter.wasm"), b"\0asm").expect("artifact");
+
+    let registry = Registry::load_from_dir(temp.path()).expect("registry");
+    let loaded = registry.get("counter").expect("counter");
+    let runtime = loaded.descriptor.runtime.as_ref().expect("runtime");
+    assert_eq!(runtime.kind, RuntimeKind::WasmComponent);
+    assert_eq!(runtime.abi, COMPONENT_ABI_V1);
+    assert_eq!(
+        loaded
+            .wasm_component_path()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str()),
+        Some("counter.wasm")
+    );
+}
+
+#[test]
+fn wasm_component_manifest_rejects_an_artifact_not_named_for_its_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let extension = temp.path().join("counter");
+    fs::create_dir_all(&extension).expect("extension directory");
+    fs::write(
+        extension.join("manifest.json"),
+        format!(
+            r#"{{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "counter",
+                "name": "Counter",
+                "version": "1.0.0",
+                "trigger": "counter",
+                "runtime": {{
+                    "kind": "wasm-component",
+                    "abi": "{COMPONENT_ABI_V1}",
+                    "artifact": "other.wasm"
+                }},
+                "actions": [{{ "id": "increment", "label": "Increment", "script": "increment" }}]
+            }}"#
+        ),
+    )
+    .expect("manifest");
+    fs::write(extension.join("other.wasm"), b"\0asm").expect("artifact");
+
+    let error = Registry::load_from_dir(temp.path()).expect_err("identity mismatch");
+    assert!(error.to_string().contains("must be named counter.wasm"));
+}
+
+#[test]
+fn wasm_component_manifest_rejects_a_directory_as_its_artifact() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let extension = temp.path().join("counter");
+    fs::create_dir_all(extension.join("counter.wasm")).expect("artifact directory");
+    fs::write(
+        extension.join("manifest.json"),
+        format!(
+            r#"{{
+                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                "id": "counter",
+                "name": "Counter",
+                "version": "1.0.0",
+                "trigger": "counter",
+                "runtime": {{
+                    "kind": "wasm-component",
+                    "abi": "{COMPONENT_ABI_V1}",
+                    "artifact": "counter.wasm"
+                }},
+                "actions": [{{ "id": "increment", "label": "Increment", "script": "increment" }}]
+            }}"#
+        ),
+    )
+    .expect("manifest");
+
+    let error = Registry::load_from_dir(temp.path()).expect_err("artifact must be a file");
+    assert!(error.to_string().contains("is not a file"));
 }
 
 #[test]
@@ -136,19 +240,27 @@ fn legacy_typescript_entrypoints_expose_trigger_handlers() {
 }
 
 #[test]
-fn every_extension_has_valid_descriptor_and_main() {
+fn every_extension_has_valid_descriptor_and_runtime_artifact() {
     for ext in extension_folders(&extensions_root()) {
         let descriptor_path = ext.join("manifest.json");
-        let main_path = ext.join("main.ts");
         assert!(
             descriptor_path.exists(),
             "missing manifest.json in {}",
             ext.display()
         );
-        assert!(main_path.exists(), "missing main.ts in {}", ext.display());
 
         let raw = fs::read_to_string(&descriptor_path).expect("read descriptor");
         let descriptor = parse_and_validate(&raw).expect("descriptor validation");
+        let artifact_path = descriptor
+            .runtime
+            .as_ref()
+            .map(|runtime| ext.join(&runtime.artifact))
+            .unwrap_or_else(|| ext.join("main.ts"));
+        assert!(
+            artifact_path.exists(),
+            "missing runtime artifact {}",
+            artifact_path.display()
+        );
         assert!(
             !descriptor.actions.is_empty(),
             "descriptor has no actions in {}",

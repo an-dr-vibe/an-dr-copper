@@ -365,9 +365,13 @@ fn cmd_verify(dir: &Path) -> Result<(), CliError> {
                 ext.descriptor.id
             )));
         }
-        if !ext.main_ts_path.exists() {
+        if !ext.runtime_artifact_path().exists() {
+            let missing = ext
+                .wasm_component_path()
+                .map(|path| format!("runtime artifact {}", path.display()))
+                .unwrap_or_else(|| "main.ts".to_string());
             return Err(CliError::Message(format!(
-                "extension {} is missing main.ts",
+                "extension {} is missing {missing}",
                 ext.descriptor.id
             )));
         }
@@ -665,6 +669,7 @@ mod tests {
             name: "Test".to_string(),
             version: "1.0.0".to_string(),
             trigger: "test".to_string(),
+            runtime: None,
             platforms: vec![],
             permissions: vec![],
             inputs: vec![],
@@ -700,6 +705,7 @@ mod tests {
             name: "Test".to_string(),
             version: "1.0.0".to_string(),
             trigger: "test".to_string(),
+            runtime: None,
             platforms: vec![],
             permissions: vec![],
             inputs: vec![],
@@ -727,6 +733,7 @@ mod tests {
             name: "Bob's Tool".to_string(),
             version: "1.0.0".to_string(),
             trigger: "test".to_string(),
+            runtime: None,
             platforms: vec![],
             permissions: vec![],
             inputs: vec![],
@@ -771,6 +778,7 @@ mod tests {
             name: "No Actions".to_string(),
             version: "1.0.0".to_string(),
             trigger: "test".to_string(),
+            runtime: None,
             platforms: vec![],
             permissions: vec![],
             inputs: vec![],

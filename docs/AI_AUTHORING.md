@@ -14,7 +14,8 @@ When requesting extension generation, always include:
 ## Expected AI Output
 
 - `manifest.json` valid against schema
-- `main.ts` using only APIs declared in `sdk/api.d.ts`
+- Compatibility runtime: `main.ts` using only APIs declared in `sdk/api.d.ts`
+- Component runtime: `<extension-id>.wasm` matching `manifest.runtime`
 - `platforms` included only when the extension is intentionally OS-specific
 
 ## Verification Flow
@@ -27,7 +28,26 @@ After AI changes:
 
 ## Design Rule
 
-Manifest is the source of truth. If generated `main.ts` conflicts with manifest permissions/actions, fix manifest first, then regenerate/update `main.ts`.
+Manifest is the source of truth. If generated runtime code conflicts with
+manifest permissions/actions, fix the manifest first, then regenerate the
+TypeScript or WASM artifact.
+
+## Runtime artifact
+
+Omitting `runtime` selects the compatibility TypeScript runtime and requires
+`main.ts`. A packaged WASM Component declares the versioned runtime explicitly:
+
+```json
+"runtime": {
+  "kind": "wasm-component",
+  "abi": "copper.component/1",
+  "artifact": "my-extension.wasm"
+}
+```
+
+The artifact must be beside `manifest.json`, must be named exactly
+`<manifest id>.wasm`, and must resolve inside the extension package. Component
+manifests do not require `main.ts`.
 
 ## Platform Restriction
 
