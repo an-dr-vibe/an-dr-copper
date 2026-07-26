@@ -107,7 +107,7 @@ Statuses: `ACCEPTED`, `PROPOSED`, `BLOCKED`, `SUPERSEDED`.
 | D-009 | ACCEPTED | Use typed Bones messages for Bones-native lifecycle and extension control. Copper-owned action, capability, job, result, and error payloads use a versioned JSON envelope over the Bones byte-payload bus. |
 | D-010 | ACCEPTED | Run the daemon through an event-driven headless Bones driver rather than a fixed 60 Hz loop. |
 | D-011 | ACCEPTED | Migrate the Copper settings UI to the Bones web presentation module, currently backed by `wry`; Copper owns the frontend and message contract, while Bones owns native window/webview presentation. |
-| D-012 | PROPOSED | Open the Bones presentation stack on demand from Copper tray/CLI actions so the daemon remains headless while the UI is closed. |
+| D-012 | ACCEPTED | Open the detachable Bones wry presentation from Copper tray/CLI actions; the daemon engine remains headless and the explicit browser fallback remains available during migration. |
 
 Changing an accepted decision requires documenting the reason in the change log.
 Lasting changes to Bones architecture require a new Bones ADR; existing Bones
@@ -247,8 +247,8 @@ Depends on: M2, M3
   stopping the daemon.
 - [ ] Remove the Tauri settings-window dependency after Bones presentation
   reaches parity.
-- [ ] Decide D-012, including whether an explicit external-browser fallback
-  remains supported.
+- [x] Decide D-012, retaining the explicit external-browser fallback during
+  migration.
 - [x] Map background polling onto timers/jobs without a busy 60 Hz daemon loop.
 - [ ] Preserve main tray, additional extension trays, and UI launch behavior.
 - [ ] Preserve Safe Input Key hotkey behavior on Windows.
@@ -445,3 +445,4 @@ When updating this plan:
 | 2026-07-26 | Routed filesystem, shell, notification, and UI requests through the M3 worker with strict argument validation, manifest permission checks, and bounded shutdown behavior. |
 | 2026-07-26 | Completed the M3 native handler set with keyboard and keychain operations plus a Windows-gated display family protected by the new additive `windows-display` permission. |
 | 2026-07-26 | Started M4: CLI/HTTP component triggers now use targeted `copper.bus/1` action messages, and optional manifest schedules dispatch background actions at one-second resolution without polling the Bones frame loop. |
+| 2026-07-27 | Accepted D-012 after upstreaming detachable native-module registration and a wry presentation that can repeatedly attach to the live headless Bones bus and fully close without restarting the engine. |

@@ -284,7 +284,8 @@ These must not be broken without a deliberate versioning decision:
 
 - Legacy TypeScript execution remains as compatibility scaffolding until the
   shipped extension ports are complete.
-- On-demand Bones `wry` presentation is not integrated yet.
+- Bones now exposes detachable `wry` presentation over the live headless
+  engine bus; Copper's settings frontend still needs to adopt that boundary.
 - Safe Input Key registers its saved hotkey through the daemon on Windows; richer cross-platform global hotkey behavior is still roadmap work.
 - Some shipped extensions are still intentionally host-native or hybrid rather than purely TypeScript-executed; that ownership is now centralized in `host_extensions.rs` as explicit host capabilities.
 
