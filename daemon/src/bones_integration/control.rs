@@ -1,12 +1,39 @@
 use bones_bus::{Envelope, Handler, Module, ModuleContext};
+use bones_messages::lifecycle::{Event, LifecycleEvent};
+use bones_messages::{DecodeMessage, Message};
+use serde::Serialize;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 pub const COPPER_CONTROL_ENDPOINT: &str = "copper-control";
-const LIFECYCLE_TOPIC: &str = "core/lifecycle";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CopperLifecycleState {
+    Loaded,
+    Faulted,
+    Reloading,
+    Reloaded,
+    Stopped,
+}
+
+impl From<Event> for CopperLifecycleState {
+    fn from(value: Event) -> Self {
+        match value {
+            Event::Loaded => Self::Loaded,
+            Event::Faulted => Self::Faulted,
+            Event::Reloading => Self::Reloading,
+            Event::Reloaded => Self::Reloaded,
+            Event::Stopped => Self::Stopped,
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct ControlState {
     lifecycle_event_count: usize,
+    lifecycle_decode_errors: usize,
+    extensions: BTreeMap<String, CopperLifecycleState>,
 }
 
 /// Read-only handle used by Copper services to inspect Bones lifecycle state.
@@ -22,6 +49,20 @@ impl CopperControlHandle {
             .map(|state| state.lifecycle_event_count)
             .unwrap_or_default()
     }
+
+    pub fn lifecycle_decode_errors(&self) -> usize {
+        self.state
+            .lock()
+            .map(|state| state.lifecycle_decode_errors)
+            .unwrap_or_default()
+    }
+
+    pub fn extensions(&self) -> BTreeMap<String, CopperLifecycleState> {
+        self.state
+            .lock()
+            .map(|state| state.extensions.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// Trusted Copper endpoint registered through Bones' public module contract.
@@ -32,22 +73,31 @@ pub struct CopperControlModule {
 impl CopperControlModule {
     pub fn new() -> (Self, CopperControlHandle) {
         let handle = CopperControlHandle::default();
-        (
-            Self {
-                handle: handle.clone(),
-            },
-            handle,
-        )
+        (Self::from_handle(handle.clone()), handle)
+    }
+
+    pub fn from_handle(handle: CopperControlHandle) -> Self {
+        Self { handle }
     }
 }
 
 impl Handler for CopperControlModule {
     fn handle(&mut self, envelope: &Envelope) {
-        if envelope.topic != LIFECYCLE_TOPIC {
+        if envelope.topic != LifecycleEvent::TOPIC {
             return;
         }
         if let Ok(mut state) = self.handle.state.lock() {
-            state.lifecycle_event_count = state.lifecycle_event_count.saturating_add(1);
+            match LifecycleEvent::decode(&envelope.payload) {
+                Ok(event) => {
+                    state.lifecycle_event_count = state.lifecycle_event_count.saturating_add(1);
+                    state
+                        .extensions
+                        .insert(event.extension.to_string(), event.event.into());
+                }
+                Err(_) => {
+                    state.lifecycle_decode_errors = state.lifecycle_decode_errors.saturating_add(1);
+                }
+            }
         }
     }
 }
@@ -58,7 +108,7 @@ impl Module for CopperControlModule {
     }
 
     fn init(&mut self, context: &mut ModuleContext) -> Result<(), String> {
-        context.subscribe(LIFECYCLE_TOPIC);
+        context.subscribe(LifecycleEvent::TOPIC);
         Ok(())
     }
 
@@ -69,6 +119,8 @@ impl Module for CopperControlModule {
         serde_json::to_vec(&serde_json::json!({
             "ok": true,
             "lifecycleEvents": self.handle.lifecycle_event_count(),
+            "lifecycleDecodeErrors": self.handle.lifecycle_decode_errors(),
+            "extensions": self.handle.extensions(),
         }))
         .ok()
     }
@@ -76,8 +128,10 @@ impl Module for CopperControlModule {
 
 #[cfg(test)]
 mod tests {
-    use super::{CopperControlModule, COPPER_CONTROL_ENDPOINT, LIFECYCLE_TOPIC};
+    use super::{CopperControlModule, CopperLifecycleState, COPPER_CONTROL_ENDPOINT};
     use bones_bus::{Bus, Envelope, Module, ModuleContext, ServiceRegistry};
+    use bones_messages::lifecycle::{Event, LifecycleEvent};
+    use bones_messages::{EncodeMessage, Message};
 
     #[test]
     fn module_uses_stable_endpoint_and_lifecycle_subscription() {
@@ -86,7 +140,7 @@ mod tests {
         let mut services = ServiceRegistry::new();
         let mut context = ModuleContext::new(&mut services);
         module.init(&mut context).expect("initialize");
-        assert_eq!(context.into_subscriptions(), vec![LIFECYCLE_TOPIC]);
+        assert_eq!(context.into_subscriptions(), vec![LifecycleEvent::TOPIC]);
     }
 
     #[test]
@@ -103,14 +157,47 @@ mod tests {
         }
 
         bus.publish(Envelope {
-            topic: LIFECYCLE_TOPIC.to_string(),
+            topic: LifecycleEvent::TOPIC.to_string(),
             sender: "bones-host".to_string(),
             correlation: None,
-            payload: b"loaded:session-counter".to_vec(),
+            payload: LifecycleEvent {
+                event: Event::Loaded,
+                extension: "session-counter",
+            }
+            .encode(),
         });
         bus.dispatch();
 
         assert_eq!(handle.lifecycle_event_count(), 1);
+        assert_eq!(
+            handle.extensions().get("session-counter"),
+            Some(&CopperLifecycleState::Loaded)
+        );
+    }
+
+    #[test]
+    fn module_counts_malformed_lifecycle_payloads_without_changing_state() {
+        let bus = Bus::new();
+        let (mut module, handle) = CopperControlModule::new();
+        let mut services = ServiceRegistry::new();
+        let mut context = ModuleContext::new(&mut services);
+        module.init(&mut context).expect("initialize");
+        let endpoint = bus.register(module.name().to_string(), module);
+        for topic in context.into_subscriptions() {
+            endpoint.subscribe(topic);
+        }
+
+        bus.publish(Envelope {
+            topic: LifecycleEvent::TOPIC.to_string(),
+            sender: "bones-host".to_string(),
+            correlation: None,
+            payload: vec![255, b'x'],
+        });
+        bus.dispatch();
+
+        assert_eq!(handle.lifecycle_event_count(), 0);
+        assert_eq!(handle.lifecycle_decode_errors(), 1);
+        assert!(handle.extensions().is_empty());
     }
 
     #[test]

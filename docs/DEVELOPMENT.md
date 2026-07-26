@@ -31,6 +31,14 @@ Copper consumes `bones/core/runner` with default features disabled. Do not
 enable Bones' `presentation` feature in the daemon; the settings window will
 use the separate on-demand presentation composition.
 
+The daemon supplies each validated WASM Component to Bones with
+`catalog_extension(manifest.id, artifact_path)` and adds only the already
+disabled/platform-filtered runtime registry to the startup allow-list. Health
+reports `catalogExtensions`, `catalogRebuilds`, lifecycle decode errors, and
+the latest typed lifecycle state for each active component. Registry reloads
+that keep the same ID-to-path catalog do not rebuild Bones; file changes are
+left to Bones' transactional component supervisor.
+
 ## Recipe: add a host API module
 
 Five touch-points in Rust, then schema + SDK:

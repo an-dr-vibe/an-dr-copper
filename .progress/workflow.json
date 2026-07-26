@@ -11,8 +11,8 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "d7cfa65969954c659360982de5ee3818",
-  "commitBaseline": "f01b561b87561f1d86d849ac0a40e1c9440277ba",
+  "currentIncrementId": "79ea68a576a44a1393673eab0838b93d",
+  "commitBaseline": "588945cb7d5eea9a8230d0e46c5715b05caa6dd1",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
@@ -45,14 +45,14 @@
     {
       "id": "d7cfa65969954c659360982de5ee3818",
       "number": 5,
-      "status": "verified",
+      "status": "completed",
       "scope": "Versioned runtime artifacts",
       "description": "~280 lines: extend the manifest contract compatibly for WASM artifacts, validate ID/artifact pairing, and update registry tests and SDK documentation."
     },
     {
       "id": "79ea68a576a44a1393673eab0838b93d",
       "number": 6,
-      "status": "planned",
+      "status": "verified",
       "scope": "Bones catalog lifecycle bridge",
       "description": "~300 lines: map validated manifests and disabled/platform policy to Bones activation, observe lifecycle events, and make reload transactions testable."
     },
@@ -327,8 +327,23 @@
       "at": "2026-07-26T21:11:51.6352815Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-26T21:12:15.8684824Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to BUILD."
+    },
+    {
+      "at": "2026-07-26T21:26:06.6105987Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-26T21:38:02.5349598Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-26T21:11:51.6420224Z"
+  "updatedAt": "2026-07-26T21:38:02.5444998Z"
 }

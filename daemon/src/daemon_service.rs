@@ -115,6 +115,7 @@ mod tests {
     use crate::extension::Registry;
     use crate::host_extensions::HostExtensionRegistry;
     use crate::state_store::ExtensionStateStore;
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -124,7 +125,11 @@ mod tests {
             headless: true,
             frames: 4,
             registry_reloads: 1,
+            catalog_extensions: 0,
+            catalog_rebuilds: 0,
             lifecycle_events: 0,
+            lifecycle_decode_errors: 0,
+            extensions: BTreeMap::new(),
             shutdown: false,
         }
     }

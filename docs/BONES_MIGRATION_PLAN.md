@@ -76,9 +76,9 @@ graph TD
 2. Copper-specific schemas and product policy do not move into Bones.
 3. Generic Bones gaps are first proven through the Copper integration, then
    proposed upstream.
-4. Manifest identity must agree with the runtime artifact identity. Until Bones
-   supports explicit catalog identities, `manifest.id` must equal the WASM file
-   stem.
+4. Manifest identity must agree with the runtime artifact identity.
+   `manifest.id` equals the WASM file stem, and Copper passes that validated
+   identity explicitly into the Bones catalog.
 5. Native module message handlers must not perform blocking shell, filesystem,
    keychain, HTTP, or display work on the Bones event loop.
 6. Extensions receive no ambient filesystem, network, process, environment, or
@@ -104,7 +104,7 @@ Statuses: `ACCEPTED`, `PROPOSED`, `BLOCKED`, `SUPERSEDED`.
 | D-006 | ACCEPTED | Expose a small Copper integration facade while splitting control, capability, state, and platform responsibilities into focused modules or crates. |
 | D-007 | ACCEPTED | Use optional `runtime: { kind, abi, artifact }` metadata for WASM Components; absence retains schema 1.0 TypeScript compatibility. |
 | D-008 | PROPOSED | TypeScript remains an authoring option by compiling to a WASM Component; Deno is construction-only compatibility scaffolding. |
-| D-009 | PROPOSED | Encode Copper control messages with a versioned binary or JSON envelope over the Bones byte-payload bus. |
+| D-009 | ACCEPTED | Use typed Bones messages for Bones-native lifecycle and extension control. Copper-owned action, capability, job, result, and error payloads use a versioned JSON envelope over the Bones byte-payload bus. |
 | D-010 | ACCEPTED | Run the daemon through an event-driven headless Bones driver rather than a fixed 60 Hz loop. |
 | D-011 | ACCEPTED | Migrate the Copper settings UI to the Bones web presentation module, currently backed by `wry`; Copper owns the frontend and message contract, while Bones owns native window/webview presentation. |
 | D-012 | PROPOSED | Open the Bones presentation stack on demand from Copper tray/CLI actions so the daemon remains headless while the UI is closed. |
@@ -191,18 +191,18 @@ headless Bones engine with no product extensions activated.
 
 ### M2 — Manifest catalog and lifecycle bridge
 
-Status: **IN PROGRESS**
+Status: **DONE**
 Depends on: M1
 
 - [x] Scan and validate Copper manifests before constructing the Bones engine.
 - [x] Enforce manifest ID to artifact identity.
-- [ ] Map Copper disabled/platform-filtered extensions to the Bones startup
+- [x] Map Copper disabled/platform-filtered extensions to the Bones startup
   allow-list.
-- [ ] Authorize the Copper controller for Bones runtime load, unload, and reload
+- [x] Authorize the Copper controller for Bones runtime load, unload, and reload
   commands.
-- [ ] Translate `core/lifecycle` events into Copper health and status data.
-- [ ] Make manifest and component replacement transactional.
-- [ ] Decide D-007 and D-009.
+- [x] Translate `core/lifecycle` events into Copper health and status data.
+- [x] Make manifest and component replacement transactional.
+- [x] Decide D-007 and D-009.
 
 Exit criterion: the Copper registry and Bones runtime report one consistent
 catalog and lifecycle without executing Copper actions.
@@ -439,3 +439,4 @@ When updating this plan:
 | 2026-07-26 | Accepted D-006 and added Copper's first external module against the public Bones bus contract. |
 | 2026-07-26 | Completed M1: accepted D-010, added the stepped daemon driver, and upstreamed an optional Bones presentation dependency boundary in ADR-027. |
 | 2026-07-26 | Started M2 and accepted D-007 with an optional, identity-bound `copper.component/1` manifest artifact contract. |
+| 2026-07-26 | Completed M2: Copper now supplies its filtered multi-root catalog to Bones, observes typed lifecycle state, delegates in-place component replacement to Bones' transactional supervisor, and accepted D-009 for versioned Copper-owned JSON envelopes. |

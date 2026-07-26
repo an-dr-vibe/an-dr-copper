@@ -25,7 +25,9 @@ Current implementation status:
 
 - Implemented: Copper embeds a step-driven, presentation-free Bones engine in
   the daemon, injects an external Copper control module through the public
-  Bones module API, and reports Bones runtime state through daemon health.
+  Bones module API, passes validated WASM Components from the filtered Copper
+  registry into an explicit Bones startup catalog, and reports typed
+  per-extension Bones lifecycle state through daemon health.
 - Implemented: always-on daemon, extension registry loading, authenticated HTTP control plane, isolated runtime trigger preparation, scheduled reload/background polling, descriptor validation, skeleton generation, local config UI (`ui open`), and main tray icon UI launch on Windows.
 - Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with manifest-driven extension pages, optional manifest-defined tabs, and a core-managed extensions tab for enable/disable and command discovery.
 - Implemented: Tauri-backed native window launcher for the settings UI; `ui open` and tray settings actions open native windows by default, with browser opening retained as an explicit fallback.
@@ -47,10 +49,11 @@ Daemon capabilities:
   - user extensions override same-id core extensions
 - Validates extension manifests against versioned schema.
 - Runs reload cadence and host background polling through a dedicated `DaemonScheduler`.
-- Advances a headless Bones engine from the daemon event loop, observes legacy
-  registry reload boundaries, and performs orderly Bones shutdown with the
-  daemon. Product extensions are not activated in Bones until the manifest
-  artifact bridge is available.
+- Advances a headless Bones engine from the daemon event loop, maps
+  disabled/platform policy to the Bones startup allow-list, observes catalog
+  and lifecycle state, and performs orderly Bones shutdown with the daemon.
+  Catalog topology changes build a candidate engine before cutover; component
+  updates at a stable path use Bones' transactional supervisor reload.
 - Filters runtime activation through manifest-declared host platforms and core config disable rules.
 - Routes trigger preparation through a single `ExecutionEngine`, which combines the isolated runtime adapter, host capability registry, and shared state store.
 - Uses a structured runtime ABI (`copper.runtime/1`) and executes trigger preparation through a subprocess runtime worker, so runtime planning is isolated from the daemon process.

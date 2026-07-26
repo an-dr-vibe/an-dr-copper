@@ -128,7 +128,7 @@ impl DaemonState {
     fn load(user_extensions_dir: &Path) -> Result<Self, DaemonError> {
         let registry = load_runtime_registry(user_extensions_dir)?;
         let core_config = load_core_config().unwrap_or_default();
-        let bones = BonesDaemonDriver::new().map_err(DaemonError::Bones)?;
+        let bones = BonesDaemonDriver::new(&registry).map_err(DaemonError::Bones)?;
         Ok(Self {
             user_extensions_dir: user_extensions_dir.to_path_buf(),
             core_extensions_dir: core_extensions_dir(),
@@ -142,10 +142,15 @@ impl DaemonState {
     }
 
     fn reload(&mut self) -> Result<usize, DaemonError> {
-        self.registry = load_runtime_registry(&self.user_extensions_dir)?;
-        self.core_extensions_dir = core_extensions_dir();
-        self.core_config = load_core_config().unwrap_or_default();
-        self.bones.note_registry_reload();
+        let registry = load_runtime_registry(&self.user_extensions_dir)?;
+        let core_extensions_dir = core_extensions_dir();
+        let core_config = load_core_config().unwrap_or_default();
+        self.bones
+            .replace_catalog(&registry)
+            .map_err(DaemonError::Bones)?;
+        self.registry = registry;
+        self.core_extensions_dir = core_extensions_dir;
+        self.core_config = core_config;
         Ok(self.registry.list().count())
     }
 }
