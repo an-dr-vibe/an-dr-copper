@@ -128,14 +128,16 @@ impl DaemonState {
     fn load(user_extensions_dir: &Path) -> Result<Self, DaemonError> {
         let registry = load_runtime_registry(user_extensions_dir)?;
         let core_config = load_core_config().unwrap_or_default();
-        let bones = BonesDaemonDriver::new(&registry).map_err(DaemonError::Bones)?;
+        let state_store = ExtensionStateStore::for_current_user()?;
+        let bones =
+            BonesDaemonDriver::new(&registry, state_store.clone()).map_err(DaemonError::Bones)?;
         Ok(Self {
             user_extensions_dir: user_extensions_dir.to_path_buf(),
             core_extensions_dir: core_extensions_dir(),
             registry,
             core_config,
             auth_token: None,
-            state_store: ExtensionStateStore::for_current_user()?,
+            state_store,
             host_extensions: HostExtensionRegistry::new(),
             bones,
         })

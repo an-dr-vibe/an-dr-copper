@@ -48,6 +48,17 @@ delivery are asynchronous. `notify` retains Copper's permissionless legacy
 behavior; all other defined capabilities require the matching manifest
 permission. Health exposes accepted, rejected, and pending request counts.
 
+Accepted jobs cross a bounded channel to `copper-capability-worker`; the daemon
+step only submits work, polls completions, and performs a targeted direct send
+back to the requesting extension from `copper-jobs`. The distinct result sender
+lets a result handler issue a follow-up request without creating a synchronous
+direct-send cycle. Store operations are `get` and `set`.
+`config.get`, `config.merge`, `status.get`, and `status.merge` expose the two
+structured state streams. Every operation derives its extension scope from the
+authorized job, never from payload arguments. The legacy `data.json` location
+remains the guest key/value store for behavioral parity, but all access now
+from WASM guests flows through `ExtensionStateStore` and atomic writes.
+
 ## Recipe: add a host API module
 
 Five touch-points in Rust, then schema + SDK:

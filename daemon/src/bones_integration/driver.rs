@@ -1,8 +1,10 @@
+use super::jobs::{CapabilityWorker, CompletedCapabilityJob, SubmitError, COPPER_JOB_SENDER};
 use super::{
     CopperCapabilityHandle, CopperCapabilityModule, CopperControlHandle, CopperControlModule,
     CopperLifecycleState,
 };
 use crate::extension::Registry;
+use crate::state_store::ExtensionStateStore;
 use bones_logging::{Level, LogSink, Logger};
 use bones_runner::{BuiltEngine, Engine};
 use serde::Serialize;
@@ -12,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 type CatalogSnapshot = BTreeMap<String, PathBuf>;
+const MAX_JOB_PUMP_PER_STEP: usize = 32;
 
 struct CopperBonesLogSink;
 
@@ -41,6 +44,9 @@ pub struct BonesRuntimeStatus {
     pub capability_accepted: u64,
     pub capability_rejected: u64,
     pub capability_pending: usize,
+    pub capability_completed: u64,
+    pub capability_failed: u64,
+    pub capability_delivery_failures: u64,
     pub shutdown: bool,
 }
 
@@ -49,15 +55,20 @@ pub struct BonesDaemonDriver {
     engine: BuiltEngine,
     control: CopperControlHandle,
     capabilities: CopperCapabilityHandle,
+    capability_worker: CapabilityWorker,
     catalog: CatalogSnapshot,
     frames: u64,
     registry_reloads: u64,
     catalog_rebuilds: u64,
+    capability_completed: u64,
+    capability_failed: u64,
+    capability_delivery_failures: u64,
     shutdown: bool,
 }
 
 impl BonesDaemonDriver {
-    pub fn new(registry: &Registry) -> Result<Self, String> {
+    pub fn new(registry: &Registry, state_store: ExtensionStateStore) -> Result<Self, String> {
+        let capability_worker = CapabilityWorker::new(state_store, registry)?;
         let (control_module, control) = CopperControlModule::new();
         let (capability_module, capabilities) = CopperCapabilityModule::new(registry);
         let catalog = catalog_snapshot(registry);
@@ -67,10 +78,14 @@ impl BonesDaemonDriver {
             engine,
             control,
             capabilities,
+            capability_worker,
             catalog,
             frames: 0,
             registry_reloads: 0,
             catalog_rebuilds: 0,
+            capability_completed: 0,
+            capability_failed: 0,
+            capability_delivery_failures: 0,
             shutdown: false,
         })
     }
@@ -85,6 +100,7 @@ impl BonesDaemonDriver {
         self.registry_reloads = self.registry_reloads.saturating_add(1);
         let catalog = catalog_snapshot(registry);
         if catalog == self.catalog {
+            self.capability_worker.replace_registry(registry);
             self.capabilities.replace_registry(registry);
             return Ok(false);
         }
@@ -92,6 +108,7 @@ impl BonesDaemonDriver {
         let module = CopperControlModule::from_handle(self.control.clone());
         let (capability_module, capabilities) = CopperCapabilityModule::new(registry);
         let mut candidate = build_engine(registry, module, capability_module)?;
+        self.capability_worker.replace_registry(registry);
         self.engine.shutdown();
         dispatch_pending(&mut candidate);
         self.engine = candidate;
@@ -106,6 +123,7 @@ impl BonesDaemonDriver {
         if self.shutdown {
             return;
         }
+        self.pump_capability_jobs();
         self.engine.supervisor.check();
         self.engine.runner.step(elapsed.as_secs_f32().min(1.0));
         self.engine.supervisor.check();
@@ -125,7 +143,59 @@ impl BonesDaemonDriver {
             capability_accepted: self.capabilities.accepted_count(),
             capability_rejected: self.capabilities.rejected_count(),
             capability_pending: self.capabilities.pending_count(),
+            capability_completed: self.capability_completed,
+            capability_failed: self.capability_failed,
+            capability_delivery_failures: self.capability_delivery_failures,
             shutdown: self.shutdown,
+        }
+    }
+
+    fn pump_capability_jobs(&mut self) {
+        for _ in 0..MAX_JOB_PUMP_PER_STEP {
+            let Some(completed) = self.capability_worker.try_complete() else {
+                break;
+            };
+            self.deliver_capability_result(completed);
+        }
+
+        for _ in 0..MAX_JOB_PUMP_PER_STEP {
+            let Some(job) = self.capabilities.pop_pending() else {
+                break;
+            };
+            match self.capability_worker.try_submit(job) {
+                Ok(()) => {}
+                Err(SubmitError::Full(job)) => {
+                    self.capabilities.requeue_front(*job);
+                    break;
+                }
+                Err(SubmitError::Disconnected(job)) => {
+                    self.deliver_capability_result(CompletedCapabilityJob::worker_unavailable(
+                        *job,
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+
+    fn deliver_capability_result(&mut self, completed: CompletedCapabilityJob) {
+        if completed.succeeded {
+            self.capability_completed = self.capability_completed.saturating_add(1);
+        } else {
+            self.capability_failed = self.capability_failed.saturating_add(1);
+        }
+        let Ok(payload) = serde_json::to_vec(&completed.envelope) else {
+            self.capability_delivery_failures = self.capability_delivery_failures.saturating_add(1);
+            return;
+        };
+        if self
+            .engine
+            .supervisor
+            .registry
+            .call(COPPER_JOB_SENDER, &completed.extension_id, &payload)
+            .is_err()
+        {
+            self.capability_delivery_failures = self.capability_delivery_failures.saturating_add(1);
         }
     }
 
@@ -190,14 +260,19 @@ impl Drop for BonesDaemonDriver {
 
 #[cfg(test)]
 mod tests {
-    use super::BonesDaemonDriver;
-    use crate::bones_integration::CopperLifecycleState;
+    use super::{BonesDaemonDriver, COPPER_JOB_SENDER};
+    use crate::bones_integration::{
+        CopperEnvelope, CopperLifecycleState, COPPER_BUS_PROTOCOL_V1, COPPER_CAPABILITY_ENDPOINT,
+    };
     use crate::core_config::CoreConfig;
     use crate::descriptor::COMPONENT_ABI_V1;
     use crate::extension::{current_platform, Registry};
+    use crate::state_store::ExtensionStateStore;
+    use bones_bus::Respond;
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tempfile::tempdir;
 
@@ -205,7 +280,8 @@ mod tests {
     fn driver_is_headless_step_driven_and_shutdown_is_idempotent() {
         let temp = tempdir().expect("tempdir");
         let registry = Registry::load_from_dir(temp.path()).expect("empty registry");
-        let mut driver = BonesDaemonDriver::new(&registry).expect("headless engine");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+        let mut driver = BonesDaemonDriver::new(&registry, store).expect("headless engine");
         assert!(driver.status().headless);
         assert_eq!(driver.status().frames, 0);
 
@@ -228,7 +304,8 @@ mod tests {
         write_component_extension(temp.path(), "broken-component");
         let registry = Registry::load_from_dir(temp.path()).expect("registry");
 
-        let mut driver = BonesDaemonDriver::new(&registry).expect("driver");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+        let mut driver = BonesDaemonDriver::new(&registry, store).expect("driver");
         let status = driver.status();
         assert_eq!(status.catalog_extensions, 1);
         assert_eq!(
@@ -265,14 +342,75 @@ mod tests {
                 current_platform(),
             );
 
-        let driver = BonesDaemonDriver::new(&registry).expect("driver");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+        let driver = BonesDaemonDriver::new(&registry, store).expect("driver");
         let status = driver.status();
         assert_eq!(status.catalog_extensions, 1);
         assert!(status.extensions.contains_key("enabled-component"));
         assert!(!status.extensions.contains_key("disabled-component"));
     }
 
+    #[test]
+    fn driver_pumps_state_jobs_off_loop_and_delivers_targeted_results() {
+        let temp = tempdir().expect("tempdir");
+        write_component_extension_with_permissions(temp.path(), "state-component", &["store"]);
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+        let mut driver = BonesDaemonDriver::new(&registry, store.clone()).expect("driver");
+        let capture = Capture::default();
+        driver
+            .engine
+            .supervisor
+            .registry
+            .insert("state-component", Arc::new(capture.clone()));
+
+        let request = serde_json::to_vec(&serde_json::json!({
+            "type": "capability-request",
+            "protocol": COPPER_BUS_PROTOCOL_V1,
+            "requestId": "request-1",
+            "capability": "store",
+            "operation": "set",
+            "args": { "key": "count", "value": 7 }
+        }))
+        .expect("request");
+        let reply = driver
+            .engine
+            .supervisor
+            .registry
+            .call("state-component", COPPER_CAPABILITY_ENDPOINT, &request)
+            .expect("capability call");
+        assert!(matches!(
+            serde_json::from_slice(&reply).expect("accepted reply"),
+            CopperEnvelope::JobAccepted { .. }
+        ));
+
+        for _ in 0..100 {
+            driver.step(Duration::from_millis(1));
+            if driver.status().capability_completed == 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert_eq!(driver.status().capability_completed, 1);
+        assert_eq!(driver.status().capability_delivery_failures, 0);
+        assert_eq!(capture.last_sender().as_deref(), Some(COPPER_JOB_SENDER));
+        assert_eq!(
+            store.load_store("state-component").expect("state")["count"],
+            serde_json::json!(7)
+        );
+        assert!(matches!(
+            serde_json::from_slice(&capture.last().expect("targeted result"))
+                .expect("result envelope"),
+            CopperEnvelope::JobResult { .. }
+        ));
+    }
+
     fn write_component_extension(parent: &Path, id: &str) {
+        write_component_extension_with_permissions(parent, id, &[]);
+    }
+
+    fn write_component_extension_with_permissions(parent: &Path, id: &str, permissions: &[&str]) {
         let root = parent.join(id);
         fs::create_dir_all(&root).expect("extension root");
         fs::write(
@@ -284,16 +422,42 @@ mod tests {
                     "name": "{id}",
                     "version": "1.0.0",
                     "trigger": "{id}",
+                    "permissions": {},
                     "runtime": {{
                         "kind": "wasm-component",
                         "abi": "{COMPONENT_ABI_V1}",
                         "artifact": "{id}.wasm"
                     }},
                     "actions": [{{ "id": "run", "label": "Run", "script": "run" }}]
-                }}"#
+                }}"#,
+                serde_json::to_string(permissions).expect("permissions")
             ),
         )
         .expect("manifest");
         fs::write(root.join(format!("{id}.wasm")), b"\0asm").expect("component");
+    }
+
+    #[derive(Clone, Default)]
+    struct Capture {
+        payloads: Arc<Mutex<Vec<Vec<u8>>>>,
+        senders: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Capture {
+        fn last(&self) -> Option<Vec<u8>> {
+            self.payloads.lock().ok()?.last().cloned()
+        }
+
+        fn last_sender(&self) -> Option<String> {
+            self.senders.lock().ok()?.last().cloned()
+        }
+    }
+
+    impl Respond for Capture {
+        fn respond(&self, sender: &str, payload: &[u8]) -> Option<Vec<u8>> {
+            self.senders.lock().ok()?.push(sender.to_string());
+            self.payloads.lock().ok()?.push(payload.to_vec());
+            Some(Vec::new())
+        }
     }
 }

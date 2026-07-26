@@ -58,6 +58,11 @@ Daemon capabilities:
   validation boundary accepts only `copper.bus/1` capability requests from
   active WASM senders, checks the sender's manifest permission, rejects recent
   request replays, and returns a job ID without doing blocking work.
+- Drains authorized jobs into a bounded native worker channel, polls completed
+  work from the daemon loop, and delivers each result directly to the requesting
+  extension endpoint. Store/config/status paths are derived exclusively from
+  the stamped sender and remain under `ExtensionStateStore`. Per-sender queue
+  limits keep one extension from consuming the shared worker boundary.
 - Filters runtime activation through manifest-declared host platforms and core config disable rules.
 - Routes trigger preparation through a single `ExecutionEngine`, which combines the isolated runtime adapter, host capability registry, and shared state store.
 - Uses a structured runtime ABI (`copper.runtime/1`) and executes trigger preparation through a subprocess runtime worker, so runtime planning is isolated from the daemon process.
@@ -253,6 +258,7 @@ These must not be broken without a deliberate versioning decision:
 | Cross-platform build must pass on Windows, macOS, and Linux | Platform-specific code goes behind `#[cfg]` or target sections in Cargo.toml |
 | No mandatory GUI dependency in headless build path | CI must build without a display server |
 | Bones sender identity is the capability principal | Guest payloads cannot select or impersonate an extension identity |
+| Native jobs never run in Bones handlers or frame steps | Filesystem, process, keychain, and platform latency cannot stall message dispatch |
 
 ## 12. Known Gaps vs Full Target Architecture
 

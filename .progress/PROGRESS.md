@@ -15,8 +15,8 @@
 - [x] **Headless Bones daemon driver** (completed) — ~300 lines: integrate a stepped/event-driven Bones engine into daemon start, health, reload, and shutdown without activating product extensions.
 - [x] **Versioned runtime artifacts** (completed) — ~280 lines: extend the manifest contract compatibly for WASM artifacts, validate ID/artifact pairing, and update registry tests and SDK documentation.
 - [x] **Bones catalog lifecycle bridge** (completed) — ~300 lines: map validated manifests and disabled/platform policy to Bones activation, observe lifecycle events, and make reload transactions testable.
-- [ ] **Capability protocol and authorization** (verified) — ~300 lines: define versioned action/job envelopes and enforce host-stamped sender permissions with adversarial tests.
-- [ ] **Asynchronous jobs and scoped state** (planned) — ~300 lines: execute blocking work away from the Bones loop and expose scoped Copper config/status/store operations.
+- [x] **Capability protocol and authorization** (completed) — ~300 lines: define versioned action/job envelopes and enforce host-stamped sender permissions with adversarial tests.
+- [ ] **Asynchronous jobs and scoped state** (verified) — ~300 lines: execute blocking work away from the Bones loop and expose scoped Copper config/status/store operations.
 - [ ] **Filesystem shell notification and UI capabilities** (planned) — ~300 lines: provide permissioned job handlers for filesystem, shell, notification, and UI result operations with negative tests.
 - [ ] **Keyboard secure-store and display capabilities** (planned) — ~300 lines: expose platform-gated keyboard, keychain, and Windows display operations through the capability broker.
 - [ ] **Bones-backed control plane and scheduling** (planned) — ~300 lines: route Copper trigger/background workflows through Bones messages while preserving authenticated CLI/HTTP behavior.
@@ -28,4 +28,4 @@
 - [ ] **Safe Input Key and Windows display WASM ports** (planned) — ~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities.
 - [ ] **Cutover cleanup release and full verification** (planned) — ~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates.
 
-_Last updated: 2026-07-26T21:52:29.1215514Z_
+_Last updated: 2026-07-26T22:17:47.0319356Z_

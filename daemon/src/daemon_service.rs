@@ -133,6 +133,9 @@ mod tests {
             capability_accepted: 0,
             capability_rejected: 0,
             capability_pending: 0,
+            capability_completed: 0,
+            capability_failed: 0,
+            capability_delivery_failures: 0,
             shutdown: false,
         }
     }

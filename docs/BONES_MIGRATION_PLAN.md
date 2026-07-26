@@ -215,8 +215,8 @@ Depends on: M2
 - [x] Define versioned action request, job, result, and error envelopes.
 - [x] Authorize every request using the Bones host-stamped sender and its
   validated Copper manifest.
-- [ ] Implement asynchronous job execution outside the Bones event loop.
-- [ ] Add scoped store/config/status access backed by `ExtensionStateStore`.
+- [x] Implement asynchronous job execution outside the Bones event loop.
+- [x] Add scoped store/config/status access backed by `ExtensionStateStore`.
 - [ ] Add notification and UI result routing.
 - [ ] Add filesystem and shell capabilities with least-privilege policy.
 - [ ] Add keyboard and secure-store capabilities.
@@ -441,3 +441,4 @@ When updating this plan:
 | 2026-07-26 | Started M2 and accepted D-007 with an optional, identity-bound `copper.component/1` manifest artifact contract. |
 | 2026-07-26 | Completed M2: Copper now supplies its filtered multi-root catalog to Bones, observes typed lifecycle state, delegates in-place component replacement to Bones' transactional supervisor, and accepted D-009 for versioned Copper-owned JSON envelopes. |
 | 2026-07-26 | Started M3 with the `copper.bus/1` JSON envelope contract and a bounded direct-call capability queue that authorizes the Bones host-stamped sender against the active WASM manifest. |
+| 2026-07-26 | Added the M3 asynchronous worker boundary and sender-scoped store, config, and status operations with direct targeted job-result delivery. |

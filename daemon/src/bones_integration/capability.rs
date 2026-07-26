@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 pub const COPPER_CAPABILITY_ENDPOINT: &str = "copper-capabilities";
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_PENDING_JOBS: usize = 256;
+const MAX_PENDING_PER_EXTENSION: usize = 32;
 const MAX_REPLAY_KEYS: usize = 1024;
+pub(crate) type CapabilityPolicies = BTreeMap<String, Vec<Permission>>;
 
 /// Permission-checked work item ready for asynchronous native execution.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,7 +27,7 @@ pub struct AuthorizedCapabilityJob {
 
 #[derive(Debug, Default)]
 struct CapabilityState {
-    policies: BTreeMap<String, Vec<Permission>>,
+    policies: CapabilityPolicies,
     pending: VecDeque<AuthorizedCapabilityJob>,
     replay_keys: BTreeSet<(String, String)>,
     replay_order: VecDeque<(String, String)>,
@@ -50,12 +52,12 @@ impl CopperCapabilityHandle {
     /// Replaces manifest policy and drops queued jobs no longer authorized.
     pub fn replace_registry(&self, registry: &Registry) {
         if let Ok(mut state) = self.state.lock() {
-            state.policies = policies_from_registry(registry);
+            state.policies = build_policies(registry);
             let policies = state.policies.clone();
             state.pending.retain(|job| {
-                policies
-                    .get(&job.extension_id)
-                    .is_some_and(|permissions| is_authorized(permissions, job.capability))
+                policies.get(&job.extension_id).is_some_and(|permissions| {
+                    is_capability_authorized(permissions, job.capability)
+                })
             });
         }
     }
@@ -63,6 +65,12 @@ impl CopperCapabilityHandle {
     /// Removes the oldest authorized job without blocking the Bones loop.
     pub fn pop_pending(&self) -> Option<AuthorizedCapabilityJob> {
         self.state.lock().ok()?.pending.pop_front()
+    }
+
+    pub(crate) fn requeue_front(&self, job: AuthorizedCapabilityJob) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pending.push_front(job);
+        }
     }
 
     pub fn pending_count(&self) -> usize {
@@ -171,7 +179,7 @@ impl CopperCapabilityModule {
                 "sender is not an active Copper WASM extension",
             );
         };
-        if !is_authorized(permissions, capability) {
+        if !is_capability_authorized(permissions, capability) {
             return reject_locked(
                 &mut state,
                 Some(request_id),
@@ -186,6 +194,20 @@ impl CopperCapabilityModule {
                 Some(request_id),
                 "replayed-request",
                 "requestId was already accepted for this sender",
+            );
+        }
+        if state
+            .pending
+            .iter()
+            .filter(|job| job.extension_id == sender)
+            .count()
+            >= MAX_PENDING_PER_EXTENSION
+        {
+            return reject_locked(
+                &mut state,
+                Some(request_id),
+                "sender-queue-full",
+                "extension capability queue is full",
             );
         }
         if state.pending.len() >= MAX_PENDING_JOBS {
@@ -247,7 +269,7 @@ impl Module for CopperCapabilityModule {
     }
 }
 
-fn policies_from_registry(registry: &Registry) -> BTreeMap<String, Vec<Permission>> {
+pub(crate) fn build_policies(registry: &Registry) -> CapabilityPolicies {
     registry
         .list()
         .filter(|extension| extension.wasm_component_path().is_some())
@@ -260,7 +282,7 @@ fn policies_from_registry(registry: &Registry) -> BTreeMap<String, Vec<Permissio
         .collect()
 }
 
-fn is_authorized(permissions: &[Permission], capability: Capability) -> bool {
+pub(crate) fn is_capability_authorized(permissions: &[Permission], capability: Capability) -> bool {
     capability
         .required_permission()
         .is_none_or(|permission| permissions.contains(&permission))
@@ -443,6 +465,43 @@ mod tests {
         );
         assert_eq!(handle.rejected_count(), 3);
         assert_eq!(handle.pending_count(), 0);
+    }
+
+    #[test]
+    fn one_sender_cannot_consume_the_entire_shared_queue() {
+        let temp = tempdir().expect("tempdir");
+        write_component(temp.path(), "noisy", &["store"]);
+        write_component(temp.path(), "peer", &["store"]);
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let (mut module, handle) = CopperCapabilityModule::new(&registry);
+
+        for index in 0..32 {
+            assert!(matches!(
+                respond(
+                    &mut module,
+                    "noisy",
+                    capability_request(&format!("request-{index}"), "store")
+                ),
+                CopperEnvelope::JobAccepted { .. }
+            ));
+        }
+        assert_error(
+            respond(
+                &mut module,
+                "noisy",
+                capability_request("request-overflow", "store"),
+            ),
+            "sender-queue-full",
+        );
+        assert!(matches!(
+            respond(
+                &mut module,
+                "peer",
+                capability_request("peer-request", "store")
+            ),
+            CopperEnvelope::JobAccepted { .. }
+        ));
+        assert_eq!(handle.pending_count(), 33);
     }
 
     fn capability_request(request_id: &str, capability: &str) -> serde_json::Value {

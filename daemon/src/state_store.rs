@@ -71,6 +71,10 @@ impl ExtensionStateStore {
         Ok(self.inspect_status(extension_id)?.value)
     }
 
+    pub fn load_store(&self, extension_id: &str) -> Result<Value, std::io::Error> {
+        self.load_path_or_legacy(&self.legacy_path(extension_id), None)
+    }
+
     pub fn inspect_core_config(&self) -> Result<LoadedState, std::io::Error> {
         self.inspect_path_or_legacy(
             "copper-core.config",
@@ -162,6 +166,27 @@ impl ExtensionStateStore {
 
     pub fn merge_config(&self, extension_id: &str, value: &Value) -> Result<Value, std::io::Error> {
         merge_json_object(&self.config_path(extension_id), value)
+    }
+
+    pub fn merge_status(&self, extension_id: &str, value: &Value) -> Result<Value, std::io::Error> {
+        merge_json_object(&self.status_path(extension_id), value)
+    }
+
+    pub fn merge_store(&self, extension_id: &str, value: &Value) -> Result<Value, std::io::Error> {
+        merge_json_object(&self.legacy_path(extension_id), value)
+    }
+
+    pub fn set_store_value(
+        &self,
+        extension_id: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), std::io::Error> {
+        let mut store = self.load_store(extension_id)?;
+        if let Some(object) = store.as_object_mut() {
+            object.insert(key.to_string(), value);
+        }
+        write_json_object(&self.legacy_path(extension_id), &store)
     }
 
     pub fn ensure_root(&self) -> Result<(), std::io::Error> {
@@ -405,6 +430,48 @@ mod tests {
         assert_eq!(
             read_json_object(&path).expect("read"),
             serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn scoped_store_config_and_status_never_cross_extension_roots() {
+        let temp = tempdir().expect("tempdir");
+        let store = ExtensionStateStore::new(temp.path().join(".Copper/extensions"));
+        store
+            .merge_store("alpha-ext", &serde_json::json!({"count": 1}))
+            .expect("alpha store");
+        store
+            .merge_config("alpha-ext", &serde_json::json!({"enabled": true}))
+            .expect("alpha config");
+        store
+            .merge_status("beta-ext", &serde_json::json!({"running": true}))
+            .expect("beta status");
+
+        assert_eq!(
+            store
+                .load_store("alpha-ext")
+                .expect("load store")
+                .get("count"),
+            Some(&serde_json::json!(1))
+        );
+        assert!(store
+            .load_store("beta-ext")
+            .expect("beta store")
+            .as_object()
+            .is_some_and(|value| value.is_empty()));
+        assert_eq!(
+            store
+                .load_config("alpha-ext")
+                .expect("alpha config")
+                .get("enabled"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            store
+                .load_status("beta-ext")
+                .expect("beta status")
+                .get("running"),
+            Some(&serde_json::json!(true))
         );
     }
 

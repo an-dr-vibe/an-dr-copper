@@ -3,6 +3,7 @@
 mod capability;
 mod control;
 mod driver;
+mod jobs;
 mod protocol;
 
 pub use capability::{
