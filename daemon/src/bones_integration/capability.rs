@@ -381,6 +381,27 @@ mod tests {
     }
 
     #[test]
+    fn notification_remains_permissionless_for_active_wasm_senders() {
+        let temp = tempdir().expect("tempdir");
+        write_component(temp.path(), "notifier", &[]);
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let (mut module, handle) = CopperCapabilityModule::new(&registry);
+
+        assert!(matches!(
+            respond(
+                &mut module,
+                "notifier",
+                capability_request("request-1", "notify")
+            ),
+            CopperEnvelope::JobAccepted { .. }
+        ));
+        assert_eq!(
+            handle.pop_pending().expect("notification job").capability,
+            Capability::Notify
+        );
+    }
+
+    #[test]
     fn replay_and_protocol_mismatch_fail_without_duplicate_jobs() {
         let temp = tempdir().expect("tempdir");
         write_component(temp.path(), "allowed", &["store"]);

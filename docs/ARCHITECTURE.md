@@ -182,16 +182,18 @@ Adding a module requires 5 touch-points — see `agents/developer.md`.
 
 | Module | Permission | Keyring backend | Status |
 |---|---|---|---|
-| `fs` | `fs` | — | stub |
-| `shell` | `shell` | — | stub |
-| `notify` | — | — | stub |
-| `ui` | `ui` | — | stub |
-| `store` | `store` | — | stub |
+| `fs` | `fs` | — | native worker: list/move/delete |
+| `shell` | `shell` | — | native worker: direct executable/args and lookup |
+| `notify` | — | — | native worker: platform notification |
+| `ui` | `ui` | — | native worker route; presentation remains placeholder until M4 |
+| `store` | `store` | — | native worker: scoped store/config/status |
 | `keyboard` | `keyboard` | — | partial: Windows `typeText` real |
 | `secure_store` | `secure-store` | Windows Credential Manager / GNOME SecretService / macOS Keychain | **real** |
 
 `secure_store` uses the `keyring` crate (`v3`, features `windows-native apple-native linux-native`).
-Most other modules are stubs awaiting deeper runtime integration; `keyboard.typeText` uses host input on Windows.
+`keyboard.typeText` uses host input on Windows. UI calls already cross the
+authorized asynchronous boundary, but their placeholder host sink is replaced
+by Bones web/wry presentation in M4.
 
 ## 8. CLI Surface
 

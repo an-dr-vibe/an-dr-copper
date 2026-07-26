@@ -11,8 +11,8 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "4bbd6c75c4cd468fb35f4929df18179d",
-  "commitBaseline": "0cab53e64974b0ed437181d861c6c09ca6c0b036",
+  "currentIncrementId": "97c8336e032b44abadacd2e8ce874848",
+  "commitBaseline": "3d3bfbc494ae0411e0f8c6742d5e154e8259bc00",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
@@ -66,14 +66,14 @@
     {
       "id": "4bbd6c75c4cd468fb35f4929df18179d",
       "number": 8,
-      "status": "verified",
+      "status": "completed",
       "scope": "Asynchronous jobs and scoped state",
       "description": "~300 lines: execute blocking work away from the Bones loop and expose scoped Copper config/status/store operations."
     },
     {
       "id": "97c8336e032b44abadacd2e8ce874848",
       "number": 9,
-      "status": "planned",
+      "status": "verified",
       "scope": "Filesystem shell notification and UI capabilities",
       "description": "~300 lines: provide permissioned job handlers for filesystem, shell, notification, and UI result operations with negative tests."
     },
@@ -369,11 +369,26 @@
       "detail": "Advanced from BUILD to VERIFY."
     },
     {
-      "at": "2026-07-26T22:17:47.0259970Z",
+      "at": "2026-07-26T22:17:47.025997Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-26T22:18:17.1194905Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to BUILD."
+    },
+    {
+      "at": "2026-07-26T22:29:45.5906942Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-26T22:36:00.7564789Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-26T22:17:47.0319356Z"
+  "updatedAt": "2026-07-26T22:36:00.7627220Z"
 }

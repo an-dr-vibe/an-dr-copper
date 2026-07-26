@@ -59,6 +59,22 @@ authorized job, never from payload arguments. The legacy `data.json` location
 remains the guest key/value store for behavioral parity, but all access now
 from WASM guests flows through `ExtensionStateStore` and atomic writes.
 
+Native operation names and argument objects are:
+
+- `fs`: `list {path}`, `move {src,dst}`, and `delete {path}`.
+- `shell`: `run {cmd,args}` and `which {binary}`. Commands are launched
+  directly with an argument vector; Copper does not interpolate a shell
+  command string.
+- `notify`: `show {message}`. Notifications retain the permissionless legacy
+  contract, but the sender must still be an active WASM extension.
+- `ui`: `show {markup}` and `update {state}`. Both require `ui`; the current
+  host sink preserves legacy no-op behavior until Bones presentation lands.
+
+Paths, commands, messages, arrays, and structured UI values are type- and
+size-checked before native execution. Filesystem, shell, and UI requests still
+require their manifest permissions. Worker shutdown waits briefly for ordinary
+jobs and then detaches a blocking native call so daemon shutdown cannot hang.
+
 ## Recipe: add a host API module
 
 Five touch-points in Rust, then schema + SDK:

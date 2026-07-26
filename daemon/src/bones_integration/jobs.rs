@@ -1,14 +1,19 @@
 use super::capability::{build_policies, is_capability_authorized, CapabilityPolicies};
 use super::{AuthorizedCapabilityJob, Capability, CopperEnvelope, COPPER_BUS_PROTOCOL_V1};
+use crate::api;
 use crate::extension::Registry;
 use crate::state_store::ExtensionStateStore;
 use serde_json::{Map, Value};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::mpsc::{channel, sync_channel, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{
+    channel, sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError,
+};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 const WORKER_QUEUE_CAPACITY: usize = 64;
+const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 pub(super) const COPPER_JOB_SENDER: &str = "copper-jobs";
 
 pub(super) struct CompletedCapabilityJob {
@@ -43,6 +48,7 @@ pub(super) enum SubmitError {
 pub(super) struct CapabilityWorker {
     sender: Option<SyncSender<AuthorizedCapabilityJob>>,
     completed: Receiver<CompletedCapabilityJob>,
+    stopped: Receiver<()>,
     policies: Arc<Mutex<CapabilityPolicies>>,
     join: Option<JoinHandle<()>>,
 }
@@ -51,6 +57,7 @@ impl CapabilityWorker {
     pub fn new(state_store: ExtensionStateStore, registry: &Registry) -> Result<Self, String> {
         let (sender, jobs) = sync_channel::<AuthorizedCapabilityJob>(WORKER_QUEUE_CAPACITY);
         let (results, completed) = channel();
+        let (stopped_sender, stopped) = sync_channel(1);
         let policies = Arc::new(Mutex::new(build_policies(registry)));
         let worker_policies = policies.clone();
         let join = thread::Builder::new()
@@ -59,7 +66,7 @@ impl CapabilityWorker {
                 while let Ok(job) = jobs.recv() {
                     let panic_job = job.clone();
                     let completion = catch_unwind(AssertUnwindSafe(|| {
-                        execute_state_job(&state_store, &worker_policies, job)
+                        execute_capability_job(&state_store, &worker_policies, job)
                     }))
                     .unwrap_or_else(|_| CompletedCapabilityJob {
                         extension_id: panic_job.extension_id,
@@ -76,11 +83,13 @@ impl CapabilityWorker {
                         break;
                     }
                 }
+                let _ = stopped_sender.send(());
             })
             .map_err(|err| format!("failed to start capability worker: {err}"))?;
         Ok(Self {
             sender: Some(sender),
             completed,
+            stopped,
             policies,
             join: Some(join),
         })
@@ -110,13 +119,22 @@ impl CapabilityWorker {
 impl Drop for CapabilityWorker {
     fn drop(&mut self) {
         self.sender.take();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
+        match self.stopped.recv_timeout(WORKER_SHUTDOWN_GRACE) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                if let Some(join) = self.join.take() {
+                    let _ = join.join();
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                // A native operation may still be blocking. Detach it so daemon
+                // shutdown is bounded; process exit will terminate the worker.
+                self.join.take();
+            }
         }
     }
 }
 
-fn execute_state_job(
+fn execute_capability_job(
     store: &ExtensionStateStore,
     policies: &Arc<Mutex<CapabilityPolicies>>,
     job: AuthorizedCapabilityJob,
@@ -128,7 +146,11 @@ fn execute_state_job(
         ))
     } else {
         match job.capability {
+            Capability::Fs => execute_fs_operation(&job),
+            Capability::Notify => execute_notify_operation(&job),
+            Capability::Shell => execute_shell_operation(&job),
             Capability::Store => execute_store_operation(store, &job),
+            Capability::Ui => execute_ui_operation(&job),
             _ => Err((
                 "unsupported-capability",
                 "capability has no native worker handler yet".to_string(),
@@ -174,10 +196,85 @@ fn job_remains_authorized(
         .is_some_and(|permissions| is_capability_authorized(&permissions, job.capability))
 }
 
+type JobResult = Result<Value, (&'static str, String)>;
+
+fn execute_fs_operation(job: &AuthorizedCapabilityJob) -> JobResult {
+    match job.operation.as_str() {
+        "list" => {
+            let path = read_path(&job.args, "path")?;
+            serde_json::to_value(api::fs::list(path))
+                .map_err(|error| ("result-encoding", error.to_string()))
+        }
+        "move" => {
+            let source = read_path(&job.args, "src")?;
+            let destination = read_path(&job.args, "dst")?;
+            api::fs::move_file(source, destination)
+                .map(|()| Value::Null)
+                .map_err(native_io_error)
+        }
+        "delete" => {
+            let path = read_path(&job.args, "path")?;
+            api::fs::delete(path)
+                .map(|()| Value::Null)
+                .map_err(native_io_error)
+        }
+        operation => unknown_operation("filesystem", operation),
+    }
+}
+
+fn execute_shell_operation(job: &AuthorizedCapabilityJob) -> JobResult {
+    match job.operation.as_str() {
+        "run" => {
+            let command = read_string(&job.args, "cmd", 4096)?;
+            let args = read_string_array(&job.args, "args", 128, 8192)?;
+            let result = api::shell::run(command, &args);
+            Ok(serde_json::json!({
+                "code": result.code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }))
+        }
+        "which" => {
+            let binary = read_binary_name(&job.args)?;
+            Ok(api::shell::which(binary)
+                .map(Value::String)
+                .unwrap_or(Value::Null))
+        }
+        operation => unknown_operation("shell", operation),
+    }
+}
+
+fn execute_notify_operation(job: &AuthorizedCapabilityJob) -> JobResult {
+    match job.operation.as_str() {
+        "show" => {
+            let message = read_string(&job.args, "message", 8192)?;
+            api::notify::notify(message);
+            Ok(Value::Null)
+        }
+        operation => unknown_operation("notification", operation),
+    }
+}
+
+fn execute_ui_operation(job: &AuthorizedCapabilityJob) -> JobResult {
+    match job.operation.as_str() {
+        "show" => {
+            let markup = read_object_field(&job.args, "markup")?;
+            api::ui::show(&Value::Object(markup));
+            Ok(Value::Null)
+        }
+        "update" => {
+            let state = read_object_field(&job.args, "state")?;
+            api::ui::update(&Value::Object(state));
+            Ok(Value::Null)
+        }
+        operation => unknown_operation("ui", operation),
+    }
+}
+
 fn execute_store_operation(
     store: &ExtensionStateStore,
     job: &AuthorizedCapabilityJob,
-) -> Result<Value, (&'static str, String)> {
+) -> JobResult {
     let extension_id = &job.extension_id;
     match job.operation.as_str() {
         "get" => {
@@ -229,20 +326,121 @@ fn read_key(args: &Map<String, Value>) -> Result<&str, (&'static str, String)> {
     Ok(key)
 }
 
+fn read_path<'a>(
+    args: &'a Map<String, Value>,
+    field: &str,
+) -> Result<&'a str, (&'static str, String)> {
+    let path = read_string(args, field, 32 * 1024)?;
+    if path.chars().any(char::is_control) {
+        return Err((
+            "invalid-args",
+            format!("'{field}' must not contain control characters"),
+        ));
+    }
+    Ok(path)
+}
+
+fn read_binary_name(args: &Map<String, Value>) -> Result<&str, (&'static str, String)> {
+    let binary = read_string(args, "binary", 256)?;
+    if !binary
+        .chars()
+        .all(|character| character.is_alphanumeric() || "._+-".contains(character))
+    {
+        return Err((
+            "invalid-args",
+            "'binary' must be a program name without path or option characters".to_string(),
+        ));
+    }
+    Ok(binary)
+}
+
+fn read_string<'a>(
+    args: &'a Map<String, Value>,
+    field: &str,
+    max_bytes: usize,
+) -> Result<&'a str, (&'static str, String)> {
+    let Some(value) = args.get(field).and_then(Value::as_str) else {
+        return Err((
+            "invalid-args",
+            format!("'{field}' must be a non-empty string"),
+        ));
+    };
+    if value.is_empty() || value.len() > max_bytes || value.contains('\0') {
+        return Err((
+            "invalid-args",
+            format!("'{field}' must be 1-{max_bytes} bytes without NUL characters"),
+        ));
+    }
+    Ok(value)
+}
+
+fn read_string_array(
+    args: &Map<String, Value>,
+    field: &str,
+    max_items: usize,
+    max_item_bytes: usize,
+) -> Result<Vec<String>, (&'static str, String)> {
+    let Some(items) = args.get(field).and_then(Value::as_array) else {
+        return Err((
+            "invalid-args",
+            format!("'{field}' must be an array of strings"),
+        ));
+    };
+    if items.len() > max_items {
+        return Err((
+            "invalid-args",
+            format!("'{field}' must contain at most {max_items} items"),
+        ));
+    }
+    items
+        .iter()
+        .map(|item| {
+            let Some(value) = item.as_str() else {
+                return Err((
+                    "invalid-args",
+                    format!("'{field}' must contain only strings"),
+                ));
+            };
+            if value.len() > max_item_bytes || value.contains('\0') {
+                return Err((
+                    "invalid-args",
+                    format!(
+                        "'{field}' items must be at most {max_item_bytes} bytes without NUL characters"
+                    ),
+                ));
+            }
+            Ok(value.to_string())
+        })
+        .collect()
+}
+
 fn read_object(args: &Map<String, Value>) -> Result<Map<String, Value>, (&'static str, String)> {
-    args.get("value")
+    read_object_field(args, "value")
+}
+
+fn read_object_field(
+    args: &Map<String, Value>,
+    field: &str,
+) -> Result<Map<String, Value>, (&'static str, String)> {
+    args.get(field)
         .and_then(Value::as_object)
         .cloned()
-        .ok_or_else(|| {
-            (
-                "invalid-args",
-                "state merge requires an object value".to_string(),
-            )
-        })
+        .ok_or_else(|| ("invalid-args", format!("'{field}' must be an object")))
 }
 
 fn state_io_error(error: std::io::Error) -> (&'static str, String) {
     ("state-io", error.to_string())
+}
+
+fn native_io_error(error: std::io::Error) -> (&'static str, String) {
+    ("native-io", error.to_string())
+}
+
+fn unknown_operation(family: &str, operation: &str) -> JobResult {
+    Err((
+        "unknown-operation",
+        format!("unsupported {family} operation '{operation}'"),
+    ))
 }
 
 #[cfg(test)]
@@ -252,10 +450,10 @@ mod tests {
     use crate::descriptor::COMPONENT_ABI_V1;
     use crate::extension::Registry;
     use crate::state_store::ExtensionStateStore;
-    use serde_json::{json, Map};
+    use serde_json::{json, Map, Value};
     use std::fs;
     use std::path::Path;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
     #[test]
@@ -297,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_returns_versioned_errors_for_invalid_or_unsupported_jobs() {
+    fn worker_returns_versioned_errors_for_invalid_jobs() {
         let temp = tempdir().expect("tempdir");
         write_store_component(temp.path(), "alpha");
         let registry = Registry::load_from_dir(temp.path()).expect("registry");
@@ -315,12 +513,14 @@ mod tests {
             CopperEnvelope::Error { code, job_id: Some(_), .. } if code == "invalid-args"
         ));
 
-        let mut unsupported = job("alpha", "request-2", "run", json!({}));
-        unsupported.capability = Capability::Shell;
-        worker.try_submit(unsupported).expect("submit unsupported");
+        let mut invalid_shell = job("alpha", "request-2", "run", json!({}));
+        invalid_shell.capability = Capability::Shell;
+        worker
+            .try_submit(invalid_shell)
+            .expect("submit invalid shell job");
         assert!(matches!(
             wait_for_completion(&worker).envelope,
-            CopperEnvelope::Error { code, .. } if code == "unsupported-capability"
+            CopperEnvelope::Error { code, .. } if code == "invalid-args"
         ));
     }
 
@@ -351,9 +551,220 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn worker_executes_filesystem_shell_and_ui_operations() {
+        let temp = tempdir().expect("tempdir");
+        let working = temp.path().join("working");
+        fs::create_dir_all(&working).expect("working directory");
+        fs::write(working.join("source.txt"), "data").expect("source");
+        write_native_component(temp.path(), "alpha");
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let worker = CapabilityWorker::new(
+            ExtensionStateStore::new(temp.path().join("state")),
+            &registry,
+        )
+        .expect("worker");
+
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-list",
+                Capability::Fs,
+                "list",
+                json!({"path": working}),
+            ))
+            .expect("list");
+        let listed = wait_for_completion(&worker);
+        assert!(matches!(
+            listed.envelope,
+            CopperEnvelope::JobResult { result, .. }
+                if result.as_array().is_some_and(|entries| entries.iter().any(
+                    |entry| entry["name"] == json!("source.txt") && entry["isDir"] == json!(false)
+                ))
+        ));
+
+        let destination = working.join("destination.txt");
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-move",
+                Capability::Fs,
+                "move",
+                json!({"src": working.join("source.txt"), "dst": destination}),
+            ))
+            .expect("move");
+        assert!(wait_for_completion(&worker).succeeded);
+        assert!(destination.exists());
+
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-delete",
+                Capability::Fs,
+                "delete",
+                json!({"path": destination}),
+            ))
+            .expect("delete");
+        assert!(wait_for_completion(&worker).succeeded);
+        assert!(!destination.exists());
+
+        let (command, arguments) = if cfg!(windows) {
+            ("cmd", json!(["/c", "echo copper"]))
+        } else {
+            ("sh", json!(["-c", "printf copper"]))
+        };
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-run",
+                Capability::Shell,
+                "run",
+                json!({"cmd": command, "args": arguments}),
+            ))
+            .expect("run");
+        assert!(matches!(
+            wait_for_completion(&worker).envelope,
+            CopperEnvelope::JobResult { result, .. }
+                if result["code"] == json!(0)
+                    && result["stdout"].as_str().is_some_and(|output| output.contains("copper"))
+        ));
+
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-which",
+                Capability::Shell,
+                "which",
+                json!({"binary": if cfg!(windows) { "cmd" } else { "sh" }}),
+            ))
+            .expect("which");
+        assert!(matches!(
+            wait_for_completion(&worker).envelope,
+            CopperEnvelope::JobResult {
+                result: Value::String(_),
+                ..
+            }
+        ));
+
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-notify",
+                Capability::Notify,
+                "show",
+                json!({"message": "Copper capability test completed"}),
+            ))
+            .expect("notify");
+        assert!(wait_for_completion(&worker).succeeded);
+
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-ui",
+                Capability::Ui,
+                "show",
+                json!({"markup": {"type": "toast", "message": "done"}}),
+            ))
+            .expect("ui");
+        assert!(wait_for_completion(&worker).succeeded);
+
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-ui-update",
+                Capability::Ui,
+                "update",
+                json!({"state": {"progress": 1}}),
+            ))
+            .expect("ui update");
+        assert!(wait_for_completion(&worker).succeeded);
+    }
+
+    #[test]
+    fn worker_rejects_invalid_native_capability_arguments() {
+        let temp = tempdir().expect("tempdir");
+        write_native_component(temp.path(), "alpha");
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let worker = CapabilityWorker::new(
+            ExtensionStateStore::new(temp.path().join("state")),
+            &registry,
+        )
+        .expect("worker");
+
+        for (request_id, capability, operation, args) in [
+            ("request-fs", Capability::Fs, "list", json!({"path": ""})),
+            (
+                "request-shell",
+                Capability::Shell,
+                "run",
+                json!({"cmd": "tool", "args": "not-an-array"}),
+            ),
+            (
+                "request-notify",
+                Capability::Notify,
+                "show",
+                json!({"message": ""}),
+            ),
+            ("request-ui", Capability::Ui, "update", json!({"state": []})),
+        ] {
+            worker
+                .try_submit(capability_job(
+                    "alpha", request_id, capability, operation, args,
+                ))
+                .expect("submit invalid");
+            assert!(matches!(
+                wait_for_completion(&worker).envelope,
+                CopperEnvelope::Error { code, .. } if code == "invalid-args"
+            ));
+        }
+    }
+
+    #[test]
+    fn worker_drop_does_not_wait_for_a_blocking_native_job() {
+        let temp = tempdir().expect("tempdir");
+        write_native_component(temp.path(), "alpha");
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let worker = CapabilityWorker::new(
+            ExtensionStateStore::new(temp.path().join("state")),
+            &registry,
+        )
+        .expect("worker");
+        let (command, arguments) = if cfg!(windows) {
+            ("ping", json!(["-n", "3", "127.0.0.1"]))
+        } else {
+            ("sleep", json!(["2"]))
+        };
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-blocking",
+                Capability::Shell,
+                "run",
+                json!({"cmd": command, "args": arguments}),
+            ))
+            .expect("submit blocking job");
+
+        let started = Instant::now();
+        drop(worker);
+        assert!(
+            started.elapsed() < Duration::from_millis(1500),
+            "worker shutdown exceeded its grace period"
+        );
+    }
+
     fn job(
         extension_id: &str,
         request_id: &str,
+        operation: &str,
+        args: serde_json::Value,
+    ) -> AuthorizedCapabilityJob {
+        capability_job(extension_id, request_id, Capability::Store, operation, args)
+    }
+
+    fn capability_job(
+        extension_id: &str,
+        request_id: &str,
+        capability: Capability,
         operation: &str,
         args: serde_json::Value,
     ) -> AuthorizedCapabilityJob {
@@ -361,23 +772,31 @@ mod tests {
             job_id: format!("job-{request_id}"),
             extension_id: extension_id.to_string(),
             request_id: request_id.to_string(),
-            capability: Capability::Store,
+            capability,
             operation: operation.to_string(),
             args: args.as_object().cloned().unwrap_or_else(Map::new),
         }
     }
 
     fn wait_for_completion(worker: &CapabilityWorker) -> super::CompletedCapabilityJob {
-        for _ in 0..100 {
+        for _ in 0..400 {
             if let Some(completed) = worker.try_complete() {
                 return completed;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(10));
         }
         panic!("worker did not complete");
     }
 
     fn write_store_component(parent: &Path, id: &str) {
+        write_component_with_permissions(parent, id, &["store", "shell"]);
+    }
+
+    fn write_native_component(parent: &Path, id: &str) {
+        write_component_with_permissions(parent, id, &["fs", "shell", "ui"]);
+    }
+
+    fn write_component_with_permissions(parent: &Path, id: &str, permissions: &[&str]) {
         let root = parent.join(id);
         fs::create_dir_all(&root).expect("extension root");
         fs::write(
@@ -389,14 +808,15 @@ mod tests {
                     "name": "{id}",
                     "version": "1.0.0",
                     "trigger": "{id}",
-                    "permissions": ["store", "shell"],
+                    "permissions": {},
                     "runtime": {{
                         "kind": "wasm-component",
                         "abi": "{COMPONENT_ABI_V1}",
                         "artifact": "{id}.wasm"
                     }},
                     "actions": [{{ "id": "run", "label": "Run", "script": "run" }}]
-                }}"#
+                }}"#,
+                serde_json::to_string(permissions).expect("permissions")
             ),
         )
         .expect("manifest");
