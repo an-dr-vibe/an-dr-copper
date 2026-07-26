@@ -14,6 +14,14 @@ export interface WasmComponentRuntime {
   abi: "copper.component/1";
   /** Package-local artifact; it must be named `<manifest id>.wasm`. */
   artifact: `${string}.wasm`;
+  /** Optional manifest-driven background action; no polling code runs in the Bones frame loop. */
+  background?: {
+    action: string;
+    enabledConfig?: string;
+    enabledByDefault?: boolean;
+    intervalSecondsConfig?: string;
+    defaultIntervalSeconds: number;
+  };
 }
 
 export interface FileEntry {

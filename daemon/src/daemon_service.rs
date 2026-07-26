@@ -136,6 +136,8 @@ mod tests {
             capability_completed: 0,
             capability_failed: 0,
             capability_delivery_failures: 0,
+            actions_dispatched: 0,
+            action_dispatch_failures: 0,
             shutdown: false,
         }
     }

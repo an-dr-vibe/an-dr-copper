@@ -20,6 +20,8 @@ pub enum ValidationError {
     InvalidVersion(String),
     #[error("runtime artifact identity mismatch: {0}")]
     RuntimeArtifactIdentity(String),
+    #[error("background action is not declared: {0}")]
+    BackgroundAction(String),
 }
 
 pub fn validator() -> Result<&'static JSONSchema, ValidationError> {
@@ -64,6 +66,18 @@ pub fn parse_and_validate(raw: &str) -> Result<Descriptor, ValidationError> {
                 "extension {} artifact must be named {expected}, got {}",
                 descriptor.id, runtime.artifact
             )));
+        }
+        if let Some(background) = &runtime.background {
+            if !descriptor
+                .actions
+                .iter()
+                .any(|action| action.id == background.action)
+            {
+                return Err(ValidationError::BackgroundAction(format!(
+                    "extension {} background action '{}' is missing from actions",
+                    descriptor.id, background.action
+                )));
+            }
         }
     }
 
@@ -122,6 +136,71 @@ mod tests {
 
         let error = parse_and_validate(&raw).expect_err("artifact identity should fail");
         assert!(error.to_string().contains("must be named counter.wasm"));
+    }
+
+    #[test]
+    fn accepts_manifest_driven_wasm_background_schedule() {
+        let raw = format!(
+            r#"{{
+                "$schema": "{SUPPORTED_SCHEMA_URL}",
+                "id": "watcher",
+                "name": "Watcher",
+                "version": "1.0.0",
+                "trigger": "watcher",
+                "runtime": {{
+                    "kind": "wasm-component",
+                    "abi": "{COMPONENT_ABI_V1}",
+                    "artifact": "watcher.wasm",
+                    "background": {{
+                        "action": "poll",
+                        "enabledConfig": "autoRun",
+                        "enabledByDefault": false,
+                        "intervalSecondsConfig": "pollIntervalSeconds",
+                        "defaultIntervalSeconds": 10
+                    }}
+                }},
+                "actions": [
+                    {{ "id": "poll", "label": "Poll", "script": "poll" }}
+                ]
+            }}"#
+        );
+
+        let descriptor = parse_and_validate(&raw).expect("background descriptor");
+        let background = descriptor
+            .runtime
+            .and_then(|runtime| runtime.background)
+            .expect("background schedule");
+        assert_eq!(background.action, "poll");
+        assert_eq!(background.enabled_config.as_deref(), Some("autoRun"));
+        assert_eq!(background.default_interval_seconds, 10);
+    }
+
+    #[test]
+    fn rejects_background_schedule_for_an_undeclared_action() {
+        let raw = format!(
+            r#"{{
+                "$schema": "{SUPPORTED_SCHEMA_URL}",
+                "id": "watcher",
+                "name": "Watcher",
+                "version": "1.0.0",
+                "trigger": "watcher",
+                "runtime": {{
+                    "kind": "wasm-component",
+                    "abi": "{COMPONENT_ABI_V1}",
+                    "artifact": "watcher.wasm",
+                    "background": {{
+                        "action": "missing",
+                        "defaultIntervalSeconds": 10
+                    }}
+                }},
+                "actions": [
+                    {{ "id": "poll", "label": "Poll", "script": "poll" }}
+                ]
+            }}"#
+        );
+
+        let error = parse_and_validate(&raw).expect_err("missing background action");
+        assert!(error.to_string().contains("background action 'missing'"));
     }
 
     #[test]

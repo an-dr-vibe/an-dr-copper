@@ -351,6 +351,7 @@ mod tests {
             kind: RuntimeKind::WasmComponent,
             abi: COMPONENT_ABI_V1.to_string(),
             artifact: "sample.wasm".to_string(),
+            background: None,
         });
 
         let error = runtime

@@ -39,6 +39,12 @@ the latest typed lifecycle state for each active component. Registry reloads
 that keep the same ID-to-path catalog do not rebuild Bones; file changes are
 left to Bones' transactional component supervisor.
 
+CLI and authenticated HTTP triggers select the declared action before sending
+a targeted `copper.bus/1` `action-request` to the component from
+`copper-actions`. An empty response means accepted; a component may instead
+return `job-accepted` or `job-result`. Legacy manifests without `runtime`
+continue through the subprocess execution adapter during migration.
+
 WASM guests request native work with a direct Bones `send` to
 `copper-capabilities`. The payload is a `copper.bus/1` `capability-request`;
 the host ignores any identity-like values inside `args` and authorizes only the
@@ -130,6 +136,24 @@ For a WASM Component package, add
 `runtime: { "kind": "wasm-component", "abi": "copper.component/1",
 "artifact": "<id>.wasm" }`. The registry rejects missing, renamed, traversing,
 or package-external artifacts.
+
+To schedule one component action in the background, add the optional runtime
+metadata below. Both config-key fields refer to the extension's scoped
+`config.json`; omit either one to use its default directly.
+
+```json
+"background": {
+  "action": "scan",
+  "enabledConfig": "autoRun",
+  "enabledByDefault": false,
+  "intervalSecondsConfig": "pollIntervalSeconds",
+  "defaultIntervalSeconds": 30
+}
+```
+
+The action must appear in `actions`. Intervals are 1–86,400 seconds. Copper
+checks schedules at one-second resolution and marks a run only after successful
+Bones dispatch, so transient failures are retried.
 
 ## Recipe: add a built-in host extension
 

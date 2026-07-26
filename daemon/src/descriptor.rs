@@ -16,6 +16,21 @@ pub struct RuntimeDescriptor {
     pub kind: RuntimeKind,
     pub abi: String,
     pub artifact: String,
+    #[serde(default)]
+    pub background: Option<BackgroundDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundDescriptor {
+    pub action: String,
+    #[serde(default)]
+    pub enabled_config: Option<String>,
+    #[serde(default)]
+    pub enabled_by_default: bool,
+    #[serde(default)]
+    pub interval_seconds_config: Option<String>,
+    pub default_interval_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

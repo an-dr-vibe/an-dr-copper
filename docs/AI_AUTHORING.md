@@ -41,13 +41,22 @@ Omitting `runtime` selects the compatibility TypeScript runtime and requires
 "runtime": {
   "kind": "wasm-component",
   "abi": "copper.component/1",
-  "artifact": "my-extension.wasm"
+  "artifact": "my-extension.wasm",
+  "background": {
+    "action": "scan",
+    "enabledConfig": "autoRun",
+    "enabledByDefault": false,
+    "intervalSecondsConfig": "pollIntervalSeconds",
+    "defaultIntervalSeconds": 30
+  }
 }
 ```
 
 The artifact must be beside `manifest.json`, must be named exactly
 `<manifest id>.wasm`, and must resolve inside the extension package. Component
-manifests do not require `main.ts`.
+manifests do not require `main.ts`. The `background` object is optional. Its
+action must be declared in `actions`; config-key fields read only this
+extension's scoped settings, and the default interval must be 1–86,400 seconds.
 
 ## Platform Restriction
 

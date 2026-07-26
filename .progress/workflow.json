@@ -11,8 +11,8 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "54103589b898411c864667654907284b",
-  "commitBaseline": "d4a0e0a23de475a29636960563e0ddb79db32771",
+  "currentIncrementId": "af58ef98df3143d7aa6b248232152a07",
+  "commitBaseline": "b39214538a69c04597feff5551f5a9ae46c061c1",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
@@ -80,14 +80,14 @@
     {
       "id": "54103589b898411c864667654907284b",
       "number": 10,
-      "status": "verified",
+      "status": "completed",
       "scope": "Keyboard secure-store and display capabilities",
       "description": "~300 lines: expose platform-gated keyboard, keychain, and Windows display operations through the capability broker."
     },
     {
       "id": "af58ef98df3143d7aa6b248232152a07",
       "number": 11,
-      "status": "planned",
+      "status": "verified",
       "scope": "Bones-backed control plane and scheduling",
       "description": "~300 lines: route Copper trigger/background workflows through Bones messages while preserving authenticated CLI/HTTP behavior."
     },
@@ -402,8 +402,23 @@
       "at": "2026-07-26T22:50:30.0692513Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-26T22:51:01.6461742Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to BUILD."
+    },
+    {
+      "at": "2026-07-26T23:09:32.9430305Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-26T23:19:34.2011034Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-26T22:50:30.0794421Z"
+  "updatedAt": "2026-07-26T23:19:34.2083770Z"
 }

@@ -230,11 +230,11 @@ remains responsive.
 
 ### M4 — Control plane, settings UI, and background behavior
 
-Status: **NOT STARTED**  
+Status: **IN PROGRESS**
 Depends on: M2, M3
 
-- [ ] Route CLI and HTTP triggers to versioned action messages.
-- [ ] Preserve authentication, loopback binding, health, list, reload, verify,
+- [x] Route CLI and HTTP triggers to versioned action messages.
+- [x] Preserve authentication, loopback binding, health, list, reload, verify,
   trigger, and shutdown operations.
 - [ ] Preserve manifest-driven settings UI and state diagnostics.
 - [ ] Preserve dynamic options and apply-actions workflows.
@@ -249,7 +249,7 @@ Depends on: M2, M3
   reaches parity.
 - [ ] Decide D-012, including whether an explicit external-browser fallback
   remains supported.
-- [ ] Map background polling onto timers/jobs without a busy 60 Hz daemon loop.
+- [x] Map background polling onto timers/jobs without a busy 60 Hz daemon loop.
 - [ ] Preserve main tray, additional extension trays, and UI launch behavior.
 - [ ] Preserve Safe Input Key hotkey behavior on Windows.
 
@@ -444,3 +444,4 @@ When updating this plan:
 | 2026-07-26 | Added the M3 asynchronous worker boundary and sender-scoped store, config, and status operations with direct targeted job-result delivery. |
 | 2026-07-26 | Routed filesystem, shell, notification, and UI requests through the M3 worker with strict argument validation, manifest permission checks, and bounded shutdown behavior. |
 | 2026-07-26 | Completed the M3 native handler set with keyboard and keychain operations plus a Windows-gated display family protected by the new additive `windows-display` permission. |
+| 2026-07-26 | Started M4: CLI/HTTP component triggers now use targeted `copper.bus/1` action messages, and optional manifest schedules dispatch background actions at one-second resolution without polling the Bones frame loop. |

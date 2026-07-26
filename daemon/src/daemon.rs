@@ -155,6 +155,70 @@ impl DaemonState {
         self.core_config = core_config;
         Ok(self.registry.list().count())
     }
+
+    fn control_service(&self) -> crate::daemon_service::DaemonControlService<'_> {
+        crate::daemon_service::DaemonControlService::new(
+            &self.user_extensions_dir,
+            self.core_extensions_dir.as_deref(),
+            &self.registry,
+            &self.host_extensions,
+            &self.state_store,
+            self.bones.status(),
+        )
+    }
+
+    fn trigger_payload(
+        &mut self,
+        extension_id: &str,
+        action_id: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
+        let extension = self
+            .registry
+            .get(extension_id)
+            .ok_or_else(|| format!("extension '{extension_id}' not found"))?;
+        if extension.wasm_component_path().is_none() {
+            return self
+                .control_service()
+                .trigger_payload(extension_id, action_id);
+        }
+        let action = match action_id {
+            Some(action_id) => extension
+                .descriptor
+                .actions
+                .iter()
+                .find(|action| action.id == action_id)
+                .ok_or_else(|| format!("action '{action_id}' not found"))?,
+            None => extension
+                .descriptor
+                .actions
+                .first()
+                .ok_or_else(|| "no action defined".to_string())?,
+        };
+        let action_id = action.id.clone();
+        let permissions =
+            crate::execution::permissions_as_strings(&extension.descriptor.permissions);
+        let dispatch = self.bones.dispatch_action(
+            extension_id,
+            &action_id,
+            serde_json::Map::from_iter([(
+                "source".to_string(),
+                serde_json::Value::String("control-plane".to_string()),
+            )]),
+        )?;
+        let mut payload = serde_json::to_value(dispatch).map_err(|error| error.to_string())?;
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("permissions".to_string(), serde_json::json!(permissions));
+            object.insert(
+                "runtime".to_string(),
+                serde_json::json!({
+                    "abiVersion": crate::bones_integration::COPPER_BUS_PROTOCOL_V1,
+                    "executor": "bones",
+                    "isolated": true,
+                }),
+            );
+        }
+        Ok(payload)
+    }
 }
 
 pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
@@ -269,10 +333,35 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             scheduler.mark_reload();
         }
         scheduler.tick_background(
+            &state.registry,
             &state.host_extensions,
             &state.state_store,
             &state.core_config,
         );
+        match scheduler.due_bones_background(&state.registry, &state.state_store) {
+            Ok(actions) => {
+                for action in actions {
+                    let input = serde_json::Map::from_iter([(
+                        "source".to_string(),
+                        serde_json::Value::String("background".to_string()),
+                    )]);
+                    match state.bones.dispatch_action(
+                        &action.extension_id,
+                        &action.action_id,
+                        input,
+                    ) {
+                        Ok(_) => scheduler.mark_bones_background_run(&action),
+                        Err(error) => logging::error(format!(
+                            "Bones background action error [{} -> {}]: {}",
+                            action.extension_id, action.action_id, error
+                        )),
+                    }
+                }
+            }
+            Err(error) => logging::error(format!(
+                "failed to inspect manifest background schedules: {error}"
+            )),
+        }
         let now = Instant::now();
         state
             .bones

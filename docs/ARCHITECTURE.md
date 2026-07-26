@@ -28,7 +28,10 @@ Current implementation status:
   Bones module API, passes validated WASM Components from the filtered Copper
   registry into an explicit Bones startup catalog, and reports typed
   per-extension Bones lifecycle state through daemon health.
-- Implemented: always-on daemon, extension registry loading, authenticated HTTP control plane, isolated runtime trigger preparation, scheduled reload/background polling, descriptor validation, skeleton generation, local config UI (`ui open`), and main tray icon UI launch on Windows.
+- Implemented: always-on daemon, extension registry loading, authenticated HTTP
+  control plane, runtime-selected trigger dispatch, scheduled
+  reload/background actions, descriptor validation, skeleton generation, local
+  config UI (`ui open`), and main tray icon UI launch on Windows.
 - Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with manifest-driven extension pages, optional manifest-defined tabs, and a core-managed extensions tab for enable/disable and command discovery.
 - Implemented: Tauri-backed native window launcher for the settings UI; `ui open` and tray settings actions open native windows by default, with browser opening retained as an explicit fallback.
 - Implemented: action execution through an external Deno subprocess and the
@@ -63,6 +66,15 @@ Daemon capabilities:
   extension endpoint. Store/config/status paths are derived exclusively from
   the stamped sender and remain under `ExtensionStateStore`. Per-sender queue
   limits keep one extension from consuming the shared worker boundary.
+- Dispatches CLI and authenticated HTTP triggers for WASM extensions as direct,
+  versioned `copper.bus/1` `action-request` messages from the fixed
+  `copper-actions` endpoint. Legacy TypeScript extensions continue through the
+  isolated subprocess adapter until their component ports are complete.
+- Schedules WASM background actions from optional manifest runtime metadata.
+  Copper inspects each extension's scoped config at most once per second,
+  applies the declared enable/interval keys, and records a run only after Bones
+  accepts the action. Host-native polling is skipped for an extension as soon
+  as its WASM schedule becomes authoritative.
 - Filters runtime activation through manifest-declared host platforms and core config disable rules.
 - Routes trigger preparation through a single `ExecutionEngine`, which combines the isolated runtime adapter, host capability registry, and shared state store.
 - Uses a structured runtime ABI (`copper.runtime/1`) and executes trigger preparation through a subprocess runtime worker, so runtime planning is isolated from the daemon process.
@@ -126,6 +138,9 @@ Runtime gating:
 - Optional manifest field `platforms`: restricts runtime activation to `windows`, `macos`, and/or `linux`.
 - Optional manifest object `runtime` selects a versioned WASM Component ABI and
   package-local artifact. Absence retains the legacy TypeScript contract.
+- `runtime.background` may name one declared action plus optional scoped config
+  keys for enablement and interval. `defaultIntervalSeconds` is required and
+  bounded to 1–86,400 seconds.
 - WASM artifacts are identity-bound to the manifest ID and cannot resolve
   outside their package.
 - Config UI still shows platform-restricted extensions so users can inspect settings on any host.
@@ -259,7 +274,7 @@ These must not be broken without a deliberate versioning decision:
 | Schema URL pinned in every manifest | Version drift breaks existing extensions silently |
 | All state flows through `state_store` | No extension writes config/status files directly |
 | HTTP control plane is loopback-only with per-session auth token | No remote attack surface |
-| Trigger preparation runs in a subprocess, not in-process | Failures in runtime planning cannot crash the daemon |
+| Legacy trigger preparation runs in a subprocess; component triggers use targeted Bones messages | Failures stay outside the daemon and one extension cannot receive another extension's action |
 | Cross-platform build must pass on Windows, macOS, and Linux | Platform-specific code goes behind `#[cfg]` or target sections in Cargo.toml |
 | No mandatory GUI dependency in headless build path | CI must build without a display server |
 | Bones sender identity is the capability principal | Guest payloads cannot select or impersonate an extension identity |
@@ -267,10 +282,9 @@ These must not be broken without a deliberate versioning decision:
 
 ## 12. Known Gaps vs Full Target Architecture
 
-- Deno permissions and host dispatch checks reduce the current TypeScript
-  runtime's ambient access, but the replacement still needs sender-authorized,
-  deny-by-default Bones capability modules.
-- Bones WASM execution and on-demand `wry` presentation are not integrated yet.
+- Legacy TypeScript execution remains as compatibility scaffolding until the
+  shipped extension ports are complete.
+- On-demand Bones `wry` presentation is not integrated yet.
 - Safe Input Key registers its saved hotkey through the daemon on Windows; richer cross-platform global hotkey behavior is still roadmap work.
 - Some shipped extensions are still intentionally host-native or hybrid rather than purely TypeScript-executed; that ownership is now centralized in `host_extensions.rs` as explicit host capabilities.
 

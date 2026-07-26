@@ -5,11 +5,16 @@ mod tests {
         request_url, send_request, write_json_object, DaemonConfig, DaemonState, IpcRequest,
         DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS, WINDOWS_DISPLAY_MANAGER_ID,
     };
+    use crate::bones_integration::{
+        CopperEnvelope, COPPER_ACTION_SENDER, COPPER_BUS_PROTOCOL_V1,
+    };
     use crate::daemon_service::DaemonControlService;
+    use crate::descriptor::COMPONENT_ABI_V1;
+    use bones_bus::Respond;
     use std::fs;
     use std::net::TcpListener;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::AtomicBool;
+    use std::sync::{atomic::AtomicBool, Arc, Mutex};
     use std::time::Duration;
     use tempfile::tempdir;
     use tiny_http::{Response as HttpResponse, Server};
@@ -43,6 +48,34 @@ mod tests {
             "export default function(){ return {}; }",
         )
         .expect("write main.ts");
+    }
+
+    fn write_component_extension(root: &Path, id: &str, action_id: &str) {
+        let ext = root.join(id);
+        fs::create_dir_all(&ext).expect("create extension directory");
+        fs::write(
+            ext.join("manifest.json"),
+            format!(
+                r#"{{
+                    "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+                    "id": "{id}",
+                    "name": "Test Component",
+                    "version": "1.0.0",
+                    "trigger": "test",
+                    "permissions": ["store"],
+                    "runtime": {{
+                        "kind": "wasm-component",
+                        "abi": "{COMPONENT_ABI_V1}",
+                        "artifact": "{id}.wasm"
+                    }},
+                    "actions": [
+                        {{ "id": "{action_id}", "label": "Run", "script": "run" }}
+                    ]
+                }}"#
+            ),
+        )
+        .expect("write descriptor");
+        fs::write(ext.join(format!("{id}.wasm")), b"\0asm").expect("write component");
     }
 
     fn write_windows_display_extension(root: &Path) {
@@ -316,6 +349,52 @@ mod tests {
     }
 
     #[test]
+    fn trigger_request_dispatches_wasm_component_through_bones() {
+        let temp = tempdir().expect("tempdir");
+        write_component_extension(temp.path(), "wasm-control", "run");
+        let mut state = DaemonState::load(temp.path()).expect("state");
+        let capture = ActionCapture::default();
+        state
+            .bones
+            .insert_test_responder("wasm-control", Arc::new(capture.clone()));
+
+        let response = handle_request(
+            &mut state,
+            IpcRequest::Trigger {
+                id: "wasm-control".to_string(),
+                action: Some("run".to_string()),
+            },
+            &AtomicBool::new(true),
+        );
+
+        assert!(response.ok);
+        let data = response.data.expect("payload");
+        assert_eq!(
+            data.get("runtime")
+                .and_then(|runtime| runtime.get("executor"))
+                .and_then(|value| value.as_str()),
+            Some("bones")
+        );
+        assert_eq!(
+            data.get("permissions").and_then(|value| value.as_array()),
+            Some(&vec![serde_json::json!("store")])
+        );
+        assert_eq!(capture.last_sender().as_deref(), Some(COPPER_ACTION_SENDER));
+        assert!(matches!(
+            serde_json::from_slice(&capture.last_payload().expect("action payload"))
+                .expect("action envelope"),
+            CopperEnvelope::ActionRequest {
+                protocol,
+                action_id,
+                input,
+                ..
+            } if protocol == COPPER_BUS_PROTOCOL_V1
+                && action_id == "run"
+                && input["source"] == serde_json::json!("control-plane")
+        ));
+    }
+
+    #[test]
     fn trigger_request_session_counter_succeeds() {
         let temp = tempdir().expect("tempdir");
         write_extension_with_action(temp.path(), "session-counter", "increment");
@@ -335,6 +414,30 @@ mod tests {
             data.get("actionId").and_then(|v| v.as_str()),
             Some("increment")
         );
+    }
+
+    #[derive(Clone, Default)]
+    struct ActionCapture {
+        payload: Arc<Mutex<Option<Vec<u8>>>>,
+        sender: Arc<Mutex<Option<String>>>,
+    }
+
+    impl ActionCapture {
+        fn last_payload(&self) -> Option<Vec<u8>> {
+            self.payload.lock().ok()?.clone()
+        }
+
+        fn last_sender(&self) -> Option<String> {
+            self.sender.lock().ok()?.clone()
+        }
+    }
+
+    impl Respond for ActionCapture {
+        fn respond(&self, sender: &str, payload: &[u8]) -> Option<Vec<u8>> {
+            *self.sender.lock().ok()? = Some(sender.to_string());
+            *self.payload.lock().ok()? = Some(payload.to_vec());
+            Some(Vec::new())
+        }
     }
 
     #[test]

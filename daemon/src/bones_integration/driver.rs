@@ -1,7 +1,7 @@
 use super::jobs::{CapabilityWorker, CompletedCapabilityJob, SubmitError, COPPER_JOB_SENDER};
 use super::{
     CopperCapabilityHandle, CopperCapabilityModule, CopperControlHandle, CopperControlModule,
-    CopperLifecycleState,
+    CopperEnvelope, CopperLifecycleState, COPPER_BUS_PROTOCOL_V1,
 };
 use crate::extension::Registry;
 use crate::state_store::ExtensionStateStore;
@@ -15,6 +15,7 @@ use std::time::Duration;
 
 type CatalogSnapshot = BTreeMap<String, PathBuf>;
 const MAX_JOB_PUMP_PER_STEP: usize = 32;
+pub const COPPER_ACTION_SENDER: &str = "copper-actions";
 
 struct CopperBonesLogSink;
 
@@ -47,7 +48,19 @@ pub struct BonesRuntimeStatus {
     pub capability_completed: u64,
     pub capability_failed: u64,
     pub capability_delivery_failures: u64,
+    pub actions_dispatched: u64,
+    pub action_dispatch_failures: u64,
     pub shutdown: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BonesActionDispatch {
+    pub extension_id: String,
+    pub action_id: String,
+    pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<CopperEnvelope>,
 }
 
 /// Single-threaded, step-driven Bones engine owned by the Copper daemon.
@@ -63,6 +76,9 @@ pub struct BonesDaemonDriver {
     capability_completed: u64,
     capability_failed: u64,
     capability_delivery_failures: u64,
+    next_action_id: u64,
+    actions_dispatched: u64,
+    action_dispatch_failures: u64,
     shutdown: bool,
 }
 
@@ -86,6 +102,9 @@ impl BonesDaemonDriver {
             capability_completed: 0,
             capability_failed: 0,
             capability_delivery_failures: 0,
+            next_action_id: 0,
+            actions_dispatched: 0,
+            action_dispatch_failures: 0,
             shutdown: false,
         })
     }
@@ -146,8 +165,111 @@ impl BonesDaemonDriver {
             capability_completed: self.capability_completed,
             capability_failed: self.capability_failed,
             capability_delivery_failures: self.capability_delivery_failures,
+            actions_dispatched: self.actions_dispatched,
+            action_dispatch_failures: self.action_dispatch_failures,
             shutdown: self.shutdown,
         }
+    }
+
+    pub fn dispatch_action(
+        &mut self,
+        extension_id: &str,
+        action_id: &str,
+        input: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<BonesActionDispatch, String> {
+        if self.shutdown {
+            return Err("cannot dispatch an action after Bones shutdown".to_string());
+        }
+        if !self.catalog.contains_key(extension_id) {
+            return Err(format!(
+                "extension '{extension_id}' is not an active Copper WASM component"
+            ));
+        }
+        self.next_action_id = self.next_action_id.saturating_add(1);
+        let request_id = format!("action-{}", self.next_action_id);
+        let envelope = CopperEnvelope::ActionRequest {
+            protocol: COPPER_BUS_PROTOCOL_V1.to_string(),
+            request_id: request_id.clone(),
+            action_id: action_id.to_string(),
+            input,
+        };
+        let payload = match serde_json::to_vec(&envelope) {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.action_dispatch_failures = self.action_dispatch_failures.saturating_add(1);
+                return Err(format!("failed to encode action request: {error}"));
+            }
+        };
+        let response =
+            match self
+                .engine
+                .supervisor
+                .registry
+                .call(COPPER_ACTION_SENDER, extension_id, &payload)
+            {
+                Ok(response) if response.is_empty() => None,
+                Ok(response) => {
+                    let envelope = match serde_json::from_slice::<CopperEnvelope>(&response) {
+                        Ok(envelope) => envelope,
+                        Err(error) => {
+                            self.action_dispatch_failures =
+                                self.action_dispatch_failures.saturating_add(1);
+                            return Err(format!("extension returned an invalid response: {error}"));
+                        }
+                    };
+                    if envelope_protocol(&envelope) != COPPER_BUS_PROTOCOL_V1 {
+                        self.action_dispatch_failures =
+                            self.action_dispatch_failures.saturating_add(1);
+                        return Err("extension returned a mismatched response protocol".to_string());
+                    }
+                    if envelope_request_id(&envelope) != Some(request_id.as_str()) {
+                        self.action_dispatch_failures =
+                            self.action_dispatch_failures.saturating_add(1);
+                        return Err(
+                            "extension returned a mismatched response request ID".to_string()
+                        );
+                    }
+                    if let CopperEnvelope::Error { code, message, .. } = &envelope {
+                        self.action_dispatch_failures =
+                            self.action_dispatch_failures.saturating_add(1);
+                        return Err(format!("extension rejected action [{code}]: {message}"));
+                    }
+                    if !matches!(
+                        &envelope,
+                        CopperEnvelope::JobAccepted { .. } | CopperEnvelope::JobResult { .. }
+                    ) {
+                        self.action_dispatch_failures =
+                            self.action_dispatch_failures.saturating_add(1);
+                        return Err(
+                            "extension returned an invalid action response kind".to_string()
+                        );
+                    }
+                    Some(envelope)
+                }
+                Err(error) => {
+                    self.action_dispatch_failures = self.action_dispatch_failures.saturating_add(1);
+                    return Err(format!("failed to dispatch action: {error:?}"));
+                }
+            };
+        self.actions_dispatched = self.actions_dispatched.saturating_add(1);
+        Ok(BonesActionDispatch {
+            extension_id: extension_id.to_string(),
+            action_id: action_id.to_string(),
+            request_id,
+            response,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_test_responder(
+        &mut self,
+        extension_id: &str,
+        responder: Arc<dyn bones_bus::Respond>,
+    ) {
+        self.engine
+            .supervisor
+            .registry
+            .insert(extension_id, responder);
     }
 
     fn pump_capability_jobs(&mut self) {
@@ -208,6 +330,26 @@ impl BonesDaemonDriver {
     }
 }
 
+fn envelope_protocol(envelope: &CopperEnvelope) -> &str {
+    match envelope {
+        CopperEnvelope::ActionRequest { protocol, .. }
+        | CopperEnvelope::CapabilityRequest { protocol, .. }
+        | CopperEnvelope::JobAccepted { protocol, .. }
+        | CopperEnvelope::JobResult { protocol, .. }
+        | CopperEnvelope::Error { protocol, .. } => protocol,
+    }
+}
+
+fn envelope_request_id(envelope: &CopperEnvelope) -> Option<&str> {
+    match envelope {
+        CopperEnvelope::ActionRequest { request_id, .. }
+        | CopperEnvelope::CapabilityRequest { request_id, .. }
+        | CopperEnvelope::JobAccepted { request_id, .. }
+        | CopperEnvelope::JobResult { request_id, .. } => Some(request_id),
+        CopperEnvelope::Error { request_id, .. } => request_id.as_deref(),
+    }
+}
+
 fn build_engine(
     registry: &Registry,
     control_module: CopperControlModule,
@@ -260,7 +402,7 @@ impl Drop for BonesDaemonDriver {
 
 #[cfg(test)]
 mod tests {
-    use super::{BonesDaemonDriver, COPPER_JOB_SENDER};
+    use super::{BonesDaemonDriver, COPPER_ACTION_SENDER, COPPER_JOB_SENDER};
     use crate::bones_integration::{
         CopperEnvelope, CopperLifecycleState, COPPER_BUS_PROTOCOL_V1, COPPER_CAPABILITY_ENDPOINT,
     };
@@ -406,6 +548,100 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn driver_dispatches_versioned_actions_to_one_target_component() {
+        let temp = tempdir().expect("tempdir");
+        write_component_extension(temp.path(), "action-component");
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+        let mut driver = BonesDaemonDriver::new(&registry, store).expect("driver");
+        let capture = Capture::default();
+        driver
+            .engine
+            .supervisor
+            .registry
+            .insert("action-component", Arc::new(capture.clone()));
+
+        let dispatch = driver
+            .dispatch_action(
+                "action-component",
+                "run",
+                serde_json::Map::from_iter([("source".to_string(), serde_json::json!("cli"))]),
+            )
+            .expect("dispatch");
+
+        assert_eq!(dispatch.extension_id, "action-component");
+        assert_eq!(dispatch.action_id, "run");
+        assert_eq!(capture.last_sender().as_deref(), Some(COPPER_ACTION_SENDER));
+        assert!(matches!(
+            serde_json::from_slice(&capture.last().expect("action request"))
+                .expect("request envelope"),
+            CopperEnvelope::ActionRequest {
+                protocol,
+                action_id,
+                input,
+                ..
+            } if protocol == COPPER_BUS_PROTOCOL_V1
+                && action_id == "run"
+                && input["source"] == serde_json::json!("cli")
+        ));
+        assert_eq!(driver.status().actions_dispatched, 1);
+        assert_eq!(driver.status().action_dispatch_failures, 0);
+    }
+
+    #[test]
+    fn driver_rejects_wrong_action_response_kinds() {
+        let temp = tempdir().expect("tempdir");
+        write_component_extension(temp.path(), "action-component");
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+        let mut driver = BonesDaemonDriver::new(&registry, store).expect("driver");
+        let response = serde_json::to_vec(&CopperEnvelope::ActionRequest {
+            protocol: COPPER_BUS_PROTOCOL_V1.to_string(),
+            request_id: "action-1".to_string(),
+            action_id: "nested".to_string(),
+            input: serde_json::Map::new(),
+        })
+        .expect("response");
+        driver.engine.supervisor.registry.insert(
+            "action-component",
+            Arc::new(Capture::with_response(response)),
+        );
+
+        let error = driver
+            .dispatch_action("action-component", "run", serde_json::Map::new())
+            .expect_err("wrong response kind");
+        assert!(error.contains("invalid action response kind"));
+        assert_eq!(driver.status().actions_dispatched, 0);
+        assert_eq!(driver.status().action_dispatch_failures, 1);
+    }
+
+    #[test]
+    fn driver_rejects_action_responses_for_another_request() {
+        let temp = tempdir().expect("tempdir");
+        write_component_extension(temp.path(), "action-component");
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+        let mut driver = BonesDaemonDriver::new(&registry, store).expect("driver");
+        let response = serde_json::to_vec(&CopperEnvelope::JobAccepted {
+            protocol: COPPER_BUS_PROTOCOL_V1.to_string(),
+            request_id: "stale-request".to_string(),
+            job_id: "job-1".to_string(),
+        })
+        .expect("response");
+        driver.engine.supervisor.registry.insert(
+            "action-component",
+            Arc::new(Capture::with_response(response)),
+        );
+
+        let error = driver
+            .dispatch_action("action-component", "run", serde_json::Map::new())
+            .expect_err("mismatched response");
+        assert!(error.contains("mismatched response request ID"));
+        assert_eq!(driver.status().actions_dispatched, 0);
+        assert_eq!(driver.status().action_dispatch_failures, 1);
+    }
+
     fn write_component_extension(parent: &Path, id: &str) {
         write_component_extension_with_permissions(parent, id, &[]);
     }
@@ -441,9 +677,17 @@ mod tests {
     struct Capture {
         payloads: Arc<Mutex<Vec<Vec<u8>>>>,
         senders: Arc<Mutex<Vec<String>>>,
+        response: Arc<Mutex<Option<Vec<u8>>>>,
     }
 
     impl Capture {
+        fn with_response(response: Vec<u8>) -> Self {
+            Self {
+                response: Arc::new(Mutex::new(Some(response))),
+                ..Self::default()
+            }
+        }
+
         fn last(&self) -> Option<Vec<u8>> {
             self.payloads.lock().ok()?.last().cloned()
         }
@@ -457,7 +701,7 @@ mod tests {
         fn respond(&self, sender: &str, payload: &[u8]) -> Option<Vec<u8>> {
             self.senders.lock().ok()?.push(sender.to_string());
             self.payloads.lock().ok()?.push(payload.to_vec());
-            Some(Vec::new())
+            Some(self.response.lock().ok()?.clone().unwrap_or_default())
         }
     }
 }

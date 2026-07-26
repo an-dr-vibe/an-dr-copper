@@ -1,6 +1,5 @@
 use super::{DaemonError, DaemonState, IpcRequest, IpcResponse};
 use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
-use crate::daemon_service::DaemonControlService;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -136,22 +135,16 @@ pub(super) fn handle_request(
     ipc_request: IpcRequest,
     running: &AtomicBool,
 ) -> Result<IpcResponse, DaemonError> {
-    let service = DaemonControlService::new(
-        &state.user_extensions_dir,
-        state.core_extensions_dir.as_deref(),
-        &state.registry,
-        &state.host_extensions,
-        &state.state_store,
-        state.bones.status(),
-    );
     Ok(match ipc_request {
-        IpcRequest::Health => match service.health_payload() {
+        IpcRequest::Health => match state.control_service().health_payload() {
             Ok(data) => IpcResponse::ok("daemon alive", Some(data)),
             Err(message) => IpcResponse::err(message),
         },
-        IpcRequest::List => IpcResponse::ok("extensions listed", Some(service.list_payload())),
-        IpcRequest::Trigger { id, action } => match service.trigger_payload(&id, action.as_deref())
-        {
+        IpcRequest::List => IpcResponse::ok(
+            "extensions listed",
+            Some(state.control_service().list_payload()),
+        ),
+        IpcRequest::Trigger { id, action } => match state.trigger_payload(&id, action.as_deref()) {
             Ok(data) => IpcResponse::ok("trigger prepared", Some(data)),
             Err(message) => IpcResponse::err(message),
         },
@@ -162,7 +155,7 @@ pub(super) fn handle_request(
             ),
             Err(err) => IpcResponse::err(err.to_string()),
         },
-        IpcRequest::Verify => match service.verify_registry() {
+        IpcRequest::Verify => match state.control_service().verify_registry() {
             Ok(count) => IpcResponse::ok(
                 format!("verified {count} extension(s)"),
                 Some(serde_json::json!({ "extensionsVerified": count })),

@@ -21,6 +21,22 @@
         "artifact": {
           "type": "string",
           "pattern": "^[a-z0-9-]+\\.wasm$"
+        },
+        "background": {
+          "type": "object",
+          "required": ["action", "defaultIntervalSeconds"],
+          "additionalProperties": false,
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "enabledConfig": { "type": "string", "minLength": 1 },
+            "enabledByDefault": { "type": "boolean" },
+            "intervalSecondsConfig": { "type": "string", "minLength": 1 },
+            "defaultIntervalSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            }
+          }
         }
       }
     },
