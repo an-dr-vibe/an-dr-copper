@@ -19,7 +19,7 @@ Read the relevant recipe before writing any code; don't invent structure.
 |---|---|
 | Step-by-step recipes for every change type | `docs/DEVELOPMENT.md` |
 | Build commands, state file locations, key source files | `docs/DEVELOPMENT.md` |
-| TypeScript API contract for extensions | `sdk/api.d.ts` |
+| WASM Component API contract for extensions | `sdk/COMPONENT_API.md` |
 | Manifest schema (validation rules) | `schemas/extension/1.0.0/descriptor.schema.json` |
 | Architecture overview (module layout, why things are where they are) | `docs/ARCHITECTURE.md` |
 

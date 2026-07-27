@@ -255,6 +255,11 @@
             "name": descriptor.name,
             "version": descriptor.version,
             "trigger": descriptor.trigger,
+            "runtime": {
+                "kind": "wasm-component",
+                "abi": "copper.component/1",
+                "artifact": format!("{}.wasm", descriptor.id)
+            },
             "permissions": [],
             "inputs": [{
                 "id": "desktopFolder",
@@ -283,11 +288,8 @@
             serde_json::to_string_pretty(&manifest).expect("descriptor json"),
         )
         .expect("write manifest");
-        fs::write(
-            ext.join("main.ts"),
-            "export default function(){ return { onTrigger(){ return {}; } }; }",
-        )
-        .expect("write main.ts");
+        fs::write(ext.join(format!("{}.wasm", descriptor.id)), b"\0asm")
+            .expect("write component");
     }
 
     fn parse_http_url(url: &str) -> String {
@@ -610,7 +612,7 @@
     }
 
     #[test]
-    fn build_extension_info_hides_commands_without_user_access_path() {
+    fn build_extension_info_exposes_all_component_actions_through_the_local_cli() {
         let state = sample_state();
         let descriptor = state.descriptors[0].clone();
         let info = super::build_extension_info(&state, &descriptor).expect("info");
@@ -624,7 +626,11 @@
             .get("commands")
             .and_then(|value| value.as_array())
             .expect("commands array");
-        assert!(commands.is_empty());
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0]["usage"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("copperd trigger desktop-torrent-organizer --action move-torrents"));
     }
 
     #[test]
@@ -725,7 +731,7 @@
         assert!(status_usage[0]
             .as_str()
             .unwrap_or_default()
-            .contains("copperd daemon trigger windows-display-manager --action status"));
+            .contains("copperd trigger windows-display-manager --action status"));
 
         let set_resolution_command = commands
             .iter()

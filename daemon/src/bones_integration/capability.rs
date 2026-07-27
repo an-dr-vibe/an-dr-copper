@@ -272,7 +272,6 @@ impl Module for CopperCapabilityModule {
 pub(crate) fn build_policies(registry: &Registry) -> CapabilityPolicies {
     registry
         .list()
-        .filter(|extension| extension.wasm_component_path().is_some())
         .map(|extension| {
             (
                 extension.descriptor.id.clone(),
@@ -349,10 +348,9 @@ mod tests {
     }
 
     #[test]
-    fn undeclared_unknown_and_legacy_senders_are_denied() {
+    fn undeclared_and_unknown_senders_are_denied() {
         let temp = tempdir().expect("tempdir");
         write_component(temp.path(), "restricted", &[]);
-        write_legacy(temp.path(), "legacy", &["fs"]);
         let registry = Registry::load_from_dir(temp.path()).expect("registry");
         let (mut module, handle) = CopperCapabilityModule::new(&registry);
 
@@ -372,11 +370,7 @@ mod tests {
             ),
             "unknown-sender",
         );
-        assert_error(
-            respond(&mut module, "legacy", capability_request("request-3", "fs")),
-            "unknown-sender",
-        );
-        assert_eq!(handle.rejected_count(), 3);
+        assert_eq!(handle.rejected_count(), 2);
         assert_eq!(handle.pending_count(), 0);
     }
 
@@ -606,15 +600,6 @@ mod tests {
     fn write_component(parent: &Path, id: &str, permissions: &[&str]) {
         write_manifest(parent, id, permissions, true);
         fs::write(parent.join(id).join(format!("{id}.wasm")), b"\0asm").expect("component");
-    }
-
-    fn write_legacy(parent: &Path, id: &str, permissions: &[&str]) {
-        write_manifest(parent, id, permissions, false);
-        fs::write(
-            parent.join(id).join("main.ts"),
-            "export default function(){}",
-        )
-        .expect("main.ts");
     }
 
     fn write_manifest(parent: &Path, id: &str, permissions: &[&str], component: bool) {

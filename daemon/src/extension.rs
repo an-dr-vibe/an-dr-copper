@@ -12,20 +12,12 @@ use walkdir::WalkDir;
 pub struct Extension {
     pub root: PathBuf,
     pub descriptor: Descriptor,
-    pub main_ts_path: PathBuf,
-    #[serde(default)]
-    pub wasm_component_path: Option<PathBuf>,
+    pub wasm_component_path: PathBuf,
 }
 
 impl Extension {
-    pub fn wasm_component_path(&self) -> Option<&Path> {
-        self.wasm_component_path.as_deref()
-    }
-
     pub fn runtime_artifact_path(&self) -> &Path {
-        self.wasm_component_path
-            .as_deref()
-            .unwrap_or(&self.main_ts_path)
+        &self.wasm_component_path
     }
 }
 
@@ -77,7 +69,6 @@ impl Registry {
                 }
                 let folder = entry.into_path();
                 let descriptor_path = folder.join("manifest.json");
-                let main_ts_path = folder.join("main.ts");
                 if !descriptor_path.exists() {
                     continue;
                 }
@@ -115,24 +106,18 @@ impl Registry {
                                 descriptor.id
                             )));
                         }
-                        Some(artifact_path)
+                        artifact_path
                     }
-                    None => {
-                        if !main_ts_path.exists() {
-                            return Err(ExtensionError::MissingFile(format!(
-                                "{} does not contain main.ts",
-                                folder.display()
-                            )));
-                        }
-                        None
-                    }
+                    None => return Err(ExtensionError::InvalidArtifact(format!(
+                        "extension {} must declare a wasm-component runtime; TypeScript compatibility was removed",
+                        descriptor.id
+                    ))),
                 };
                 entries.insert(
                     descriptor.id.clone(),
                     Extension {
                         root: folder,
                         descriptor,
-                        main_ts_path,
                         wasm_component_path,
                     },
                 );
@@ -285,6 +270,11 @@ mod tests {
                 "name": "Sort Downloads",
                 "version": "1.0.0",
                 "trigger": "sort-dl",
+                "runtime": {
+                    "kind": "wasm-component",
+                    "abi": "copper.component/1",
+                    "artifact": "sort-downloads.wasm"
+                },
                 "permissions": ["fs"],
                 "actions": [
                     { "id": "sort", "label": "Sort by extension", "script": "return;" }
@@ -292,11 +282,7 @@ mod tests {
             }"#,
         )
         .expect("write descriptor");
-        fs::write(
-            ext_dir.join("main.ts"),
-            "export default function(){ return {}; }",
-        )
-        .expect("write main.ts");
+        fs::write(ext_dir.join("sort-downloads.wasm"), b"\0asm").expect("write component");
 
         let registry = Registry::load_from_dir(temp.path()).expect("load registry");
         let extension = registry.get("sort-downloads").expect("extension exists");
@@ -321,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn fails_if_descriptor_exists_without_main_ts() {
+    fn fails_if_descriptor_omits_component_runtime() {
         let temp = tempdir().expect("tempdir");
         let ext_dir = temp.path().join("broken-ext");
         fs::create_dir_all(&ext_dir).expect("create extension dir");
@@ -340,9 +326,11 @@ mod tests {
         )
         .expect("write descriptor");
 
-        let error = Registry::load_from_dir(temp.path()).expect_err("should fail without main.ts");
+        let error = Registry::load_from_dir(temp.path()).expect_err("should require runtime");
         match error {
-            ExtensionError::MissingFile(message) => assert!(message.contains("main.ts")),
+            ExtensionError::InvalidArtifact(message) => {
+                assert!(message.contains("must declare a wasm-component runtime"))
+            }
             other => panic!("unexpected error: {other}"),
         }
     }
@@ -363,15 +351,12 @@ mod tests {
                 "name": "Core Extension",
                 "version": "1.0.0",
                 "trigger": "core",
+                "runtime": {"kind":"wasm-component","abi":"copper.component/1","artifact":"same-id.wasm"},
                 "actions": [{ "id": "run", "label": "Run", "script": "return;" }]
             }"#,
         )
         .expect("core descriptor");
-        fs::write(
-            core_root.join("same-id/main.ts"),
-            "export default function(){}",
-        )
-        .expect("core main");
+        fs::write(core_root.join("same-id/same-id.wasm"), b"\0asm").expect("core component");
 
         fs::write(
             user_root.join("same-id/manifest.json"),
@@ -381,15 +366,12 @@ mod tests {
                 "name": "User Extension",
                 "version": "1.0.0",
                 "trigger": "user",
+                "runtime": {"kind":"wasm-component","abi":"copper.component/1","artifact":"same-id.wasm"},
                 "actions": [{ "id": "run", "label": "Run", "script": "return;" }]
             }"#,
         )
         .expect("user descriptor");
-        fs::write(
-            user_root.join("same-id/main.ts"),
-            "export default function(){}",
-        )
-        .expect("user main");
+        fs::write(user_root.join("same-id/same-id.wasm"), b"\0asm").expect("user component");
 
         let registry =
             Registry::load_from_dirs([core_root.as_path(), user_root.as_path()]).expect("registry");
@@ -472,15 +454,13 @@ mod tests {
                 "name": "Bundled Extension",
                 "version": "1.0.0",
                 "trigger": "bundle",
+                "runtime": {"kind":"wasm-component","abi":"copper.component/1","artifact":"same-id.wasm"},
                 "actions": [{ "id": "run", "label": "Run", "script": "return;" }]
             }"#,
         )
         .expect("write bundled descriptor");
-        fs::write(
-            bundled_root.join("same-id").join("main.ts"),
-            "export default function(){}",
-        )
-        .expect("write bundled main");
+        fs::write(bundled_root.join("same-id").join("same-id.wasm"), b"\0asm")
+            .expect("write bundled component");
 
         fs::write(
             workspace_root.join("same-id").join("manifest.json"),
@@ -490,15 +470,16 @@ mod tests {
                 "name": "Workspace Extension",
                 "version": "1.0.0",
                 "trigger": "workspace",
+                "runtime": {"kind":"wasm-component","abi":"copper.component/1","artifact":"same-id.wasm"},
                 "actions": [{ "id": "run", "label": "Run", "script": "return;" }]
             }"#,
         )
         .expect("write workspace descriptor");
         fs::write(
-            workspace_root.join("same-id").join("main.ts"),
-            "export default function(){}",
+            workspace_root.join("same-id").join("same-id.wasm"),
+            b"\0asm",
         )
-        .expect("write workspace main");
+        .expect("write workspace component");
 
         let roots = core_extension_roots_from_exe_dir(&exe_dir);
         let registry =
@@ -562,6 +543,11 @@ mod tests {
                     "name": "Test Extension",
                     "version": "1.0.0",
                     "trigger": "test",
+                    "runtime": {{
+                        "kind": "wasm-component",
+                        "abi": "copper.component/1",
+                        "artifact": "{id}.wasm"
+                    }},
                     {platforms_json}
                     "actions": [
                         {{ "id": "run", "label": "Run", "script": "return;" }}
@@ -570,11 +556,7 @@ mod tests {
             ),
         )
         .expect("write descriptor");
-        fs::write(
-            ext_dir.join("main.ts"),
-            "export default function(){ return {}; }",
-        )
-        .expect("write main.ts");
+        fs::write(ext_dir.join(format!("{id}.wasm")), b"\0asm").expect("write component");
     }
 
     fn other_platform() -> Platform {

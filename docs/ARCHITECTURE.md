@@ -10,9 +10,8 @@ AI-authored extensions.
 
 The current runtime is a long-running Rust daemon with an embedded Bones
 engine. Extensions are manifest-first (`manifest.json`) with a minimal API
-contract and schema validation. Every shipped extension runs as a WASM
-Component; Deno-backed TypeScript remains available only for external
-compatibility packages during the migration. See
+contract and schema validation. Every extension runs as a WASM Component;
+runtime-less compatibility packages are rejected by the registry. See
 `docs/BONES_MIGRATION_PLAN.md`.
 
 ## 2. Process Model
@@ -31,7 +30,7 @@ Current implementation status:
   per-extension Bones lifecycle state through daemon health.
 - Implemented: always-on daemon, extension registry loading, authenticated HTTP
   control plane, runtime-selected trigger dispatch, scheduled
-  reload/background actions, descriptor validation, skeleton generation, local
+  reload/background actions, descriptor validation, Component scaffolding, local
   config UI (`ui open`), and main tray icon UI launch on Windows.
 - Implemented: an on-demand Bones web/Wry settings presentation with
   manifest-driven extension pages, optional manifest-defined tabs, and a
@@ -42,9 +41,8 @@ Current implementation status:
   `ui open` uses the same presentation composition. An explicit
   `ui open --browser` fallback retains a temporary, authenticated loopback
   server without making UI HTTP part of the daemon lifecycle.
-- Implemented: Component action execution through Bones plus temporary
-  TypeScript action execution through an external Deno subprocess and the host
-  JSON-RPC bridge in `sdk/bridge.ts`.
+- Implemented: Component action execution through Bones for CLI, authenticated
+  control-plane, background, and settings-UI triggers.
 - Implemented: a Rust `copper.component/1` guest SDK with generated Bones WIT
   bindings, sender validation, asynchronous capability helpers, a scaffold,
   locked `wasm32-wasip2` builds, and deterministic extension archives.
@@ -66,7 +64,8 @@ Daemon capabilities:
   - user directory `~/.Copper/extensions`
   - user extensions override same-id core extensions
 - Validates extension manifests against versioned schema.
-- Runs reload cadence and host background polling through a dedicated `DaemonScheduler`.
+- Runs reload cadence and manifest-driven Component background schedules
+  through a dedicated `DaemonScheduler`.
 - Advances a headless Bones engine from the daemon event loop, maps
   disabled/platform policy to the Bones startup allow-list, observes catalog
   and lifecycle state, and performs orderly Bones shutdown with the daemon.
@@ -83,20 +82,15 @@ Daemon capabilities:
   limits keep one extension from consuming the shared worker boundary.
 - Dispatches CLI and authenticated HTTP triggers for WASM extensions as direct,
   versioned `copper.bus/1` `action-request` messages from the fixed
-  `copper-actions` endpoint. External legacy TypeScript extensions continue
-  through the isolated subprocess adapter until the final cutover removes it.
+  `copper-actions` endpoint.
 - Schedules WASM background actions from optional manifest runtime metadata.
   Copper inspects each extension's scoped config at most once per second,
   applies the declared enable/interval keys, and records a run only after Bones
-  accepts the action. Host-native polling is skipped for an extension as soon
-  as its WASM schedule becomes authoritative.
+  accepts the action.
 - Filters runtime activation through manifest-declared host platforms and core config disable rules.
-- Routes trigger preparation through a single `ExecutionEngine`, which combines the isolated runtime adapter, host capability registry, and shared state store.
-- Uses a structured runtime ABI (`copper.runtime/1`) and executes trigger preparation through a subprocess runtime worker, so runtime planning is isolated from the daemon process.
-- Executes the prepared TypeScript entrypoint in a separate Deno process. The
-  process may read only its own entrypoint and the bridge checks manifest
-  permissions before dispatching protected host API methods. The replacement
-  Bones capability boundary retains and strengthens this policy.
+- Resolves actions from the validated manifest, then dispatches versioned
+  requests through Bones. Native capabilities re-authorize the host-stamped
+  sender against that manifest before doing work.
 - Routes daemon IPC request policy through a dedicated `DaemonControlService` so transport handling stays separate from registry/runtime/state orchestration.
 - Routes config UI information and apply workflows through a dedicated
   `config_ui_service` layer shared by native Bones messages and browser
@@ -137,14 +131,6 @@ Extension folder:
 ```text
 <extension>/
 |- manifest.json
-`- main.ts              # compatibility runtime when manifest.runtime is absent
-```
-
-or:
-
-```text
-<extension>/
-|- manifest.json
 `- <extension-id>.wasm  # runtime.kind = "wasm-component"
 ```
 
@@ -155,8 +141,9 @@ Schema source:
 Runtime gating:
 
 - Optional manifest field `platforms`: restricts runtime activation to `windows`, `macos`, and/or `linux`.
-- Optional manifest object `runtime` selects a versioned WASM Component ABI and
-  package-local artifact. Absence retains the legacy TypeScript contract.
+- Manifest object `runtime` selects the versioned WASM Component ABI and
+  package-local artifact. Schema 1.0 still parses an omitted field for document
+  compatibility, but the runtime registry rejects such packages.
 - `runtime.background` may name one declared action plus optional scoped config
   keys for enablement and interval. `defaultIntervalSeconds` is required and
   bounded to 1–86,400 seconds.
@@ -166,8 +153,7 @@ Runtime gating:
 
 Type contract for AI generation:
 
-- Components: `sdk/COMPONENT_API.md`, `sdk/rust`, and `sdk/wit/core.wit`
-- Temporary TypeScript compatibility: `sdk/api.d.ts`
+- `sdk/COMPONENT_API.md`, `sdk/rust`, and `sdk/wit/core.wit`
 
 ## 5. Repository Layout
 
@@ -215,15 +201,15 @@ Module sizing guideline:
 
 ## 6. Host API Surface
 
-Each module lives in `daemon/src/api/<name>.rs` and has a matching entry in `sdk/api.d.ts`.
-Adding a module requires 5 touch-points — see `agents/developer.md`.
+Native operations live under `daemon/src/api/` and are exposed to Components
+through the versioned capability protocol and `sdk/rust`.
 
 | Module | Permission | Keyring backend | Status |
 |---|---|---|---|
 | `fs` | `fs` | — | native worker: list/move/delete |
 | `shell` | `shell` | — | native worker: direct executable/args and lookup |
 | `notify` | — | — | native worker: platform notification |
-| `ui` | `ui` | — | native worker route; presentation remains placeholder until M4 |
+| `ui` | `ui` | — | native worker route into Bones web/Wry presentation |
 | `store` | `store` | — | native worker: scoped store/config/status |
 | `keyboard` | `keyboard` | — | native worker: normalization and platform input |
 | `secure_store` | `secure-store` | Windows Credential Manager / GNOME SecretService / macOS Keychain | native worker: get/set/delete |
@@ -232,9 +218,8 @@ Adding a module requires 5 touch-points — see `agents/developer.md`.
 `secure_store` uses the `keyring` crate (`v3`, features `windows-native apple-native linux-native`).
 `keyboard.typeText` uses host input on Windows; the other input functions retain
 their current platform behavior. The additive `windows-display` permission
-separates display mutation from generic UI access. UI calls already cross the
-authorized asynchronous boundary, but their placeholder host sink is replaced
-by Bones web/wry presentation in M4.
+separates display mutation from generic UI access. UI calls cross the
+authorized asynchronous boundary into the Bones web/Wry presentation.
 
 ## 8. CLI Surface
 
@@ -244,7 +229,6 @@ Local utility commands:
 - `list`
 - `verify`
 - `trigger`
-- `generate-main`
 - `doctor`
 - `run`
 - `ui open`
@@ -285,7 +269,9 @@ for ($i = 1; $i -le 3; $i++) {
 
 Release packaging:
 
-- `./scripts/build-release.ps1` builds `copperd`, creates `dist/release/copper-<host-triple>/` with `extensions/`, and publishes per-extension archives in `extensions-published/`.
+- `./scripts/build-release.ps1` builds `copper`, creates
+  `dist/release/copper-<host-triple>/` with schemas, UI, and `extensions/`, and
+  publishes per-extension archives in `extensions-published/`.
 
 ## 11. Design Invariants
 
@@ -305,12 +291,11 @@ These must not be broken without a deliberate versioning decision:
 
 ## 12. Known Gaps vs Full Target Architecture
 
-- Legacy TypeScript execution remains as compatibility scaffolding until the
-  shipped extension ports are complete.
 - The explicit browser fallback still uses the temporary authenticated UI
   server; the default native path uses only Bones messages.
 - Safe Input Key registers its saved hotkey through the daemon on Windows; richer cross-platform global hotkey behavior is still roadmap work.
-- Some shipped extensions are still intentionally host-native or hybrid rather than purely TypeScript-executed; that ownership is now centralized in `host_extensions.rs` as explicit host capabilities.
+- Sensitive and platform-specific operations remain intentionally native
+  Copper capabilities while Components own extension orchestration.
 
 The migration preserves the daemon-first product contract while replacing its
 runtime and presentation implementation.

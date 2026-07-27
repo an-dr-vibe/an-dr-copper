@@ -8,14 +8,14 @@ manifest discovery, native host capabilities, tray integration, and the
 versioned Rust WASM Component SDK are implemented. All five shipped extensions
 run as Components; sensitive keyboard, keychain, hotkey, tray, and Windows
 display work remains in permission-checked native Copper modules. The temporary
-Deno bridge remains only for external compatibility packages until the
-[Bones migration](docs/BONES_MIGRATION_PLAN.md) removes it.
+runtime bridge has been removed; every installable extension declares a
+`copper.component/1` artifact. See the completed
+[Bones migration](docs/BONES_MIGRATION_PLAN.md).
 
 ## Requirements
 
 - Rust toolchain (rustup, cargo, rustc)
 - PowerShell 7+ (`pwsh`)
-- Deno (optional, required only for external `main.ts` compatibility extensions)
 
 ## Quick Start (Cross-Platform PowerShell)
 
@@ -31,7 +31,7 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 # extension settings: ~/.Copper/extensions/<extension-id>/config.json
 # extension status:   ~/.Copper/extensions/<extension-id>/status.json
 ./scripts/daemon.ps1 -Action shutdown
-.\target\release\copperd.exe ui open --extension desktop-torrent-organizer
+.\target\release\copper.exe ui open --extension desktop-torrent-organizer
 ./scripts/run-tests.ps1
 ./scripts/coverage.ps1
 ./scripts/build-debug.ps1
@@ -71,7 +71,8 @@ Installer modes:
 - `./scripts/install.ps1`: copies a released or locally-built Copper bundle into the install directory.
 - `./scripts/install-dev.ps1`: installs only launchers and keeps execution rooted in the repo for simpler development.
 - Both installers create a `copper-start` launcher in the install directory.
-- On Windows, release/source installs also include `copper.exe` as the no-terminal double-click launcher.
+- On Windows, release/source installs use `copper.exe` as the no-terminal
+  executable and CLI entrypoint.
 - `-AutoStart` registers the launcher for the next login. `-NoAutoStart` removes that registration.
 - While the daemon is running, the same login-start preference can also be toggled in the Copper UI on the **Core** settings page.
 
@@ -97,7 +98,6 @@ cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensio
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
 # browser fallback:
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions --browser
-cargo run -p copperd -- generate-main extensions/sort-downloads/manifest.json
 cargo run -p copperd -- run
 cargo run -p copperd -- daemon health --bind-addr 127.0.0.1:4765
 # daemon health reports the on-demand settings endpoint as bones://settings
@@ -108,8 +108,7 @@ cargo run -p copperd -- daemon shutdown --bind-addr 127.0.0.1:4765
 
 - `daemon/` Rust host implementation
 - `schemas/` descriptor schema contract
-- `sdk/` TypeScript compatibility types plus the Rust Component SDK, generated
-  WIT bindings, and authoring template
+- `sdk/` Rust Component SDK, generated WIT bindings, and authoring template
 - `extensions/` Component extension pack (`sort-downloads`, `session-counter`, `desktop-torrent-organizer`, `safe-input-key`, `windows-display-manager`)
 - `scripts/` cross-platform build and verification scripts
 - `docs/` architecture and usage docs
@@ -118,7 +117,7 @@ cargo run -p copperd -- daemon shutdown --bind-addr 127.0.0.1:4765
 
 `./scripts/build-release.ps1` produces a publishable bundle in `dist/release`:
 
-- `dist/release/copper-<host-triple>/` with `copperd`, docs, and `extensions/`
+- `dist/release/copper-<host-triple>/` with `copper`, docs, schemas, UI, and `extensions/`
 - `dist/release/copper-<host-triple>.zip` full release archive
 - `dist/release/copper-<host-triple>/extensions-published/*` per-extension archives ready to publish
 

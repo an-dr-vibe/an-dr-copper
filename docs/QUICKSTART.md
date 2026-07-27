@@ -42,8 +42,8 @@ On Windows, installed bundles also include `copper.exe` as the no-terminal doubl
 ```powershell
 ./scripts/daemon.ps1 -Action run
 # or directly:
-# ./target/release/copperd
-# .\target\release\copperd.exe
+# ./target/release/copper
+# .\target\release\copper.exe
 # in another terminal:
 ./scripts/daemon.ps1 -Action health
 ./scripts/daemon.ps1 -Action list
@@ -51,9 +51,9 @@ On Windows, installed bundles also include `copper.exe` as the no-terminal doubl
 # Windows-only: left click the main Copper tray icon to open the Bones/Wry UI.
 # Windows-only: `windows-display-manager` registers an additional tray icon.
 # Left click toggles taskbar auto-hide. Right click opens resolution/scale/settings/exit menu.
-./target/release/copperd.exe ui open --extension desktop-torrent-organizer
+./target/release/copper.exe ui open --extension desktop-torrent-organizer
 # Explicit temporary browser fallback:
-./target/release/copperd.exe ui open --extension desktop-torrent-organizer --browser
+./target/release/copper.exe ui open --extension desktop-torrent-organizer --browser
 ./scripts/daemon.ps1 -Action shutdown
 ```
 
@@ -94,10 +94,4 @@ cargo run -p copperd -- daemon trigger windows-display-manager --action set-reso
 This creates generated Rust bindings for the Bones guest world, builds a
 locked `wasm32-wasip2` Component, validates the manifest/artifact pair, and
 writes a deterministic publishable archive.
-
-## 7. Generate legacy main.ts from manifest
-
-```powershell
-cargo run -p copperd -- generate-main ./extensions/sort-downloads/manifest.json
-```
 

@@ -3,7 +3,6 @@ use crate::state_store::{read_json_object, unix_now_secs, write_json_object, Ext
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::time::Instant;
 
 pub const WINDOWS_DISPLAY_MANAGER_ID: &str = "windows-display-manager";
 
@@ -33,12 +32,6 @@ pub struct AppliedActionResult {
     pub result: Value,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct BackgroundCapability {
-    pub capability_id: &'static str,
-    pub extension_id: &'static str,
-}
-
 struct HostCapabilitySpec {
     id: &'static str,
     extension_ids: &'static [&'static str],
@@ -49,18 +42,6 @@ struct HostCapabilitySpec {
 }
 
 pub trait HostExtensionHandler: Sync {
-    fn supports_cli_trigger(&self, _action_id: &str) -> bool {
-        false
-    }
-
-    fn trigger_payload(
-        &self,
-        _store: &ExtensionStateStore,
-        _action_id: &str,
-    ) -> Result<Value, std::io::Error> {
-        Ok(serde_json::json!({}))
-    }
-
     fn apply_settings(
         &self,
         _store: &ExtensionStateStore,
@@ -72,31 +53,11 @@ pub trait HostExtensionHandler: Sync {
     fn dynamic_options(&self, _config: &Value) -> Result<Value, std::io::Error> {
         Ok(serde_json::json!({}))
     }
-
-    fn tick_background(
-        &self,
-        _store: &ExtensionStateStore,
-        _last_run: Option<Instant>,
-    ) -> Result<bool, std::io::Error> {
-        Ok(false)
-    }
 }
 
 impl HostExtensionRegistry {
     pub fn new() -> Self {
         Self
-    }
-
-    pub fn trigger_payload(
-        &self,
-        extension_id: &str,
-        store: &ExtensionStateStore,
-        action_id: &str,
-    ) -> Result<Value, std::io::Error> {
-        match self.handler(extension_id) {
-            Some(handler) => handler.trigger_payload(store, action_id),
-            None => Ok(serde_json::json!({})),
-        }
     }
 
     pub fn apply_settings(
@@ -120,43 +81,6 @@ impl HostExtensionRegistry {
             Some(handler) => handler.dynamic_options(config),
             None => Ok(serde_json::json!({})),
         }
-    }
-
-    pub fn tick_background(
-        &self,
-        extension_id: &str,
-        store: &ExtensionStateStore,
-        last_run: Option<Instant>,
-    ) -> Result<bool, std::io::Error> {
-        match self.handler(extension_id) {
-            Some(handler) => handler.tick_background(store, last_run),
-            None => Ok(false),
-        }
-    }
-
-    pub fn supports_cli_trigger(&self, extension_id: &str, action_id: &str) -> bool {
-        match self.capability(extension_id) {
-            Some(capability) => capability.handler.supports_cli_trigger(action_id),
-            None => false,
-        }
-    }
-
-    pub fn background_capabilities(&self) -> Vec<BackgroundCapability> {
-        capability_specs()
-            .iter()
-            .filter(|capability| capability.background_polling)
-            .flat_map(|capability| {
-                capability
-                    .extension_ids
-                    .iter()
-                    .copied()
-                    .map(|extension_id| BackgroundCapability {
-                        capability_id: capability.id,
-                        extension_id,
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect()
     }
 
     pub fn capability_info(&self, extension_id: &str) -> Option<HostCapabilityInfo> {
@@ -236,27 +160,6 @@ fn stamp_status_contract(extension_id: &str, status: &mut Value) {
 struct WindowsDisplayHandler;
 
 impl HostExtensionHandler for WindowsDisplayHandler {
-    fn supports_cli_trigger(&self, action_id: &str) -> bool {
-        matches!(
-            action_id,
-            "status"
-                | "toggle-taskbar-autohide"
-                | "set-taskbar-autohide"
-                | "set-resolution"
-                | "set-scale"
-        )
-    }
-
-    fn trigger_payload(
-        &self,
-        store: &ExtensionStateStore,
-        action_id: &str,
-    ) -> Result<Value, std::io::Error> {
-        Ok(serde_json::json!({
-            "hostExecution": execute_windows_display_action(store, action_id)?
-        }))
-    }
-
     fn apply_settings(
         &self,
         store: &ExtensionStateStore,

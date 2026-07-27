@@ -15,6 +15,7 @@ pub use control::{
     CopperControlHandle, CopperControlModule, CopperLifecycleState, COPPER_CONTROL_ENDPOINT,
 };
 pub use driver::{
-    BonesActionDispatch, BonesDaemonDriver, BonesRuntimeStatus, COPPER_ACTION_SENDER,
+    execute_component_action, BonesActionDispatch, BonesDaemonDriver, BonesRuntimeStatus,
+    COPPER_ACTION_SENDER,
 };
 pub use protocol::{Capability, CopperEnvelope, COPPER_BUS_PROTOCOL_V1};

@@ -64,5 +64,5 @@ Recommended config actions in UI:
 - Legacy `~/.Copper/extensions/copper-core/data.json` is still read as a fallback during migration.
 - Platform-restricted extensions remain visible in the UI with their supported-platform metadata even when the current host cannot run them.
 - `windows-display-manager` now saves and applies its declared display actions from the config page.
-- Runtime execution of `main.ts` from saved config remains future work.
+- UI-triggered actions run the declared Component with saved config as inputs.
 

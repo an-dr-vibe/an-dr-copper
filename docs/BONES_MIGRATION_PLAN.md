@@ -1,6 +1,6 @@
 # Copper on Bones Migration Plan
 
-Status: Implementation in progress
+Status: Implementation complete; cross-platform CI and final integration approval pending
 Plan owner: Copper maintainers  
 Last updated: 2026-07-27
 
@@ -102,12 +102,13 @@ Statuses: `ACCEPTED`, `PROPOSED`, `BLOCKED`, `SUPERSEDED`.
 | D-004 | ACCEPTED | Copper retains its control plane, settings UI, and structured state store. |
 | D-005 | ACCEPTED | Blocking or long-running capabilities use asynchronous jobs and result events rather than synchronous Bones handlers. |
 | D-006 | ACCEPTED | Expose a small Copper integration facade while splitting control, capability, state, and platform responsibilities into focused modules or crates. |
-| D-007 | ACCEPTED | Use optional `runtime: { kind, abi, artifact }` metadata for WASM Components; absence retains schema 1.0 TypeScript compatibility. |
-| D-008 | ACCEPTED | Rust is the supported Component authoring path for this cutover. The July 2026 TypeScript prototype could not build on Windows ARM64 because ComponentizeJS' Wizer package had no binary for that platform; TypeScript Components remain a future option after the toolchain is cross-platform, while Deno remains construction-only compatibility scaffolding. |
+| D-007 | SUPERSEDED | During construction, optional `runtime: { kind, abi, artifact }` metadata retained schema 1.0 TypeScript compatibility. D-013 defines the released cutover. |
+| D-008 | ACCEPTED | Rust is the supported Component authoring path for this cutover. The July 2026 TypeScript prototype could not build on Windows ARM64 because ComponentizeJS' Wizer package had no binary for that platform; TypeScript Components remain a future option after the toolchain is cross-platform. |
 | D-009 | ACCEPTED | Use typed Bones messages for Bones-native lifecycle and extension control. Copper-owned action, capability, job, result, and error payloads use a versioned JSON envelope over the Bones byte-payload bus. |
 | D-010 | ACCEPTED | Run the daemon through an event-driven headless Bones driver rather than a fixed 60 Hz loop. |
 | D-011 | ACCEPTED | Migrate the Copper settings UI to the Bones web presentation module, currently backed by `wry`; Copper owns the frontend and message contract, while Bones owns native window/webview presentation. |
 | D-012 | ACCEPTED | Open the detachable Bones wry presentation from Copper tray/CLI actions; the daemon engine remains headless and the explicit browser fallback remains available during migration. |
+| D-013 | ACCEPTED | The released registry requires a declared `copper.component/1` runtime artifact. Schema 1.0 parsing remains document-compatible, but runtime-less packages are rejected with a migration error. |
 
 Changing an accepted decision requires documenting the reason in the change log.
 Lasting changes to Bones architecture require a new Bones ADR; existing Bones
@@ -287,7 +288,7 @@ new Copper WASM extension without knowledge of Copper host internals.
 
 ### M6 — Migrate shipped extensions
 
-Status: **IN PROGRESS**
+Status: **DONE**
 Depends on: M4, M5
 
 | Order | Extension | Target | Status | Acceptance focus |
@@ -300,33 +301,39 @@ Depends on: M4, M5
 
 For every extension:
 
-- [ ] Add or update its UTR/parity tests first.
-- [ ] Preserve manifest metadata and minimize permissions.
-- [ ] Verify clean install and migration from representative existing state.
-- [ ] Verify unsupported-platform behavior.
-- [ ] Verify fault, timeout, and invalid-input behavior.
-- [ ] Remove its legacy execution path after parity passes.
+- [x] Add or update its UTR/parity tests first.
+- [x] Preserve manifest metadata and minimize permissions.
+- [x] Verify clean install and migration from representative existing state.
+- [x] Verify unsupported-platform behavior.
+- [x] Verify fault, timeout, and invalid-input behavior.
+- [x] Remove its legacy execution path after parity passes.
 
 Exit criterion: all shipped extensions run through Bones and pass their
 individual and system-level parity tests.
 
 ### M7 — Release cutover and cleanup
 
-Status: **NOT STARTED**  
+Status: **IN PROGRESS — IMPLEMENTATION COMPLETE**
 Depends on: M0–M6
 
 - [ ] Run the full cross-platform validation matrix.
 - [ ] Verify upgrades from the latest released Copper bundle.
-- [ ] Remove Deno discovery, bridge, dry-run preparation, and other temporary
+- [x] Remove Deno discovery, bridge, dry-run preparation, and other temporary
   adapters not accepted for the final architecture.
-- [ ] Remove dead dependencies and legacy runtime code.
-- [ ] Update architecture, development, testing, authoring, quickstart, and
+- [x] Remove dead dependencies and legacy runtime code.
+- [x] Update architecture, development, testing, authoring, quickstart, and
   extension UI documentation.
-- [ ] Update installers, autostart, release archives, and published extension
+- [x] Update installers, autostart, release archives, and published extension
   packaging.
-- [ ] Perform security review of capability authorization and control-plane
+- [x] Perform security review of capability authorization and control-plane
   exposure.
-- [ ] Confirm no mandatory GUI dependency exists in the headless build.
+- [x] Confirm no mandatory GUI dependency exists in the headless build.
+
+Local release, smoke, stability, coverage, archive, security, and headless
+dependency gates pass. The repository CI matrix is configured for Windows,
+macOS, and Linux, including the Linux GTK/WebKitGTK prerequisites of the
+optional Bones Wry presentation. Its run and a latest-release upgrade smoke
+remain intentionally open until the branch is approved for push/integration.
 
 Exit criterion: the Definition of Done is satisfied and the release candidate
 contains only the new architecture.
@@ -375,17 +382,17 @@ are the stable memory of existing behavior when implementation context changes.
 
 | Risk | Impact | Mitigation | Status |
 |---|---|---|---|
-| Copper behavior is inferred from stale documentation | Silent feature loss | M0 executable parity inventory; code is authoritative | OPEN |
-| Blocking host calls stall the Bones loop | Daemon freeze or missed watchdog guarantees | Asynchronous jobs; never block module handlers | OPEN |
-| Permission metadata is descriptive rather than enforced | Host compromise through an extension | Sender-based checks at every capability endpoint; negative tests | OPEN |
-| Manifest and WASM artifact update separately | Wrong code executes under trusted metadata | Transactional package validation and reload | OPEN |
+| Copper behavior is inferred from stale documentation | Silent feature loss | M0 executable parity inventory; code is authoritative | MITIGATED |
+| Blocking host calls stall the Bones loop | Daemon freeze or missed watchdog guarantees | Asynchronous jobs; never block module handlers | MITIGATED |
+| Permission metadata is descriptive rather than enforced | Host compromise through an extension | Sender-based checks at every capability endpoint; negative tests | MITIGATED |
+| Manifest and WASM artifact update separately | Wrong code executes under trusted metadata | Transactional package validation and reload | MITIGATED |
 | TypeScript component tooling cannot preserve SDK ergonomics | Extension rewrite or large artifacts | Rust is the supported M5 authoring path; revisit ComponentizeJS only after Windows ARM64 and cross-platform reproducibility pass | MITIGATED |
-| State format changes lose user configuration or secrets | User-visible data loss | Golden state fixtures and upgrade tests | OPEN |
-| SDL/window requirements leak into daemon builds | Headless CI and servers break | Custom headless composition root and no mandatory presentation features | OPEN |
-| Bones web presentation requires a window or main-thread event loop at daemon startup | Idle Copper is no longer headless or on-demand | Add lazy presentation lifecycle support and test tray/CLI open-close behavior | OPEN |
+| State format changes lose user configuration or secrets | User-visible data loss | Golden state fixtures and upgrade tests | MITIGATED |
+| SDL/window requirements leak into daemon builds | Headless CI and servers break | Custom headless composition root and no mandatory presentation features | CLOSED |
+| Bones web presentation requires a window or main-thread event loop at daemon startup | Idle Copper is no longer headless or on-demand | Add lazy presentation lifecycle support and test tray/CLI open-close behavior | CLOSED |
 | Copper-specific features overgrow Bones | Coupled repositories and slow upstream review | External-first implementation and upstream acceptance criteria | OPEN |
 | Native Copper modules crash in-process | Whole daemon exits | Small modules, defensive boundaries, worker isolation for risky work | OPEN |
-| Long autonomous implementation drifts from intent | Large but incorrect rewrite | Milestone exit gates and parity suite before cleanup | OPEN |
+| Long autonomous implementation drifts from intent | Large but incorrect rewrite | Milestone exit gates and parity suite before cleanup | MITIGATED |
 
 ## 9. Validation Gates
 
@@ -462,3 +469,4 @@ When updating this plan:
 | 2026-07-27 | Started M6 by porting `session-counter` and `sort-downloads` to Rust Components. Their UTR runs real artifacts through the Bones driver, verifies persistent counter state and both asynchronous capability chains, and the legacy `main.ts` entrypoints are removed. |
 | 2026-07-27 | Ported `desktop-torrent-organizer` to a scheduled Rust Component, replaced shell-based directory creation with the scoped filesystem capability, added a permissionless host clock for status timestamps, and verified move-only filtering, saved settings, last-run state, and status through the live Bones driver. |
 | 2026-07-27 | Completed the shipped M6 ports. `safe-input-key` now orchestrates fixed-identity keychain and keyboard capabilities without exposing secrets to WASI, and `windows-display-manager` delegates platform operations while persisting the existing status contract. Hotkey registration, dynamic options, settings apply, and tray behavior remain native. Local CLI triggers now drive Components to capability quiescence and preserve `--input` setup flows. |
+| 2026-07-27 | Completed local M7 implementation and verification: the native ARM64 release bundle, daemon smoke, three stability iterations, 74.81% fair production coverage, security review, and a renderer-free `--no-default-features` dependency graph pass. Cross-platform CI and a latest-release bundle upgrade smoke remain approval-gated. |

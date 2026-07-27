@@ -34,9 +34,7 @@ artifact.
 
 ## Runtime artifact
 
-Omitting `runtime` selects the compatibility TypeScript runtime and requires
-`main.ts`; that path exists only during migration. New extensions use the Rust
-Component scaffold:
+Every extension uses the Rust Component scaffold and must declare its runtime:
 
 ```powershell
 ./scripts/new-wasm-extension.ps1 -Id my-extension -Name "My Extension"
@@ -61,7 +59,7 @@ A packaged WASM Component declares the versioned runtime explicitly:
 
 The artifact must be beside `manifest.json`, must be named exactly
 `<manifest id>.wasm`, and must resolve inside the extension package. Component
-manifests do not require `main.ts`. The `background` object is optional. Its
+packages contain no script entrypoint. The `background` object is optional. Its
 action must be declared in `actions`; config-key fields read only this
 extension's scoped settings, and the default interval must be 1–86,400 seconds.
 

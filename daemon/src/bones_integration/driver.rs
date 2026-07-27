@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type CatalogSnapshot = BTreeMap<String, PathBuf>;
 const MAX_JOB_PUMP_PER_STEP: usize = 32;
@@ -373,11 +373,9 @@ fn build_engine(
         .read_only_persistence()
         .saves_dir(crate::extension::default_extensions_dir().join("copper-core/bones-saves"));
     for extension in registry.list() {
-        if let Some(path) = extension.wasm_component_path() {
-            builder = builder
-                .catalog_extension(&extension.descriptor.id, path)
-                .startup_extension(&extension.descriptor.id);
-        }
+        builder = builder
+            .catalog_extension(&extension.descriptor.id, extension.runtime_artifact_path())
+            .startup_extension(&extension.descriptor.id);
     }
     let engine = builder
         .build()
@@ -391,9 +389,10 @@ fn build_engine(
 fn catalog_snapshot(registry: &Registry) -> CatalogSnapshot {
     let mut snapshot = BTreeMap::new();
     for extension in registry.list() {
-        if let Some(path) = extension.wasm_component_path() {
-            snapshot.insert(extension.descriptor.id.clone(), path.to_path_buf());
-        }
+        snapshot.insert(
+            extension.descriptor.id.clone(),
+            extension.runtime_artifact_path().to_path_buf(),
+        );
     }
     snapshot
 }
@@ -410,9 +409,66 @@ impl Drop for BonesDaemonDriver {
     }
 }
 
+/// Runs one Component action until its asynchronous native work becomes quiescent.
+pub fn execute_component_action(
+    registry: &Registry,
+    store: &ExtensionStateStore,
+    extension_id: &str,
+    action_id: &str,
+    input: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let driver = BonesDaemonDriver::new(registry, store.clone())?;
+    execute_component_action_with_driver(driver, extension_id, action_id, input)
+}
+
+fn execute_component_action_with_driver(
+    mut driver: BonesDaemonDriver,
+    extension_id: &str,
+    action_id: &str,
+    input: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    driver.dispatch_action(extension_id, action_id, input)?;
+    if driver.status().capability_accepted == 0 {
+        return Ok(());
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+
+    loop {
+        driver.step(Duration::from_millis(1));
+        let status = driver.status();
+        if status.capability_rejected > 0
+            || status.capability_delivery_failures > 0
+            || status.action_dispatch_failures > 0
+        {
+            return Err(format!(
+                "Component action failed capability authorization or delivery: {status:?}"
+            ));
+        }
+        if status.capability_accepted > 0
+            && status.capability_pending == 0
+            && status.capability_completed + status.capability_failed >= status.capability_accepted
+        {
+            return if status.capability_failed == 0 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Component action reported a native failure: {status:?}"
+                ))
+            };
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("Component action timed out: {status:?}"));
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{BonesDaemonDriver, COPPER_ACTION_SENDER, COPPER_JOB_SENDER};
+    use super::{
+        execute_component_action_with_driver, BonesDaemonDriver, COPPER_ACTION_SENDER,
+        COPPER_JOB_SENDER,
+    };
     use crate::bones_integration::{
         CopperEnvelope, CopperLifecycleState, COPPER_BUS_PROTOCOL_V1, COPPER_CAPABILITY_ENDPOINT,
     };
@@ -597,6 +653,24 @@ mod tests {
         ));
         assert_eq!(driver.status().actions_dispatched, 1);
         assert_eq!(driver.status().action_dispatch_failures, 0);
+    }
+
+    #[test]
+    fn one_shot_action_without_native_jobs_is_immediately_quiescent() {
+        let temp = tempdir().expect("tempdir");
+        write_component_extension(temp.path(), "pure-component");
+        let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+        let mut driver = BonesDaemonDriver::new(&registry, store).expect("driver");
+        driver.insert_test_responder("pure-component", Arc::new(Capture::default()));
+
+        execute_component_action_with_driver(
+            driver,
+            "pure-component",
+            "run",
+            serde_json::Map::new(),
+        )
+        .expect("pure action should complete without waiting for native jobs");
     }
 
     #[test]

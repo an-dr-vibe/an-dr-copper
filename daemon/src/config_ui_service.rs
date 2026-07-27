@@ -38,7 +38,7 @@ pub(crate) fn build_extension_info(
     let commands = descriptor
         .actions
         .iter()
-        .filter_map(|action| build_user_command_info(state, descriptor, action, &apply_actions))
+        .filter_map(|action| build_user_command_info(descriptor, action, &apply_actions))
         .collect::<Vec<_>>();
     let dynamic_options = state
         .host_extensions
@@ -106,7 +106,6 @@ pub(crate) fn apply_extension_settings(
 }
 
 fn build_user_command_info(
-    state: &UiServerState,
     descriptor: &Descriptor,
     action: &crate::descriptor::Action,
     apply_actions: &[String],
@@ -120,20 +119,10 @@ fn build_user_command_info(
         usage.push("Update the saved settings above, then click Save and apply.".to_string());
     }
 
-    if descriptor.runtime.is_some() {
-        usage.push(format!(
-            "Run `copperd trigger {} --action {}`.",
-            descriptor.id, action.id
-        ));
-    } else if state
-        .host_extensions
-        .supports_cli_trigger(&descriptor.id, &action.id)
-    {
-        usage.push(format!(
-            "Run `copperd daemon trigger {} --action {}` while the daemon is running.",
-            descriptor.id, action.id
-        ));
-    }
+    usage.push(format!(
+        "Run `copperd trigger {} --action {}`.",
+        descriptor.id, action.id
+    ));
 
     if usage.is_empty() {
         return None;

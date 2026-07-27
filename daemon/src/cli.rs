@@ -2,19 +2,15 @@ use crate::config_ui::{self, UiOpenOptions};
 use crate::daemon::{
     self as daemon_runtime, DaemonConfig, IpcRequest, DEFAULT_BIND_ADDR, DEFAULT_RELOAD_INTERVAL_MS,
 };
-use crate::descriptor::Descriptor;
-use crate::execution::ExecutionEngine;
-use crate::extension::{default_extensions_dir, load_runtime_registry, Registry};
-use crate::host_extensions::HostExtensionRegistry;
-use crate::runtime::{default_runtime_adapter, run_protocol_worker};
+use crate::descriptor::permissions_as_strings;
+use crate::extension::{default_extensions_dir, load_runtime_registry};
 use crate::schema::parse_and_validate;
 use crate::state_store::ExtensionStateStore;
 use clap::{Parser, Subcommand};
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use thiserror::Error;
 
 #[cfg(test)]
@@ -81,13 +77,6 @@ enum Commands {
         #[arg(long = "input", value_name = "KEY=VALUE")]
         inputs: Vec<String>,
     },
-    /// Generate a starter main.ts from a manifest
-    GenerateMain {
-        #[arg(value_name = "MANIFEST")]
-        manifest: PathBuf,
-        #[arg(long, value_name = "FILE")]
-        output: Option<PathBuf>,
-    },
     /// Print environment readiness (required and optional tools)
     Doctor,
     /// Run or control the always-on daemon process
@@ -99,11 +88,6 @@ enum Commands {
     Ui {
         #[command(subcommand)]
         command: UiCommands,
-    },
-    #[command(hide = true)]
-    Internal {
-        #[command(subcommand)]
-        command: InternalCommands,
     },
 }
 
@@ -173,11 +157,6 @@ enum UiCommands {
     },
 }
 
-#[derive(Subcommand, Debug)]
-enum InternalCommands {
-    RuntimeTrigger,
-}
-
 pub fn run() -> Result<(), CliError> {
     let args = Args::parse();
     let command = args.command.unwrap_or_else(default_run_command);
@@ -213,11 +192,9 @@ fn run_command(command: Commands) -> Result<(), CliError> {
             extensions_dir,
             inputs,
         } => cmd_trigger(&extensions_dir, &id, action.as_deref(), &inputs),
-        Commands::GenerateMain { manifest, output } => cmd_generate_main(&manifest, output),
         Commands::Doctor => cmd_doctor(),
         Commands::Daemon { command } => cmd_daemon(command),
         Commands::Ui { command } => cmd_ui(command),
-        Commands::Internal { command } => cmd_internal(command),
     }
 }
 
@@ -306,16 +283,6 @@ fn cmd_ui(command: UiCommands) -> Result<(), CliError> {
     Ok(())
 }
 
-fn cmd_internal(command: InternalCommands) -> Result<(), CliError> {
-    match command {
-        InternalCommands::RuntimeTrigger => {
-            run_protocol_worker(io::stdin(), io::stdout())
-                .map_err(|err| CliError::Message(err.to_string()))?;
-        }
-    }
-    Ok(())
-}
-
 fn cmd_validate(path: &Path) -> Result<(), CliError> {
     let raw = fs::read_to_string(path)?;
     let descriptor = parse_and_validate(&raw)?;
@@ -359,13 +326,10 @@ fn cmd_verify(dir: &Path) -> Result<(), CliError> {
             )));
         }
         if !ext.runtime_artifact_path().exists() {
-            let missing = ext
-                .wasm_component_path()
-                .map(|path| format!("runtime artifact {}", path.display()))
-                .unwrap_or_else(|| "main.ts".to_string());
             return Err(CliError::Message(format!(
-                "extension {} is missing {missing}",
-                ext.descriptor.id
+                "extension {} is missing runtime artifact {}",
+                ext.descriptor.id,
+                ext.runtime_artifact_path().display()
             )));
         }
     }
@@ -383,13 +347,23 @@ fn cmd_trigger(
     let ext = registry
         .get(id)
         .ok_or_else(|| CliError::Message(format!("extension '{}' not found", id)))?;
-    let runtime = default_runtime_adapter().map_err(|err| CliError::Message(err.to_string()))?;
     let store = ExtensionStateStore::for_current_user()?;
-    let host_extensions = HostExtensionRegistry::new();
-    let engine = ExecutionEngine::new(runtime.as_ref(), &host_extensions, &store);
-    let prepared = engine
-        .prepare_trigger(ext, action)
-        .map_err(CliError::Message)?;
+    let selected_action = match action {
+        Some(action_id) => ext
+            .descriptor
+            .actions
+            .iter()
+            .find(|candidate| candidate.id == action_id)
+            .ok_or_else(|| CliError::Message(format!("action '{action_id}' not found")))?,
+        None => ext
+            .descriptor
+            .actions
+            .first()
+            .ok_or_else(|| CliError::Message("no action defined".to_string()))?,
+    };
+    let extension_id = ext.descriptor.id.clone();
+    let action_id = selected_action.id.clone();
+    let permissions = permissions_as_strings(&ext.descriptor.permissions);
 
     let mut inputs_map = serde_json::Map::new();
     for raw in raw_inputs {
@@ -400,89 +374,25 @@ fn cmd_trigger(
 
     println!(
         "Trigger: extension='{}' action='{}' permissions={}",
-        prepared.extension_id,
-        prepared.action_id,
-        if prepared.permissions.is_empty() {
+        extension_id,
+        action_id,
+        if permissions.is_empty() {
             "none".to_string()
         } else {
-            prepared.permissions.join(",")
+            permissions.join(",")
         }
     );
 
-    if ext.wasm_component_path().is_some() {
-        execute_wasm_trigger(
-            &registry,
-            &store,
-            &prepared.extension_id,
-            &prepared.action_id,
-            inputs_map,
-        )
-        .map_err(CliError::Message)?;
-    } else {
-        engine
-            .execute_trigger(&prepared, &serde_json::Value::Object(inputs_map))
-            .map_err(CliError::Message)?;
-    }
+    crate::bones_integration::execute_component_action(
+        &registry,
+        &store,
+        &extension_id,
+        &action_id,
+        inputs_map,
+    )
+    .map_err(CliError::Message)?;
 
-    println!("Done: '{}'", prepared.extension_id);
-    Ok(())
-}
-
-/// Runs one Component action until its asynchronous native work becomes quiescent.
-fn execute_wasm_trigger(
-    registry: &Registry,
-    store: &ExtensionStateStore,
-    extension_id: &str,
-    action_id: &str,
-    input: serde_json::Map<String, serde_json::Value>,
-) -> Result<(), String> {
-    let mut driver = crate::bones_integration::BonesDaemonDriver::new(registry, store.clone())?;
-    driver.dispatch_action(extension_id, action_id, input)?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-
-    loop {
-        driver.step(Duration::from_millis(1));
-        let status = driver.status();
-        if status.capability_rejected > 0
-            || status.capability_delivery_failures > 0
-            || status.action_dispatch_failures > 0
-        {
-            return Err(format!(
-                "Component action failed capability authorization or delivery: {status:?}"
-            ));
-        }
-        if status.capability_accepted > 0
-            && status.capability_pending == 0
-            && status.capability_completed + status.capability_failed >= status.capability_accepted
-        {
-            return if status.capability_failed == 0 {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Component action reported a native failure: {status:?}"
-                ))
-            };
-        }
-        if Instant::now() >= deadline {
-            return Err(format!("Component action timed out: {status:?}"));
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-}
-
-fn cmd_generate_main(descriptor_path: &Path, output: Option<PathBuf>) -> Result<(), CliError> {
-    let raw = fs::read_to_string(descriptor_path)?;
-    let descriptor = parse_and_validate(&raw)?;
-    let ts = render_main_ts(&descriptor);
-
-    let out = output.unwrap_or_else(|| {
-        descriptor_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("main.ts")
-    });
-    fs::write(&out, ts)?;
-    println!("Generated {}", out.display());
+    println!("Done: '{extension_id}'");
     Ok(())
 }
 
@@ -496,16 +406,11 @@ where
 {
     let rustc = is_available("rustc");
     let cargo = is_available("cargo");
-    let deno = is_available("deno");
 
     println!(
         "required: rustc={} cargo={}",
         if rustc { "ok" } else { "missing" },
         if cargo { "ok" } else { "missing" }
-    );
-    println!(
-        "optional: deno={} (needed only when executing TypeScript extensions)",
-        if deno { "ok" } else { "missing" }
     );
 
     if !rustc || !cargo {
@@ -563,50 +468,15 @@ fn binary_available(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn render_main_ts(descriptor: &Descriptor) -> String {
-    let first_action = descriptor
-        .actions
-        .first()
-        .map(|a| a.script.clone())
-        .unwrap_or_default();
-    format!(
-        r#"import type {{ Api }} from "@host/api";
-
-export default function(api: Api) {{
-  return {{
-    onLoad() {{}},
-
-    async onTrigger(inputs: Record<string, unknown> = {{}}) {{
-      {first_action}
-      await api.notify("'{name}' completed");
-    }},
-
-    onUnload() {{}}
-  }};
-}}
-"#,
-        first_action = indent_script(&first_action),
-        name = descriptor.name.replace('\'', "")
-    )
-}
-
-fn indent_script(script: &str) -> String {
-    script
-        .lines()
-        .map(|line| format!("      {}", line))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        binary_available, cmd_daemon, cmd_doctor_with, cmd_generate_main, cmd_list, cmd_trigger,
-        default_run_command, execute_wasm_trigger, format_permissions, print_ipc_response,
-        render_main_ts, run_command, Args, Commands, DaemonCommands,
+        binary_available, cmd_daemon, cmd_doctor_with, cmd_list, cmd_trigger, default_run_command,
+        format_permissions, print_ipc_response, run_command, Args, Commands, DaemonCommands,
     };
+    use crate::bones_integration::execute_component_action;
     use crate::daemon::IpcResponse;
-    use crate::descriptor::{Action, Descriptor, Permission};
+    use crate::descriptor::Permission;
     use crate::extension::Registry;
     use crate::state_store::ExtensionStateStore;
     use clap::Parser;
@@ -628,6 +498,11 @@ mod tests {
                     "name": "Test Extension",
                     "version": "1.0.0",
                     "trigger": "test",
+                    "runtime": {{
+                        "kind": "wasm-component",
+                        "abi": "copper.component/1",
+                        "artifact": "{id}.wasm"
+                    }},
                     "actions": [
                         {{ "id": "run", "label": "Run", "script": "return;" }}
                     ]
@@ -635,22 +510,7 @@ mod tests {
             ),
         )
         .expect("write manifest");
-        fs::write(ext.join("main.ts"), "export default function(){}").expect("write main.ts");
-    }
-
-    fn write_manifest(path: &std::path::Path) {
-        fs::write(
-            path,
-            r#"{
-                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
-                "id": "tmp-ext",
-                "name": "Tmp Extension",
-                "version": "1.0.0",
-                "trigger": "tmp",
-                "actions": [{ "id": "run", "label": "Run", "script": "const value = 42;" }]
-            }"#,
-        )
-        .expect("write manifest");
+        fs::write(ext.join(format!("{id}.wasm")), b"\0asm").expect("write component");
     }
 
     fn spawn_ipc_server(expected_op: &'static str) -> (String, std::thread::JoinHandle<()>) {
@@ -709,95 +569,12 @@ mod tests {
     }
 
     #[test]
-    fn generate_main_contains_notify_call() {
-        let descriptor = Descriptor {
-            schema: None,
-            id: "test-ext".to_string(),
-            name: "Test".to_string(),
-            version: "1.0.0".to_string(),
-            trigger: "test".to_string(),
-            runtime: None,
-            platforms: vec![],
-            permissions: vec![],
-            inputs: vec![],
-            actions: vec![Action {
-                id: "run".to_string(),
-                label: "Run".to_string(),
-                description: None,
-                script: "const value = 1;".to_string(),
-            }],
-            ui: None,
-            settings: None,
-            tray: None,
-        };
-        let generated = render_main_ts(&descriptor);
-        assert!(generated.contains("api.notify"));
-        assert!(generated.contains("const value = 1;"));
-    }
-
-    #[test]
     fn format_permissions_handles_empty_and_values() {
         assert_eq!(format_permissions(&[]), "none");
         assert_eq!(
             format_permissions(&[Permission::Fs, Permission::Shell, Permission::Ui]),
             "fs,shell,ui"
         );
-    }
-
-    #[test]
-    fn generate_main_indents_multiline_script() {
-        let descriptor = Descriptor {
-            schema: None,
-            id: "test-ext".to_string(),
-            name: "Test".to_string(),
-            version: "1.0.0".to_string(),
-            trigger: "test".to_string(),
-            runtime: None,
-            platforms: vec![],
-            permissions: vec![],
-            inputs: vec![],
-            actions: vec![Action {
-                id: "run".to_string(),
-                label: "Run".to_string(),
-                description: None,
-                script: "const first = 1;\nconst second = 2;".to_string(),
-            }],
-            ui: None,
-            settings: None,
-            tray: None,
-        };
-
-        let generated = render_main_ts(&descriptor);
-        assert!(generated.contains("      const first = 1;"));
-        assert!(generated.contains("      const second = 2;"));
-    }
-
-    #[test]
-    fn generate_main_sanitizes_single_quotes_in_name() {
-        let descriptor = Descriptor {
-            schema: None,
-            id: "test-ext".to_string(),
-            name: "Bob's Tool".to_string(),
-            version: "1.0.0".to_string(),
-            trigger: "test".to_string(),
-            runtime: None,
-            platforms: vec![],
-            permissions: vec![],
-            inputs: vec![],
-            actions: vec![Action {
-                id: "run".to_string(),
-                label: "Run".to_string(),
-                description: None,
-                script: "return;".to_string(),
-            }],
-            ui: None,
-            settings: None,
-            tray: None,
-        };
-
-        let generated = render_main_ts(&descriptor);
-        assert!(generated.contains("Bobs Tool"));
-        assert!(!generated.contains("Bob's Tool"));
     }
 
     #[test]
@@ -815,29 +592,6 @@ mod tests {
     fn print_ipc_response_ok_with_data_formats_pretty_json() {
         let response = IpcResponse::ok("ok", Some(serde_json::json!({ "k": 1 })));
         print_ipc_response(response).expect("ok response should print");
-    }
-
-    #[test]
-    fn render_main_handles_descriptor_without_actions() {
-        let descriptor = Descriptor {
-            schema: None,
-            id: "test-ext".to_string(),
-            name: "No Actions".to_string(),
-            version: "1.0.0".to_string(),
-            trigger: "test".to_string(),
-            runtime: None,
-            platforms: vec![],
-            permissions: vec![],
-            inputs: vec![],
-            actions: vec![],
-            ui: None,
-            settings: None,
-            tray: None,
-        };
-
-        let generated = render_main_ts(&descriptor);
-        assert!(generated.contains("onTrigger"));
-        assert!(generated.contains("No Actions"));
     }
 
     #[test]
@@ -860,29 +614,12 @@ mod tests {
     }
 
     #[test]
-    fn cmd_generate_main_uses_default_output_path() {
-        let temp = tempdir().expect("tempdir");
-        let manifest = temp.path().join("manifest.json");
-        write_manifest(&manifest);
-        cmd_generate_main(&manifest, None).expect("generate main");
-        assert!(temp.path().join("main.ts").exists());
-    }
-
-    #[test]
     fn cmd_trigger_errors_for_unknown_action() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
         let err =
             cmd_trigger(temp.path(), "alpha-ext", Some("missing"), &[]).expect_err("must fail");
         assert!(err.to_string().contains("not found"));
-    }
-
-    #[test]
-    fn cmd_trigger_without_action_uses_first_action() {
-        let temp = tempdir().expect("tempdir");
-        write_extension(temp.path(), "alpha-ext");
-        cmd_trigger(temp.path(), "alpha-ext", None, &[])
-            .expect("trigger should select default action");
     }
 
     #[test]
@@ -895,7 +632,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let store = ExtensionStateStore::new(temp.path().join("state"));
 
-        execute_wasm_trigger(
+        execute_component_action(
             &registry,
             &store,
             "session-counter",
@@ -969,7 +706,7 @@ mod tests {
 
     #[test]
     fn doctor_with_reports_missing_required_toolchain() {
-        let err = cmd_doctor_with(|name| name == "deno").expect_err("must fail");
+        let err = cmd_doctor_with(|name| name == "cargo").expect_err("must fail");
         assert!(err
             .to_string()
             .contains("missing required Rust toolchain components"));

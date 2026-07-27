@@ -1,8 +1,9 @@
 #!/usr/bin/env pwsh
 param(
-  [string]$Toolchain = "1.88.0",
+  [string]$Toolchain = "",
   [double]$MinLineCoverage = 0.0,
-  [switch]$FailOnUnderTarget
+  [switch]$FailOnUnderTarget,
+  [switch]$ReuseBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,25 @@ Set-Location $repoRoot
 
 $IgnoreFilenameRegex = '(\.cargo|rustc|tests[/\\])'
 $LcovPath = Join-Path $repoRoot "target/coverage-full.info"
+$CoverageTarget = Join-Path $repoRoot "target/llvm-cov-target"
+$CoverageRustVersion = "1.94.0"
+$UseEmulatedCoverageToolchain = $false
+
+if ([string]::IsNullOrWhiteSpace($Toolchain)) {
+  if (
+    $IsWindows -and
+    [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq
+      [System.Runtime.InteropServices.Architecture]::Arm64
+  ) {
+    # LLVM's native Windows ARM64 coverage runtime currently writes malformed
+    # profile records. Windows ARM64 runs x64 binaries, so use the supported x64
+    # toolchain for the audit while release builds remain native ARM64.
+    $Toolchain = "$CoverageRustVersion-x86_64-pc-windows-msvc"
+    $UseEmulatedCoverageToolchain = $true
+  } else {
+    $Toolchain = $CoverageRustVersion
+  }
+}
 
 function Invoke-Step {
   param([scriptblock]$Command, [string]$Description)
@@ -39,22 +59,20 @@ function Get-LineCoverageFromSummary {
 function Is-DeclarationOnlyRustFile {
   param([string]$Path)
 
-  $lines = Get-Content $Path
-  foreach ($line in $lines) {
-    $trimmed = $line.Trim()
-    if (
-      $trimmed -eq "" -or
-      $trimmed.StartsWith("//") -or
-      $trimmed -match '^#!\[.*\]$' -or
-      $trimmed -match '^#\[.*\]$' -or
-      $trimmed -match '^(pub\s+)?mod\s+[A-Za-z0-9_]+;$' -or
-      $trimmed -match '^(pub\s+)?use\s+.+;$'
-    ) {
-      continue
-    }
-    return $false
-  }
-  return $true
+  $content = Get-Content -LiteralPath $Path -Raw
+  $content = [regex]::Replace($content, '(?m)^\s*//.*$', '')
+  $content = [regex]::Replace($content, '(?m)^\s*#!?\[.*\]\s*$', '')
+  $content = [regex]::Replace(
+    $content,
+    '(?ms)^\s*(?:pub\s+)?use\s+.*?;\s*',
+    ''
+  )
+  $content = [regex]::Replace(
+    $content,
+    '(?m)^\s*(?:pub\s+)?mod\s+[A-Za-z0-9_]+;\s*$',
+    ''
+  )
+  return [string]::IsNullOrWhiteSpace($content)
 }
 
 function Get-RustSourceFiles {
@@ -98,6 +116,9 @@ function Assert-CoverageFileParity {
   $missingDeclarationOnly = New-Object System.Collections.Generic.List[string]
 
   foreach ($source in $sourceFiles) {
+    if ([System.IO.Path]::GetFileName($source) -match '_tests\.rs$') {
+      continue
+    }
     if ($coveredSet.Contains($source)) {
       continue
     }
@@ -120,13 +141,49 @@ function Assert-CoverageFileParity {
   }
 }
 
-# Coverage tooling on the default 1.86 toolchain is unreliable on Windows.
-# Use a newer toolchain explicitly for stable llvm-cov output.
-Invoke-Step { rustup toolchain install $Toolchain } "rustup toolchain install"
+# Pin the first supported Rust toolchain for this Bones/Wasmtime generation.
+# Newer stable toolchains remain valid for normal builds, but coverage must be
+# reproducible.
+$rustupInstallArgs = @("toolchain", "install", $Toolchain)
+if ($UseEmulatedCoverageToolchain) {
+  $rustupInstallArgs += "--force-non-host"
+}
+Invoke-Step { rustup @rustupInstallArgs } "rustup toolchain install"
 Invoke-Step { cargo +$Toolchain install cargo-llvm-cov } "cargo-llvm-cov install"
-$coverageOutput = & cargo +$Toolchain llvm-cov --workspace --summary-only --ignore-filename-regex $IgnoreFilenameRegex
+
+# cargo-llvm-cov's own cleanup can retain instrumented binaries from another
+# target architecture. Start the normal audit from a known single-architecture
+# target; -ReuseBuild is reserved for iterating on an already matching build.
+if (-not $ReuseBuild -and (Test-Path $CoverageTarget)) {
+  Invoke-Step {
+    cargo +$Toolchain clean --target-dir $CoverageTarget
+  } "coverage target cleanup"
+}
+
+# Do not let profiles emitted by a previous toolchain/architecture contaminate
+# this audit. cargo-llvm-cov cleans build artifacts but can leave raw profiles
+# behind when a previous report failed before cleanup completed.
+if (Test-Path $CoverageTarget) {
+  Get-ChildItem -LiteralPath $CoverageTarget -Filter "*.profraw" -File |
+    Remove-Item -Force
+  foreach ($staleReport in @("an-dr-copper.profdata", "an-dr-copper-profraw-list")) {
+    Remove-Item -LiteralPath (Join-Path $CoverageTarget $staleReport) -Force -ErrorAction SilentlyContinue
+  }
+}
+
+$coverageRunArgs = @("+$Toolchain", "llvm-cov", "--workspace")
+if ($ReuseBuild) {
+  $coverageRunArgs += "--no-clean"
+} else {
+  $coverageRunArgs += "--no-report"
+}
+Invoke-Step {
+  cargo @coverageRunArgs
+} "cargo llvm-cov test run"
+
+$coverageOutput = & cargo +$Toolchain llvm-cov report --summary-only --ignore-filename-regex $IgnoreFilenameRegex
 if ($LASTEXITCODE -ne 0) {
-  throw "cargo llvm-cov failed with exit code $LASTEXITCODE"
+  throw "cargo llvm-cov summary failed with exit code $LASTEXITCODE"
 }
 
 $coverageOutput | ForEach-Object { Write-Host $_ }
@@ -136,7 +193,7 @@ if ($FailOnUnderTarget -and $lineCoverage -lt $MinLineCoverage) {
 }
 
 Invoke-Step {
-  cargo +$Toolchain llvm-cov --workspace --ignore-filename-regex $IgnoreFilenameRegex --lcov --output-path $LcovPath
+  cargo +$Toolchain llvm-cov report --ignore-filename-regex $IgnoreFilenameRegex --lcov --output-path $LcovPath
 } "cargo llvm-cov lcov"
 Assert-CoverageFileParity $LcovPath
 

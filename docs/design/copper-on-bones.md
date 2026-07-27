@@ -24,10 +24,10 @@ CLI request opens the settings UI.
 
 ## Extension package
 
-A Copper extension package contains a validated `manifest.json` and a runtime
-artifact. Existing schema 1.0 TypeScript packages remain valid during
-construction. The released architecture uses a WASM Component implementing the
-versioned Copper guest contract.
+A Copper extension package contains a validated `manifest.json` and a declared
+WASM Component implementing the versioned Copper guest contract. Schema 1.0
+documents remain parse-compatible, but the runtime registry rejects packages
+that omit the Component runtime.
 
 Rust is the supported authoring language for the cutover. The SDK generates
 the Bones WIT bindings, wraps `copper.bus/1`, validates host-stamped senders,
@@ -75,5 +75,5 @@ the explicit temporary browser fallback.
 
 ## Current gaps
 
-- TODO: port the shipped extensions to WASM Components.
-- TODO: remove the Deno compatibility path after extension parity.
+- TypeScript-to-Component authoring may be added when its toolchain is
+  reproducible on all supported hosts; Rust remains the supported SDK.

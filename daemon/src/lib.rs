@@ -11,14 +11,15 @@ pub mod daemon;
 pub mod daemon_scheduler;
 pub mod daemon_service;
 pub mod descriptor;
-pub mod execution;
 pub mod extension;
 pub mod host_extensions;
 pub mod hotkey;
 pub mod logging;
-pub mod runtime;
 pub mod schema;
 pub mod state_store;
+#[cfg(feature = "native-ui")]
 pub mod tray;
+#[cfg(feature = "native-ui")]
 pub mod tray_assets;
+#[cfg(feature = "native-ui")]
 pub mod tray_extension;

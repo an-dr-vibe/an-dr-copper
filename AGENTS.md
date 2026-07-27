@@ -11,7 +11,7 @@ Pick the file that matches your task. Each agent file describes the role behavio
 | Role | Agent file | Project docs it points to |
 |---|---|---|
 | Architect | `agents/architect.md` | `docs/ARCHITECTURE.md` |
-| Developer | `agents/developer.md` | `docs/DEVELOPMENT.md`, `sdk/api.d.ts`, `schemas/` |
+| Developer | `agents/developer.md` | `docs/DEVELOPMENT.md`, `sdk/COMPONENT_API.md`, `schemas/` |
 | Tester | `agents/tester.md` | `docs/TESTING.md` |
 
 ## Project Docs Map
@@ -23,7 +23,7 @@ Pick the file that matches your task. Each agent file describes the role behavio
 | `docs/DEVELOPMENT.md` | Build commands, change recipes, state file locations, key source files |
 | `docs/TESTING.md` | Test commands, file locations, TDD workflow, coverage rules, known failures |
 | `docs/AI_AUTHORING.md` | How to generate and verify extensions |
-| `sdk/api.d.ts` | TypeScript API contract for extension authors |
+| `sdk/COMPONENT_API.md` | WASM Component contract for extension authors |
 | `schemas/extension/1.0.0/descriptor.schema.json` | Manifest validation schema |
 
 ## Read First
@@ -32,7 +32,7 @@ Before editing code, read these files in order:
 
 1. `docs/ARCHITECTURE.md`
 2. `docs/DEVELOPMENT.md`
-3. `sdk/api.d.ts`
+3. `sdk/COMPONENT_API.md`
 4. `schemas/extension/1.0.0/descriptor.schema.json`
 
 Before work related to the Bones migration, also read
@@ -88,8 +88,7 @@ When generating or editing extensions:
 1. Validate manifest against `schemas/extension/1.0.0/descriptor.schema.json`.
 2. Keep `$schema` set to:
    `https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json`
-3. Ensure every extension has `manifest.json` plus its declared runtime
-   artifact:
-   - no `runtime` block: `main.ts`
-   - `runtime.kind = "wasm-component"`: `<extension-id>.wasm`
+3. Ensure every extension declares
+   `runtime.kind = "wasm-component"` and includes `manifest.json` plus
+   `<extension-id>.wasm`.
 4. Keep permissions minimal and explicit.

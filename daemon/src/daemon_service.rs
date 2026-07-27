@@ -1,8 +1,6 @@
 use crate::bones_integration::BonesRuntimeStatus;
-use crate::execution::{permissions_as_strings, ExecutionEngine};
+use crate::descriptor::permissions_as_strings;
 use crate::extension::Registry;
-use crate::host_extensions::HostExtensionRegistry;
-use crate::runtime::default_runtime_adapter;
 use crate::state_store::ExtensionStateStore;
 use serde_json::Value;
 use std::path::Path;
@@ -11,7 +9,6 @@ pub struct DaemonControlService<'a> {
     user_extensions_dir: &'a Path,
     core_extensions_dir: Option<&'a Path>,
     registry: &'a Registry,
-    host_extensions: &'a HostExtensionRegistry,
     state_store: &'a ExtensionStateStore,
     bones_status: BonesRuntimeStatus,
 }
@@ -21,7 +18,6 @@ impl<'a> DaemonControlService<'a> {
         user_extensions_dir: &'a Path,
         core_extensions_dir: Option<&'a Path>,
         registry: &'a Registry,
-        host_extensions: &'a HostExtensionRegistry,
         state_store: &'a ExtensionStateStore,
         bones_status: BonesRuntimeStatus,
     ) -> Self {
@@ -29,7 +25,6 @@ impl<'a> DaemonControlService<'a> {
             user_extensions_dir,
             core_extensions_dir,
             registry,
-            host_extensions,
             state_store,
             bones_status,
         }
@@ -82,29 +77,14 @@ impl<'a> DaemonControlService<'a> {
                 return Err(format!("extension {} has no actions", ext.descriptor.id));
             }
             if !ext.runtime_artifact_path().exists() {
-                let missing = ext
-                    .wasm_component_path()
-                    .map(|path| format!("runtime artifact {}", path.display()))
-                    .unwrap_or_else(|| "main.ts".to_string());
                 return Err(format!(
-                    "extension {} is missing {missing}",
-                    ext.descriptor.id
+                    "extension {} is missing runtime artifact {}",
+                    ext.descriptor.id,
+                    ext.runtime_artifact_path().display()
                 ));
             }
         }
         Ok(found)
-    }
-
-    pub fn trigger_payload(&self, id: &str, action: Option<&str>) -> Result<Value, String> {
-        let ext = self
-            .registry
-            .get(id)
-            .ok_or_else(|| format!("extension '{id}' not found"))?;
-        let runtime = default_runtime_adapter().map_err(|err| err.to_string())?;
-        let engine = ExecutionEngine::new(runtime.as_ref(), self.host_extensions, self.state_store);
-        let prepared = engine.prepare_trigger(ext, action)?;
-        engine.execute_trigger(&prepared, &serde_json::json!({}))?;
-        serde_json::to_value(prepared).map_err(|err| err.to_string())
     }
 }
 
@@ -113,7 +93,6 @@ mod tests {
     use super::DaemonControlService;
     use crate::bones_integration::BonesRuntimeStatus;
     use crate::extension::Registry;
-    use crate::host_extensions::HostExtensionRegistry;
     use crate::state_store::ExtensionStateStore;
     use std::collections::BTreeMap;
     use std::fs;
@@ -153,13 +132,18 @@ mod tests {
                 "name": "Alpha",
                 "version": "1.0.0",
                 "trigger": "alpha",
+                "runtime": {
+                    "kind": "wasm-component",
+                    "abi": "copper.component/1",
+                    "artifact": "alpha-ext.wasm"
+                },
                 "actions": [
                     { "id": "run", "label": "Run", "script": "return;" }
                 ]
             }"#,
         )
         .expect("write manifest");
-        fs::write(ext_root.join("main.ts"), "export default function(){}").expect("write main");
+        fs::write(ext_root.join("alpha-ext.wasm"), b"\0asm").expect("write component");
     }
 
     #[test]
@@ -170,12 +154,10 @@ mod tests {
         fs::write(store.config_path("alpha-ext"), "{bad-json").expect("write invalid config");
         write_extension(temp.path());
         let registry = Registry::load_from_dir(temp.path()).expect("registry");
-        let host_extensions = HostExtensionRegistry::new();
         let service = DaemonControlService::new(
             temp.path(),
             Some(Path::new("C:/tmp/core")),
             &registry,
-            &host_extensions,
             &store,
             bones_status(),
         );
@@ -196,42 +178,6 @@ mod tests {
                 .and_then(|value| value.get("headless"))
                 .and_then(|value| value.as_bool()),
             Some(true)
-        );
-    }
-
-    #[test]
-    fn trigger_payload_uses_runtime_engine() {
-        let temp = tempdir().expect("tempdir");
-        let store = ExtensionStateStore::new(temp.path().join(".Copper/extensions"));
-        write_extension(temp.path());
-        let registry = Registry::load_from_dir(temp.path()).expect("registry");
-        let host_extensions = HostExtensionRegistry::new();
-        let service = DaemonControlService::new(
-            temp.path(),
-            Some(Path::new("C:/tmp/core")),
-            &registry,
-            &host_extensions,
-            &store,
-            bones_status(),
-        );
-
-        let payload = service
-            .trigger_payload("alpha-ext", Some("run"))
-            .expect("trigger payload");
-        assert_eq!(
-            payload.get("extensionId").and_then(|value| value.as_str()),
-            Some("alpha-ext")
-        );
-        assert_eq!(
-            payload.get("actionId").and_then(|value| value.as_str()),
-            Some("run")
-        );
-        assert_eq!(
-            payload
-                .get("runtime")
-                .and_then(|value| value.get("isolated"))
-                .and_then(|value| value.as_bool()),
-            Some(false)
         );
     }
 }

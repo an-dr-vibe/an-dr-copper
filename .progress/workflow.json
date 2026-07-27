@@ -11,8 +11,8 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "49361c1ec0c64d44a02731336047c108",
-  "commitBaseline": "ee6537d5bf3c6720d3933a9e645c2cebb7555dca",
+  "currentIncrementId": "bfa9cca7d66e46a3a9cc8ceb4a9a3b0b",
+  "commitBaseline": "7767123372c20cda1666717245d0a26f970c753e",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
@@ -129,14 +129,14 @@
     {
       "id": "49361c1ec0c64d44a02731336047c108",
       "number": 17,
-      "status": "verified",
+      "status": "completed",
       "scope": "Safe Input Key and Windows display WASM ports",
       "description": "~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities."
     },
     {
       "id": "bfa9cca7d66e46a3a9cc8ceb4a9a3b0b",
       "number": 18,
-      "status": "planned",
+      "status": "verified",
       "scope": "Cutover cleanup release and full verification",
       "description": "~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates."
     }
@@ -504,11 +504,26 @@
       "detail": "Advanced from BUILD to VERIFY."
     },
     {
-      "at": "2026-07-27T02:36:02.6243600Z",
+      "at": "2026-07-27T02:36:02.62436Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-27T02:36:34.2844831Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to BUILD."
+    },
+    {
+      "at": "2026-07-27T02:54:07.5255841Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-27T04:26:53.2010084Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-27T02:36:02.6303141Z"
+  "updatedAt": "2026-07-27T04:26:53.2093297Z"
 }

@@ -8,7 +8,6 @@ mod tests {
     use crate::bones_integration::{
         CopperEnvelope, COPPER_ACTION_SENDER, COPPER_BUS_PROTOCOL_V1,
     };
-    use crate::daemon_service::DaemonControlService;
     use crate::descriptor::COMPONENT_ABI_V1;
     use bones_bus::Respond;
     use std::fs;
@@ -36,6 +35,11 @@ mod tests {
                     "version": "1.0.0",
                     "trigger": "test",
                     "permissions": ["fs", "ui"],
+                    "runtime": {{
+                        "kind": "wasm-component",
+                        "abi": "{COMPONENT_ABI_V1}",
+                        "artifact": "{id}.wasm"
+                    }},
                     "actions": [
                         {{ "id": "{action_id}", "label": "Run", "script": "return;" }}
                     ]
@@ -43,11 +47,7 @@ mod tests {
             ),
         )
         .expect("write descriptor");
-        fs::write(
-            ext.join("main.ts"),
-            "export default function(){ return {}; }",
-        )
-        .expect("write main.ts");
+        fs::write(ext.join(format!("{id}.wasm")), b"\0asm").expect("write component");
     }
 
     fn write_component_extension(root: &Path, id: &str, action_id: &str) {
@@ -76,32 +76,6 @@ mod tests {
         )
         .expect("write descriptor");
         fs::write(ext.join(format!("{id}.wasm")), b"\0asm").expect("write component");
-    }
-
-    fn write_windows_display_extension(root: &Path) {
-        let ext = root.join("windows-display-manager");
-        fs::create_dir_all(&ext).expect("create extension directory");
-        fs::write(
-            ext.join("manifest.json"),
-            r#"{
-                "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
-                "id": "windows-display-manager",
-                "name": "Windows Display Manager",
-                "version": "1.0.0",
-                "trigger": "windows-display",
-                "permissions": ["ui", "store"],
-                "actions": [
-                    { "id": "status", "label": "Status", "script": "status" },
-                    { "id": "toggle-taskbar-autohide", "label": "Toggle", "script": "toggle" }
-                ]
-            }"#,
-        )
-        .expect("write descriptor");
-        fs::write(
-            ext.join("main.ts"),
-            "export default function(){ return {}; }",
-        )
-        .expect("write main.ts");
     }
 
     #[test]
@@ -334,6 +308,9 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
         let mut state = DaemonState::load(temp.path()).expect("state");
+        state
+            .bones
+            .insert_test_responder("alpha-ext", Arc::new(ActionCapture::default()));
         let running = AtomicBool::new(true);
         let response = handle_request(
             &mut state,
@@ -399,6 +376,9 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         write_extension_with_action(temp.path(), "session-counter", "increment");
         let mut state = DaemonState::load(temp.path()).expect("state");
+        state
+            .bones
+            .insert_test_responder("session-counter", Arc::new(ActionCapture::default()));
         let running = AtomicBool::new(true);
         let response = handle_request(
             &mut state,
@@ -437,41 +417,6 @@ mod tests {
             *self.sender.lock().ok()? = Some(sender.to_string());
             *self.payload.lock().ok()? = Some(payload.to_vec());
             Some(Vec::new())
-        }
-    }
-
-    #[test]
-    fn trigger_payload_windows_display_status_reports_host_execution() {
-        let temp = tempdir().expect("tempdir");
-        write_windows_display_extension(temp.path());
-        let state = DaemonState::load(temp.path()).expect("state");
-        let service = DaemonControlService::new(
-            &state.user_extensions_dir,
-            state.core_extensions_dir.as_deref(),
-            &state.registry,
-            &state.host_extensions,
-            &state.state_store,
-            state.bones.status(),
-        );
-
-        let result = service.trigger_payload("windows-display-manager", Some("status"));
-        if cfg!(target_os = "windows") {
-            let payload = result.expect("payload");
-            assert_eq!(
-                payload.get("extensionId").and_then(|v| v.as_str()),
-                Some("windows-display-manager")
-            );
-            assert_eq!(
-                payload.get("actionId").and_then(|v| v.as_str()),
-                Some("status")
-            );
-            assert!(
-                payload.get("hostExecution").is_some(),
-                "windows-display status action should include host execution payload"
-            );
-        } else {
-            let err = result.expect_err("non-windows should not support display manager");
-            assert!(err.contains("only supported on Windows"));
         }
     }
 
@@ -566,15 +511,16 @@ mod tests {
     }
 
     #[test]
-    fn verify_request_errors_when_loaded_extension_loses_main_file() {
+    fn verify_request_errors_when_loaded_extension_loses_component() {
         let temp = tempdir().expect("tempdir");
         write_extension(temp.path(), "alpha-ext");
         let mut state = DaemonState::load(temp.path()).expect("state");
-        fs::remove_file(temp.path().join("alpha-ext").join("main.ts")).expect("remove main");
+        fs::remove_file(temp.path().join("alpha-ext").join("alpha-ext.wasm"))
+            .expect("remove component");
         let running = AtomicBool::new(true);
         let response = handle_request(&mut state, IpcRequest::Verify, &running);
         assert!(!response.ok);
-        assert!(response.message.contains("missing main.ts"));
+        assert!(response.message.contains("missing runtime artifact"));
     }
 
     #[test]
@@ -584,7 +530,6 @@ mod tests {
         let broken = temp.path().join("broken-ext");
         fs::create_dir_all(&broken).expect("create broken dir");
         fs::write(broken.join("manifest.json"), "{}").expect("write invalid manifest");
-        fs::write(broken.join("main.ts"), "export default function(){}").expect("write main");
         let running = AtomicBool::new(true);
         let response = handle_request(&mut state, IpcRequest::Reload, &running);
         assert!(!response.ok);

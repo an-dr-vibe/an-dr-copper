@@ -111,7 +111,7 @@ function New-CopiedInstallLaunchers {
   param([string]$TargetInstallDir)
 
   $pwshPath = Resolve-PwshPath
-  $exeName = if ($IsWindows) { "copperd.exe" } else { "copperd" }
+  $exeName = if ($IsWindows) { "copper.exe" } else { "copper" }
   $startScriptPath = Get-StartScriptPath -TargetInstallDir $TargetInstallDir
   $launcherPath = Get-StartLauncherPath -TargetInstallDir $TargetInstallDir
 
@@ -285,10 +285,8 @@ function Finalize-Install {
     [string]$AutoStartName
   )
 
-  $exeName = if ($IsWindows) { "copperd.exe" } else { "copperd" }
+  $exeName = if ($IsWindows) { "copper.exe" } else { "copper" }
   $installedBinary = Join-Path $TargetInstallDir $exeName
-  $guiExeName = if ($IsWindows) { "copper.exe" } else { "copper" }
-  $guiBinary = Join-Path $TargetInstallDir $guiExeName
   if (-not (Test-Path $installedBinary)) {
     throw "Install failed: binary missing at $installedBinary"
   }
@@ -296,6 +294,10 @@ function Finalize-Install {
   $extensionsPath = Join-Path $TargetInstallDir "extensions"
   if (-not (Test-Path $extensionsPath)) {
     throw "Install failed: required 'extensions' directory missing."
+  }
+  $schemasPath = Join-Path $TargetInstallDir "schemas"
+  if (-not (Test-Path $schemasPath)) {
+    throw "Install failed: required 'schemas' directory missing."
   }
 
   if (-not $IsWindows) {
@@ -316,8 +318,8 @@ function Finalize-Install {
   $launcherPath = Get-StartLauncherPath -TargetInstallDir $TargetInstallDir
   Write-Host "Installed $DisplayName to: $TargetInstallDir"
   Write-Host "Binary: $installedBinary"
-  if (Test-Path $guiBinary) {
-    Write-Host "Double-click launcher: $guiBinary"
+  if ($IsWindows) {
+    Write-Host "Double-click launcher: $installedBinary"
   }
   Write-Host "Launcher: $launcherPath"
   if ($AutoStart) {
@@ -378,7 +380,7 @@ function Install-FromReleaseAsset {
   Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath -UseBasicParsing
   Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
 
-  $exeName = if ($IsWindows) { "copperd.exe" } else { "copperd" }
+  $exeName = if ($IsWindows) { "copper.exe" } else { "copper" }
   $binary = Get-ChildItem -Path $extractDir -Recurse -File -Filter $exeName | Select-Object -First 1
   if (-not $binary) {
     throw "Downloaded archive does not contain $exeName."
@@ -439,10 +441,8 @@ function Install-FromSourceArchive {
     throw "Source build failed with exit code $LASTEXITCODE"
   }
 
-  $exeName = if ($IsWindows) { "copperd.exe" } else { "copperd" }
+  $exeName = if ($IsWindows) { "copper.exe" } else { "copper" }
   $builtBinary = Join-Path $sourceRoot.FullName "target/release/$exeName"
-  $guiExeName = if ($IsWindows) { "copper.exe" } else { "copper" }
-  $guiBinary = Join-Path $sourceRoot.FullName "target/release/$guiExeName"
   if (-not (Test-Path $builtBinary)) {
     throw "Source build completed but binary is missing: $builtBinary"
   }
@@ -454,10 +454,9 @@ function Install-FromSourceArchive {
 
   Initialize-InstallDir -TargetInstallDir $TargetInstallDir -Overwrite:$Overwrite
   Copy-Item -Path $builtBinary -Destination (Join-Path $TargetInstallDir $exeName) -Force
-  if (Test-Path $guiBinary) {
-    Copy-Item -Path $guiBinary -Destination (Join-Path $TargetInstallDir $guiExeName) -Force
-  }
   Copy-Item -Path $sourceExtensions -Destination (Join-Path $TargetInstallDir "extensions") -Recurse -Force
+  Copy-Item -Path (Join-Path $sourceRoot.FullName "schemas") -Destination (Join-Path $TargetInstallDir "schemas") -Recurse -Force
+  Copy-Item -Path (Join-Path $sourceRoot.FullName "daemon/ui") -Destination (Join-Path $TargetInstallDir "ui") -Recurse -Force
 
   $readme = Join-Path $sourceRoot.FullName "README.md"
   if (Test-Path $readme) {

@@ -105,17 +105,17 @@ valid, while extensions requesting display control must declare it explicitly.
 
 ## Recipe: add a host API module
 
-Five touch-points in Rust, then schema + SDK:
+Update the native implementation, permission policy, protocol, and guest SDK:
 
 1. **`daemon/src/api/<name>.rs`** — implement public functions.
    Use `fs.rs` (stub) or `secure_store.rs` (real crate) as template.
 2. **`daemon/src/api/mod.rs`** — `pub mod <name>;` (keep alphabetical).
 3. **`daemon/src/descriptor.rs`** — add variant to `Permission` enum.
    Serde uses `#[serde(rename_all = "kebab-case")]`, so `SecureStore` → `"secure-store"`.
-4. **`daemon/src/execution.rs`** — add arm to `permissions_as_strings` match.
-5. **`daemon/src/cli.rs`** — add arm to the `format_permissions` match.
-6. **`schemas/extension/1.0.0/descriptor.schema.json`** — add string to `permissions.items.enum`.
-7. **`sdk/api.d.ts`** — add namespace to `Api` interface + entry to `Permission` union.
+4. **`daemon/src/bones_integration/`** — validate and execute the capability.
+5. **`daemon/src/cli.rs`** — add permission formatting when applicable.
+6. **`schemas/extension/1.0.0/descriptor.schema.json`** — add the permission.
+7. **`sdk/rust` and `sdk/COMPONENT_API.md`** — expose and document the helper.
 
 Verify: `cargo test -p copperd --lib api::<name>` must pass.
 
@@ -144,7 +144,7 @@ and generates Bones guest bindings from `sdk/wit/core.wit`. The build targets
 copies `<id>.wasm` beside the manifest, validates the pair, and optionally
 creates a deterministic two-file archive. See `sdk/COMPONENT_API.md`.
 
-Minimal compatibility manifest:
+Minimal Component manifest:
 ```json
 {
   "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
@@ -152,20 +152,21 @@ Minimal compatibility manifest:
   "name": "My Extension",
   "version": "0.1.0",
   "trigger": "my-ext",
+  "runtime": {
+    "kind": "wasm-component",
+    "abi": "copper.component/1",
+    "artifact": "my-ext.wasm"
+  },
   "actions": [{ "id": "run", "label": "Run", "script": "onTrigger" }]
 }
 ```
 
 Verify: `cargo run -p copperd -- validate extensions/<id>/manifest.json`
 
-For a WASM Component package, add
+The registry requires
 `runtime: { "kind": "wasm-component", "abi": "copper.component/1",
-"artifact": "<id>.wasm" }`. The registry rejects missing, renamed, traversing,
+"artifact": "<id>.wasm" }` and rejects omitted, missing, renamed, traversing,
 or package-external artifacts.
-
-Omit `runtime` only while maintaining a construction-time `main.ts`
-compatibility extension. `cargo run -p copperd -- generate-main` remains the
-legacy scaffolder until the final cutover removes Deno.
 
 To schedule one component action in the background, add the optional runtime
 metadata below. Both config-key fields refer to the extension's scoped
@@ -187,12 +188,10 @@ Bones dispatch, so transient failures are retried.
 
 ## Recipe: add a built-in host extension
 
-1. Add `extensions/<id>/manifest.json` + `main.ts`.
-2. In `daemon/src/host_extensions.rs`:
-   - Create a struct implementing `HostExtensionHandler`.
-   - Add a `CapabilitySpec` entry in `capability_specs()`.
-   - Implement `trigger_payload`, `apply_settings`, `dynamic_options`, `tick_background` as needed.
-3. Register handler in `HostExtensionRegistry::new`.
+1. Scaffold `extensions/<id>/manifest.json` plus its Component.
+2. Add only sensitive or platform-specific native operations to the relevant
+   module under `daemon/src/bones_integration/`.
+3. Declare the minimum manifest permissions and exercise them through UTR.
 
 ## Recipe: add a Cargo dependency
 
@@ -223,10 +222,9 @@ Write state only through `ExtensionStateStore`. Never write JSON files directly.
 | `daemon/src/api/mod.rs` | API module registry |
 | `daemon/src/bones_integration/` | External Copper modules built on public Bones contracts |
 | `daemon/src/descriptor.rs` | Manifest types + Permission enum |
-| `daemon/src/execution.rs` | Trigger preparation + permission serialization |
 | `daemon/src/host_extensions.rs` | Built-in host capability registry |
 | `daemon/src/state_store.rs` | Config/status persistence |
-| `sdk/api.d.ts` | TypeScript API contract (read by extension authors) |
+| `sdk/COMPONENT_API.md` | Component guest contract |
 | `schemas/extension/1.0.0/descriptor.schema.json` | Manifest schema |
 
 ## Module sizing guideline

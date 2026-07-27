@@ -9,7 +9,7 @@ mod tests {
     fn write_extension(root: &Path, manifest: &str) {
         fs::create_dir_all(root).expect("create extension dir");
         fs::write(root.join("manifest.json"), manifest).expect("write manifest");
-        fs::write(root.join("main.ts"), "export default function(){}").expect("write main.ts");
+        fs::write(root.join("windows-display-manager.wasm"), b"\0asm").expect("write component");
     }
 
     #[test]
@@ -37,6 +37,11 @@ mod tests {
                 "name": "Windows Display Manager",
                 "version": "1.0.0",
                 "trigger": "windows-display",
+                "runtime": {
+                    "kind": "wasm-component",
+                    "abi": "copper.component/1",
+                    "artifact": "windows-display-manager.wasm"
+                },
                 "permissions": ["ui", "store"],
                 "actions": [{ "id": "status", "label": "Status", "script": "return;" }],
                 "tray": {

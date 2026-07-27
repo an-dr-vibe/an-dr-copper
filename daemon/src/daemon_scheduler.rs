@@ -1,7 +1,4 @@
-use crate::core_config::CoreConfig;
 use crate::extension::Registry;
-use crate::host_extensions::HostExtensionRegistry;
-use crate::logging;
 use crate::state_store::ExtensionStateStore;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -20,7 +17,6 @@ pub struct DaemonScheduler {
     reload_interval: Duration,
     last_reload: Instant,
     last_background_scan: Instant,
-    last_legacy_background: BTreeMap<String, Instant>,
     last_bones_background: BTreeMap<String, Instant>,
 }
 
@@ -32,7 +28,6 @@ impl DaemonScheduler {
             last_background_scan: Instant::now()
                 .checked_sub(BACKGROUND_SCAN_INTERVAL)
                 .unwrap_or_else(Instant::now),
-            last_legacy_background: BTreeMap::new(),
             last_bones_background: BTreeMap::new(),
         }
     }
@@ -43,41 +38,6 @@ impl DaemonScheduler {
 
     pub fn mark_reload(&mut self) {
         self.last_reload = Instant::now();
-    }
-
-    pub fn tick_background(
-        &mut self,
-        registry: &Registry,
-        host_extensions: &HostExtensionRegistry,
-        state_store: &ExtensionStateStore,
-        core_config: &CoreConfig,
-    ) {
-        for capability in host_extensions.background_capabilities() {
-            if registry
-                .get(capability.extension_id)
-                .is_some_and(|extension| extension.wasm_component_path().is_some())
-            {
-                continue;
-            }
-            if !core_config.is_extension_enabled(capability.extension_id) {
-                continue;
-            }
-            let last_run = self
-                .last_legacy_background
-                .get(capability.capability_id)
-                .copied();
-            match host_extensions.tick_background(capability.extension_id, state_store, last_run) {
-                Ok(true) => {
-                    self.last_legacy_background
-                        .insert(capability.capability_id.to_string(), Instant::now());
-                }
-                Ok(false) => {}
-                Err(err) => logging::error(format!(
-                    "background capability error [{} -> {}]: {}",
-                    capability.capability_id, capability.extension_id, err
-                )),
-            }
-        }
     }
 
     pub fn due_bones_background(
@@ -109,9 +69,6 @@ impl DaemonScheduler {
             else {
                 continue;
             };
-            if extension.wasm_component_path().is_none() {
-                continue;
-            }
             let config = state_store.load_config(&extension.descriptor.id)?;
             let enabled = background
                 .enabled_config
@@ -164,12 +121,9 @@ fn schedule_key(extension_id: &str, action_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::DaemonScheduler;
-    use crate::core_config::CoreConfig;
     use crate::descriptor::COMPONENT_ABI_V1;
     use crate::extension::Registry;
-    use crate::host_extensions::HostExtensionRegistry;
-    use crate::state_store::{read_json_object, write_json_object, ExtensionStateStore};
-    use std::collections::BTreeSet;
+    use crate::state_store::ExtensionStateStore;
     use std::fs;
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
@@ -178,63 +132,6 @@ mod tests {
     fn reload_due_tracks_interval() {
         let scheduler = DaemonScheduler::new(std::time::Duration::from_millis(0));
         assert!(scheduler.reload_due());
-    }
-
-    #[test]
-    fn background_tick_uses_capability_identity() {
-        let temp = tempdir().expect("tempdir");
-        let store = ExtensionStateStore::new(temp.path().join(".Copper/extensions"));
-        write_json_object(
-            &store.config_path("desktop-torrent-organizer"),
-            &serde_json::json!({
-                "desktopFolder": temp.path().join("Desktop").display().to_string(),
-                "torrentsFolder": temp.path().join("Desktop/Torrents").display().to_string(),
-                "autoRun": false,
-                "pollIntervalSeconds": 1
-            }),
-        )
-        .expect("write config");
-
-        let registry = HostExtensionRegistry::new();
-        let extensions = Registry::load_from_dir(temp.path()).expect("extensions");
-        let mut scheduler = DaemonScheduler::new(std::time::Duration::from_secs(10));
-        scheduler.tick_background(&extensions, &registry, &store, &CoreConfig::default());
-
-        let status =
-            read_json_object(&store.status_path("desktop-torrent-organizer")).expect("read status");
-        assert_eq!(status, serde_json::json!({}));
-    }
-
-    #[test]
-    fn background_tick_skips_disabled_extensions() {
-        let temp = tempdir().expect("tempdir");
-        let desktop = temp.path().join("Desktop");
-        std::fs::create_dir_all(&desktop).expect("desktop");
-        std::fs::write(desktop.join("movie.torrent"), "data").expect("write torrent");
-
-        let store = ExtensionStateStore::new(temp.path().join(".Copper/extensions"));
-        write_json_object(
-            &store.config_path("desktop-torrent-organizer"),
-            &serde_json::json!({
-                "desktopFolder": desktop.display().to_string(),
-                "torrentsFolder": temp.path().join("Desktop/Torrents").display().to_string(),
-                "autoRun": true,
-                "pollIntervalSeconds": 1
-            }),
-        )
-        .expect("write config");
-
-        let core_config = CoreConfig {
-            disabled_extensions: BTreeSet::from(["desktop-torrent-organizer".to_string()]),
-        };
-
-        let registry = HostExtensionRegistry::new();
-        let extensions = Registry::load_from_dir(temp.path()).expect("extensions");
-        let mut scheduler = DaemonScheduler::new(std::time::Duration::from_secs(10));
-        scheduler.tick_background(&extensions, &registry, &store, &core_config);
-
-        // torrent must still be on the desktop — the disabled extension should not have moved it
-        assert!(desktop.join("movie.torrent").exists());
     }
 
     #[test]

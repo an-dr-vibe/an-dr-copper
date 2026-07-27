@@ -156,8 +156,8 @@ fn wasm_component_manifest_resolves_an_id_matched_artifact_without_main_ts() {
     assert_eq!(runtime.abi, COMPONENT_ABI_V1);
     assert_eq!(
         loaded
-            .wasm_component_path()
-            .and_then(|path| path.file_name())
+            .runtime_artifact_path()
+            .file_name()
             .and_then(|name| name.to_str()),
         Some("counter.wasm")
     );
@@ -560,7 +560,7 @@ fn every_extension_has_valid_descriptor_and_runtime_artifact() {
             .runtime
             .as_ref()
             .map(|runtime| ext.join(&runtime.artifact))
-            .unwrap_or_else(|| ext.join("main.ts"));
+            .expect("shipped extension must declare a Component runtime");
         assert!(
             artifact_path.exists(),
             "missing runtime artifact {}",

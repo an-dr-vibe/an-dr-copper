@@ -46,6 +46,23 @@ pub enum Permission {
     WindowsDisplay,
 }
 
+pub fn permissions_as_strings(permissions: &[Permission]) -> Vec<String> {
+    permissions
+        .iter()
+        .map(|permission| match permission {
+            Permission::Fs => "fs",
+            Permission::Keyboard => "keyboard",
+            Permission::Network => "network",
+            Permission::SecureStore => "secure-store",
+            Permission::Shell => "shell",
+            Permission::Store => "store",
+            Permission::Ui => "ui",
+            Permission::WindowsDisplay => "windows-display",
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum InputType {

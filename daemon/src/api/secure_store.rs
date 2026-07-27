@@ -30,14 +30,25 @@ mod tests {
 
     #[test]
     fn roundtrip_set_get_delete() {
-        let service = "copper-test";
+        let service = format!("copper-api-test-{}", std::process::id());
         let key = "roundtrip-key";
         let value = "test-secret";
 
-        set(service, key, value);
-        assert_eq!(get(service, key).as_deref(), Some(value));
-        delete(service, key);
-        assert!(get(service, key).is_none());
+        let Ok(entry) = keyring::Entry::new(&service, key) else {
+            return;
+        };
+        if entry.set_password("availability-probe").is_err() {
+            return;
+        }
+        if !matches!(entry.get_password().as_deref(), Ok("availability-probe")) {
+            let _ = entry.delete_credential();
+            return;
+        }
+
+        set(&service, key, value);
+        assert_eq!(get(&service, key).as_deref(), Some(value));
+        delete(&service, key);
+        assert!(get(&service, key).is_none());
     }
 
     #[test]

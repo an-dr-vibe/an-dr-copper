@@ -30,7 +30,7 @@ $runtimeFile = if ($manifest.runtime -and $manifest.runtime.kind -eq "wasm-compo
   }
   [string]$manifest.runtime.artifact
 } else {
-  "main.ts"
+  throw "Extension packages require a copper.component/1 wasm-component runtime"
 }
 $runtimePath = [IO.Path]::GetFullPath((Join-Path $resolvedExtensionDir $runtimeFile))
 $extensionPrefix = $resolvedExtensionDir.TrimEnd(

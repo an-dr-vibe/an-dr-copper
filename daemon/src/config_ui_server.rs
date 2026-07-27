@@ -372,26 +372,41 @@ fn handle_trigger_extension(
     action_id: Option<&str>,
     inputs: serde_json::Value,
 ) -> Result<HttpResponse, UiConfigError> {
-    use crate::execution::ExecutionEngine;
     use crate::extension::load_runtime_registry;
-    use crate::runtime::default_runtime_adapter;
 
     let registry = load_runtime_registry(&state.user_extensions_dir)?;
     let ext = registry
         .get(extension_id)
         .ok_or_else(|| UiConfigError::ExtensionNotFound(extension_id.to_string()))?;
-    let runtime = default_runtime_adapter().map_err(|e| UiConfigError::Request(e.to_string()))?;
-    let engine = ExecutionEngine::new(runtime.as_ref(), &state.host_extensions, &state.state_store);
-    let prepared = engine
-        .prepare_trigger(ext, action_id)
-        .map_err(UiConfigError::Request)?;
-    engine
-        .execute_trigger(&prepared, &inputs)
-        .map_err(UiConfigError::Request)?;
+    let action = match action_id {
+        Some(action_id) => ext
+            .descriptor
+            .actions
+            .iter()
+            .find(|action| action.id == action_id)
+            .ok_or_else(|| UiConfigError::Request(format!("action '{action_id}' not found")))?,
+        None => ext
+            .descriptor
+            .actions
+            .first()
+            .ok_or_else(|| UiConfigError::Request("no action defined".to_string()))?,
+    };
+    let input = inputs
+        .as_object()
+        .cloned()
+        .ok_or_else(|| UiConfigError::Request("trigger inputs must be an object".to_string()))?;
+    crate::bones_integration::execute_component_action(
+        &registry,
+        &state.state_store,
+        extension_id,
+        &action.id,
+        input,
+    )
+    .map_err(UiConfigError::Request)?;
     HttpResponse::ok_json(&serde_json::json!({
         "ok": true,
-        "extensionId": prepared.extension_id,
-        "actionId": prepared.action_id,
+        "extensionId": extension_id,
+        "actionId": action.id,
     }))
 }
 

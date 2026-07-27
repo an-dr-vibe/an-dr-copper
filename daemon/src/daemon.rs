@@ -9,11 +9,12 @@ use crate::daemon_scheduler::DaemonScheduler;
 use crate::extension::{
     core_extensions_dir, default_extensions_dir, load_runtime_registry, Registry,
 };
-use crate::host_extensions::HostExtensionRegistry;
 use crate::hotkey::HotkeyController;
 use crate::logging;
 use crate::state_store::ExtensionStateStore;
+#[cfg(feature = "native-ui")]
 use crate::tray::TrayController;
+#[cfg(feature = "native-ui")]
 use crate::tray_extension::AdditionalTrayController;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -122,7 +123,6 @@ struct DaemonState {
     core_config: CoreConfig,
     auth_token: Option<String>,
     state_store: ExtensionStateStore,
-    host_extensions: HostExtensionRegistry,
     bones: BonesDaemonDriver,
 }
 
@@ -140,7 +140,6 @@ impl DaemonState {
             core_config,
             auth_token: None,
             state_store,
-            host_extensions: HostExtensionRegistry::new(),
             bones,
         })
     }
@@ -163,7 +162,6 @@ impl DaemonState {
             &self.user_extensions_dir,
             self.core_extensions_dir.as_deref(),
             &self.registry,
-            &self.host_extensions,
             &self.state_store,
             self.bones.status(),
         )
@@ -178,11 +176,6 @@ impl DaemonState {
             .registry
             .get(extension_id)
             .ok_or_else(|| format!("extension '{extension_id}' not found"))?;
-        if extension.wasm_component_path().is_none() {
-            return self
-                .control_service()
-                .trigger_payload(extension_id, action_id);
-        }
         let action = match action_id {
             Some(action_id) => extension
                 .descriptor
@@ -198,7 +191,7 @@ impl DaemonState {
         };
         let action_id = action.id.clone();
         let permissions =
-            crate::execution::permissions_as_strings(&extension.descriptor.permissions);
+            crate::descriptor::permissions_as_strings(&extension.descriptor.permissions);
         let dispatch = self.bones.dispatch_action(
             extension_id,
             &action_id,
@@ -259,10 +252,12 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     state.auth_token = Some(auth.token().to_string());
     let (settings_ui, settings_requests) = settings_ui_channel();
     #[cfg(not(feature = "native-ui"))]
-    let _ = settings_requests;
+    let _ = (settings_ui, settings_requests);
+    #[cfg(feature = "native-ui")]
     let disable_tray = std::env::var("COPPERD_DISABLE_TRAY")
         .map(|value| value == "1")
         .unwrap_or(false);
+    #[cfg(feature = "native-ui")]
     let _tray = if disable_tray {
         None
     } else {
@@ -275,6 +270,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
         )
     };
+    #[cfg(feature = "native-ui")]
     let additional_trays = if disable_tray {
         None
     } else {
@@ -287,10 +283,13 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
         )
     };
+    #[cfg(feature = "native-ui")]
     let additional_tray_count = additional_trays
         .as_ref()
         .map(|controller| controller.specs().len())
         .unwrap_or(0);
+    #[cfg(not(feature = "native-ui"))]
+    let additional_tray_count = 0;
     let _hotkeys = HotkeyController::initialize(
         Arc::clone(&running),
         config.bind_addr.clone(),
@@ -331,12 +330,6 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             let _ = state.reload()?;
             scheduler.mark_reload();
         }
-        scheduler.tick_background(
-            &state.registry,
-            &state.host_extensions,
-            &state.state_store,
-            &state.core_config,
-        );
         match scheduler.due_bones_background(&state.registry, &state.state_store) {
             Ok(actions) => {
                 for action in actions {

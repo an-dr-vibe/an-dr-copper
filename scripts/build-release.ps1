@@ -77,7 +77,7 @@ function Publish-ExtensionRuntimeDirectories {
       }
       [string]$manifest.runtime.artifact
     } else {
-      "main.ts"
+      throw "release manifest requires a copper.component/1 wasm-component runtime: $manifestPath"
     }
     $runtimePath = Join-Path $extensionDir $runtimeFile
     if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
@@ -154,6 +154,7 @@ New-Item -ItemType Directory -Path $bundlePath -Force | Out-Null
 Copy-Item -Path $binaryPath -Destination (Join-Path $bundlePath $exeName) -Force
 Copy-Item -Path (Join-Path $repoRoot "README.md") -Destination (Join-Path $bundlePath "README.md") -Force
 Copy-Item -Path (Join-Path $repoRoot "docs/QUICKSTART.md") -Destination (Join-Path $bundlePath "QUICKSTART.md") -Force
+Copy-Item -Path (Join-Path $repoRoot "schemas") -Destination (Join-Path $bundlePath "schemas") -Recurse -Force
 
 $bundleExtensions = Join-Path $bundlePath "extensions"
 Publish-ExtensionRuntimeDirectories `
