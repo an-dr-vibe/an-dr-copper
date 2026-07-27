@@ -24,6 +24,17 @@ matching host event arrives.
 The host authorizes only the Bones-stamped component identity and manifest
 permissions; guest-provided identity fields have no authority.
 
+Native request families currently include:
+
+- `clock/unix-now` for a host-stamped Unix timestamp without ambient WASI
+  clocks;
+- `fs/create-dir`, `fs/list`, `fs/move`, and `fs/delete`, with home-relative
+  paths resolved by the host;
+- `store/get`, `store/set`, `store/config.get`, `store/config.merge`,
+  `store/status.get`, and `store/status.merge`;
+- permissionless `notify/show` plus manifest-gated `ui/show` and `ui/update`;
+- the platform and shell operations documented by their manifest permissions.
+
 Rust components target `wasm32-wasip2`. Copper's build script pins dependency
 resolution with `Cargo.lock`, disables incremental compilation, copies exactly
 `<manifest id>.wasm` beside the manifest, validates the pair, and can create a

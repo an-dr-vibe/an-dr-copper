@@ -9,6 +9,7 @@ pub const COPPER_BUS_PROTOCOL_V1: &str = "copper.bus/1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
+    Clock,
     Fs,
     Keyboard,
     Network,
@@ -24,6 +25,7 @@ impl Capability {
     /// Returns the manifest permission required before this capability queues.
     pub fn required_permission(self) -> Option<Permission> {
         match self {
+            Self::Clock => None,
             Self::Fs => Some(Permission::Fs),
             Self::Keyboard => Some(Permission::Keyboard),
             Self::Network => Some(Permission::Network),
@@ -144,5 +146,6 @@ mod tests {
             Some(Permission::WindowsDisplay)
         );
         assert_eq!(Capability::Notify.required_permission(), None);
+        assert_eq!(Capability::Clock.required_permission(), None);
     }
 }

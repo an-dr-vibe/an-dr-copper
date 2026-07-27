@@ -47,9 +47,9 @@ Current implementation status:
 - Implemented: a Rust `copper.component/1` guest SDK with generated Bones WIT
   bindings, sender validation, asynchronous capability helpers, a scaffold,
   locked `wasm32-wasip2` builds, and deterministic extension archives.
-- Implemented: `session-counter` and `sort-downloads` Component ports with live
-  Bones-driver parity tests, committed reproducible artifacts, and no legacy
-  entrypoints.
+- Implemented: `session-counter`, `sort-downloads`, and
+  `desktop-torrent-organizer` Component ports with live Bones-driver parity
+  tests, committed reproducible artifacts, and no legacy entrypoints.
 - Planned: completion of the shipped WASM Component ports and richer
   cross-platform tray/hotkey integration.
 

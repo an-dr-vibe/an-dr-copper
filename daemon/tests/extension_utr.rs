@@ -55,12 +55,7 @@ fn shipped_extension_contract_matrix_is_stable() {
         (
             "desktop-torrent-organizer",
             "desktop-torrents",
-            vec![
-                Permission::Fs,
-                Permission::Shell,
-                Permission::Store,
-                Permission::Ui,
-            ],
+            vec![Permission::Fs, Permission::Store, Permission::Ui],
             vec!["move-torrents", "show-config"],
         ),
         (
@@ -112,7 +107,10 @@ fn shipped_extension_contract_matrix_is_stable() {
 
     for (id, trigger, permissions, action_ids) in expected {
         let descriptor = read_descriptor(id);
-        let component_ported = matches!(id, "session-counter" | "sort-downloads");
+        let component_ported = matches!(
+            id,
+            "desktop-torrent-organizer" | "session-counter" | "sort-downloads"
+        );
         assert_eq!(
             descriptor.runtime.is_some(),
             component_ported,
@@ -305,6 +303,46 @@ fn simple_extension_component_ports_preserve_their_capability_workflows() {
 }
 
 #[test]
+fn torrent_organizer_component_contract_preserves_monitoring_and_move_only_scope() {
+    let descriptor = read_descriptor("desktop-torrent-organizer");
+    let runtime = descriptor.runtime.expect("WASM Component runtime");
+    assert_eq!(runtime.kind, RuntimeKind::WasmComponent);
+    assert_eq!(runtime.abi, COMPONENT_ABI_V1);
+    assert_eq!(runtime.artifact, "desktop-torrent-organizer.wasm");
+    let background = runtime.background.expect("background schedule");
+    assert_eq!(background.action, "move-torrents");
+    assert_eq!(background.enabled_config.as_deref(), Some("autoRun"));
+    assert_eq!(
+        background.interval_seconds_config.as_deref(),
+        Some("pollIntervalSeconds")
+    );
+    assert_eq!(background.default_interval_seconds, 5);
+    assert!(!extension_dir("desktop-torrent-organizer")
+        .join("main.ts")
+        .exists());
+
+    let source = read_component_source("desktop-torrent-organizer");
+    for contract in [
+        "\"create-dir\"",
+        "\"list\"",
+        "\"move\"",
+        "\"config.get\"",
+        "\"status.merge\"",
+        "lastScanUnix",
+        "ends_with(\".torrent\")",
+    ] {
+        assert!(
+            source.contains(contract),
+            "torrent organizer Component lost contract {contract}"
+        );
+    }
+    assert!(
+        !source.contains("\"delete\""),
+        "torrent organizer must never request file deletion"
+    );
+}
+
+#[test]
 fn simple_components_execute_their_existing_workflows_on_bones() {
     let temp = tempfile::tempdir().expect("tempdir");
     let store = ExtensionStateStore::new(temp.path().join("state"));
@@ -351,6 +389,71 @@ fn simple_components_execute_their_existing_workflows_on_bones() {
     assert_eq!(status.capability_completed, 9);
     assert_eq!(status.capability_failed, 0);
     assert_eq!(status.capability_delivery_failures, 0);
+}
+
+#[test]
+fn torrent_organizer_component_moves_only_torrents_and_persists_status() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let desktop = temp.path().join("Desktop");
+    let torrents = desktop.join("Torrents");
+    fs::create_dir_all(&desktop).expect("desktop");
+    fs::write(desktop.join("one.torrent"), "one").expect("first torrent");
+    fs::write(desktop.join("TWO.TORRENT"), "two").expect("second torrent");
+    fs::write(desktop.join("notes.txt"), "keep").expect("non-torrent");
+
+    let store = ExtensionStateStore::new(temp.path().join("state"));
+    store
+        .write_config(
+            "desktop-torrent-organizer",
+            &serde_json::json!({
+                "desktopFolder": desktop.display().to_string(),
+                "torrentsFolder": torrents.display().to_string(),
+                "autoRun": true,
+                "pollIntervalSeconds": 5
+            }),
+        )
+        .expect("config");
+    let registry = Registry::load_from_dir(&extensions_root()).expect("shipped registry");
+    let mut driver = BonesDaemonDriver::new(&registry, store.clone()).expect("Bones driver");
+
+    driver
+        .dispatch_action(
+            "desktop-torrent-organizer",
+            "move-torrents",
+            Default::default(),
+        )
+        .expect("move action");
+    drive_until_completed(&mut driver, 11);
+
+    assert!(torrents.join("one.torrent").exists());
+    assert!(torrents.join("TWO.TORRENT").exists());
+    assert!(desktop.join("notes.txt").exists());
+    assert!(!desktop.join("one.torrent").exists());
+    let status = store
+        .load_status("desktop-torrent-organizer")
+        .expect("status");
+    assert_eq!(status["lastScanFound"], serde_json::json!(2));
+    assert_eq!(status["lastScanMoved"], serde_json::json!(2));
+    assert_eq!(status["lastScanFailed"], serde_json::json!(0));
+    assert!(status["lastScanUnix"]
+        .as_u64()
+        .is_some_and(|value| value > 0));
+    assert_eq!(
+        store
+            .load_store("desktop-torrent-organizer")
+            .expect("store")["desktop-torrent-organizer/last-run"]["moved"],
+        serde_json::json!(2)
+    );
+
+    driver
+        .dispatch_action(
+            "desktop-torrent-organizer",
+            "show-config",
+            Default::default(),
+        )
+        .expect("show config");
+    drive_until_completed(&mut driver, 15);
+    assert_eq!(driver.status().capability_failed, 0);
 }
 
 fn drive_until_completed(driver: &mut BonesDaemonDriver, expected: u64) {
@@ -405,12 +508,7 @@ fn desktop_torrent_descriptor_matches_required_contract() {
 
     assert_eq!(
         descriptor.permissions,
-        vec![
-            Permission::Fs,
-            Permission::Shell,
-            Permission::Store,
-            Permission::Ui
-        ]
+        vec![Permission::Fs, Permission::Store, Permission::Ui]
     );
 
     let action_ids = descriptor
@@ -510,26 +608,26 @@ fn desktop_torrent_descriptor_matches_required_contract() {
 }
 
 #[test]
-fn desktop_torrent_main_enforces_torrent_only_moves_and_no_delete() {
-    let main_ts = read_main_ts("desktop-torrent-organizer");
+fn desktop_torrent_component_enforces_torrent_only_moves_and_no_delete() {
+    let component = read_component_source("desktop-torrent-organizer");
     assert!(
-        main_ts.contains("endsWith(\".torrent\")"),
+        component.contains("ends_with(\".torrent\")"),
         "extension should target .torrent files only"
     );
     assert!(
-        main_ts.contains("api.fs.move"),
+        component.contains("\"move\""),
         "extension should move files to Torrents folder"
     );
     assert!(
-        !main_ts.contains("api.fs.delete"),
+        !component.contains("\"delete\""),
         "extension must not delete files"
     );
     assert!(
-        !main_ts.contains("extensionsInstallDir"),
+        !component.contains("extensionsInstallDir"),
         "torrent organizer should not own extension package install settings"
     );
     assert!(
-        !main_ts.contains("add-extension"),
+        !component.contains("add-extension"),
         "torrent organizer should not expose package install actions"
     );
 }

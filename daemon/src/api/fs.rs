@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -9,7 +10,7 @@ pub struct FileEntry {
 }
 
 pub fn list(path: &str) -> Vec<FileEntry> {
-    let Ok(read_dir) = std::fs::read_dir(path) else {
+    let Ok(read_dir) = std::fs::read_dir(expand_home(path)) else {
         return Vec::new();
     };
     let mut entries: Vec<FileEntry> = read_dir
@@ -27,12 +28,15 @@ pub fn list(path: &str) -> Vec<FileEntry> {
 }
 
 pub fn move_file(src: &str, dst: &str) -> Result<(), std::io::Error> {
-    std::fs::rename(src, dst)
-        .or_else(|_| std::fs::copy(src, dst).and_then(|_| std::fs::remove_file(src)))
+    let src = expand_home(src);
+    let dst = expand_home(dst);
+    std::fs::rename(&src, &dst)
+        .or_else(|_| std::fs::copy(&src, &dst).and_then(|_| std::fs::remove_file(&src)))
 }
 
 pub fn delete(path: &str) -> Result<(), std::io::Error> {
-    let p = std::path::Path::new(path);
+    let resolved = expand_home(path);
+    let p = resolved.as_path();
     if p.is_dir() {
         std::fs::remove_dir_all(p)
     } else {
@@ -40,9 +44,27 @@ pub fn delete(path: &str) -> Result<(), std::io::Error> {
     }
 }
 
+pub fn create_dir_all(path: &str) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(expand_home(path))
+}
+
+fn expand_home(raw: &str) -> PathBuf {
+    let relative = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\"));
+    if let Some(relative) = relative {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(relative);
+        }
+    } else if raw == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    PathBuf::from(raw)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{delete, list, move_file, FileEntry};
+    use super::{create_dir_all, delete, expand_home, list, move_file, FileEntry};
     use tempfile::tempdir;
 
     #[test]
@@ -88,6 +110,21 @@ mod tests {
         std::fs::write(&p, "x").expect("write");
         delete(p.to_str().unwrap()).expect("delete");
         assert!(!p.exists());
+    }
+
+    #[test]
+    fn create_dir_all_builds_nested_directories() {
+        let dir = tempdir().expect("tempdir");
+        let nested = dir.path().join("one/two");
+        create_dir_all(nested.to_str().unwrap()).expect("create");
+        assert!(nested.is_dir());
+    }
+
+    #[test]
+    fn home_relative_paths_resolve_before_native_io() {
+        let resolved = expand_home("~/Downloads");
+        assert_ne!(resolved, std::path::PathBuf::from("~/Downloads"));
+        assert!(resolved.ends_with("Downloads"));
     }
 
     #[test]

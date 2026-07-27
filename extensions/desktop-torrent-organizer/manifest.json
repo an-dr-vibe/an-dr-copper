@@ -4,7 +4,19 @@
   "name": "Desktop Torrent Organizer",
   "version": "1.0.0",
   "trigger": "desktop-torrents",
-  "permissions": ["fs", "shell", "store", "ui"],
+  "runtime": {
+    "kind": "wasm-component",
+    "abi": "copper.component/1",
+    "artifact": "desktop-torrent-organizer.wasm",
+    "background": {
+      "action": "move-torrents",
+      "enabledConfig": "autoRun",
+      "enabledByDefault": true,
+      "intervalSecondsConfig": "pollIntervalSeconds",
+      "defaultIntervalSeconds": 5
+    }
+  },
+  "permissions": ["fs", "store", "ui"],
   "inputs": [
     {
       "id": "desktopFolder",
@@ -40,13 +52,13 @@
       "id": "move-torrents",
       "label": "Move .torrent files from Desktop to Torrents",
       "description": "Run the organizer immediately using the saved monitor settings.",
-      "script": "Move .torrent files from desktopFolder to torrentsFolder and report summary."
+      "script": "move-torrents"
     },
     {
       "id": "show-config",
       "label": "Show extension configuration summary",
       "description": "Display the persisted configuration and recent install metadata.",
-      "script": "Read persisted configuration and show it in UI detail view."
+      "script": "show-config"
     }
   ],
   "settings": {

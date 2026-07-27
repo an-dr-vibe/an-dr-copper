@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn notification_remains_permissionless_for_active_wasm_senders() {
+    fn clock_and_notification_remain_permissionless_for_active_wasm_senders() {
         let temp = tempdir().expect("tempdir");
         write_component(temp.path(), "notifier", &[]);
         let registry = Registry::load_from_dir(temp.path()).expect("registry");
@@ -395,9 +395,21 @@ mod tests {
             ),
             CopperEnvelope::JobAccepted { .. }
         ));
+        assert!(matches!(
+            respond(
+                &mut module,
+                "notifier",
+                capability_request("request-2", "clock")
+            ),
+            CopperEnvelope::JobAccepted { .. }
+        ));
         assert_eq!(
             handle.pop_pending().expect("notification job").capability,
             Capability::Notify
+        );
+        assert_eq!(
+            handle.pop_pending().expect("clock job").capability,
+            Capability::Clock
         );
     }
 

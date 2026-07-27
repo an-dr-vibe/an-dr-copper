@@ -9,6 +9,7 @@ pub const COPPER_JOBS_ENDPOINT: &str = "copper-jobs";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
+    Clock,
     Fs,
     Keyboard,
     Network,

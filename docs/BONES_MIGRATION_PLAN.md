@@ -294,7 +294,7 @@ Depends on: M4, M5
 |---:|---|---|---|---|
 | 1 | `session-counter` | WASM | DONE | scoped persistence and toast |
 | 2 | `sort-downloads` | WASM | DONE | scoped filesystem read and notification |
-| 3 | `desktop-torrent-organizer` | WASM | NOT STARTED | background jobs, file moves, settings, status |
+| 3 | `desktop-torrent-organizer` | WASM | DONE | background jobs, file moves, settings, status |
 | 4 | `safe-input-key` | WASM plus native capabilities | NOT STARTED | keychain, keyboard injection, hotkey |
 | 5 | `windows-display-manager` | WASM plus native capabilities | NOT STARTED | platform gating, dynamic options, apply, tray |
 
@@ -460,3 +460,4 @@ When updating this plan:
 | 2026-07-27 | Completed the M4 settings cutover: the default UI now uses correlated `copper.settings/1` messages through Bones web/Wry, tray requests attach on the daemon main thread, the temporary browser fallback remains explicit, and Tauri was removed. |
 | 2026-07-27 | Completed M5 with generated Rust guest bindings, a tested scaffold/build flow, and deterministic manifest-plus-runtime archives. Accepted D-008 after ComponentizeJS 0.21.0 failed its Windows ARM64 Wizer prerequisite; TypeScript Components are deferred and Rust is the cutover authoring path. |
 | 2026-07-27 | Started M6 by porting `session-counter` and `sort-downloads` to Rust Components. Their UTR runs real artifacts through the Bones driver, verifies persistent counter state and both asynchronous capability chains, and the legacy `main.ts` entrypoints are removed. |
+| 2026-07-27 | Ported `desktop-torrent-organizer` to a scheduled Rust Component, replaced shell-based directory creation with the scoped filesystem capability, added a permissionless host clock for status timestamps, and verified move-only filtering, saved settings, last-run state, and status through the live Bones driver. |

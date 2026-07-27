@@ -5,9 +5,9 @@ AI-generated extensions.
 
 Current status: the daemon, authenticated control plane, Bones/Wry settings UI,
 manifest discovery, native host capabilities, tray integration, and the
-versioned Rust WASM Component SDK are implemented. `session-counter` and
-`sort-downloads` run as Components; the remaining shipped extensions still use
-the temporary Deno bridge while the
+versioned Rust WASM Component SDK are implemented. `session-counter`,
+`sort-downloads`, and `desktop-torrent-organizer` run as Components; the
+remaining shipped extensions still use the temporary Deno bridge while the
 [Bones migration](docs/BONES_MIGRATION_PLAN.md) ports them.
 
 ## Requirements

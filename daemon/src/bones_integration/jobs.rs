@@ -5,7 +5,7 @@ use super::platform_jobs::{
 use super::{AuthorizedCapabilityJob, Capability, CopperEnvelope, COPPER_BUS_PROTOCOL_V1};
 use crate::api;
 use crate::extension::Registry;
-use crate::state_store::ExtensionStateStore;
+use crate::state_store::{unix_now_secs, ExtensionStateStore};
 use serde_json::{Map, Value};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{
@@ -149,6 +149,7 @@ fn execute_capability_job(
         ))
     } else {
         match job.capability {
+            Capability::Clock => execute_clock_operation(&job),
             Capability::Fs => execute_fs_operation(&job),
             Capability::Keyboard => execute_keyboard_operation(&job),
             Capability::Notify => execute_notify_operation(&job),
@@ -206,6 +207,12 @@ pub(super) type JobResult = Result<Value, (&'static str, String)>;
 
 fn execute_fs_operation(job: &AuthorizedCapabilityJob) -> JobResult {
     match job.operation.as_str() {
+        "create-dir" => {
+            let path = read_path(&job.args, "path")?;
+            api::fs::create_dir_all(path)
+                .map(|()| Value::Null)
+                .map_err(native_io_error)
+        }
         "list" => {
             let path = read_path(&job.args, "path")?;
             serde_json::to_value(api::fs::list(path))
@@ -225,6 +232,13 @@ fn execute_fs_operation(job: &AuthorizedCapabilityJob) -> JobResult {
                 .map_err(native_io_error)
         }
         operation => unknown_operation("filesystem", operation),
+    }
+}
+
+fn execute_clock_operation(job: &AuthorizedCapabilityJob) -> JobResult {
+    match job.operation.as_str() {
+        "unix-now" => Ok(Value::from(unix_now_secs())),
+        operation => unknown_operation("clock", operation),
     }
 }
 
@@ -571,6 +585,19 @@ mod tests {
         )
         .expect("worker");
 
+        let created = working.join("created/nested");
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-create-dir",
+                Capability::Fs,
+                "create-dir",
+                json!({"path": created}),
+            ))
+            .expect("create directory");
+        assert!(wait_for_completion(&worker).succeeded);
+        assert!(created.is_dir());
+
         worker
             .try_submit(capability_job(
                 "alpha",
@@ -662,6 +689,21 @@ mod tests {
             ))
             .expect("notify");
         assert!(wait_for_completion(&worker).succeeded);
+
+        worker
+            .try_submit(capability_job(
+                "alpha",
+                "request-clock",
+                Capability::Clock,
+                "unix-now",
+                json!({}),
+            ))
+            .expect("clock");
+        assert!(matches!(
+            wait_for_completion(&worker).envelope,
+            CopperEnvelope::JobResult { result, .. }
+                if result.as_u64().is_some_and(|value| value > 1_700_000_000)
+        ));
 
         worker
             .try_submit(capability_job(

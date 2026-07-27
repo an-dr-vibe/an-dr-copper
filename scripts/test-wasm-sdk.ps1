@@ -101,22 +101,23 @@ try {
     $daemonErr = Join-Path $testRoot "daemon.err.log"
     $previousTraySetting = $env:COPPERD_DISABLE_TRAY
     $env:COPPERD_DISABLE_TRAY = "1"
-    $startArgs = @{
-      FilePath = $copperPath
-      ArgumentList = @(
-        "daemon", "run",
-        "--extensions-dir", $testRoot,
-        "--bind-addr", $bindAddr,
-        "--reload-interval-ms", "100"
-      )
-      RedirectStandardOutput = $daemonOut
-      RedirectStandardError = $daemonErr
-      PassThru = $true
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $copperPath
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in @(
+      "daemon", "run",
+      "--extensions-dir", $testRoot,
+      "--bind-addr", $bindAddr,
+      "--reload-interval-ms", "100"
+    )) {
+      $startInfo.ArgumentList.Add($argument)
     }
-    if ($IsWindows) {
-      $startArgs.WindowStyle = "Hidden"
-    }
-    $daemon = Start-Process @startArgs
+    $daemon = [Diagnostics.Process]::Start($startInfo)
+    $daemonOutTask = $daemon.StandardOutput.ReadToEndAsync()
+    $daemonErrTask = $daemon.StandardError.ReadToEndAsync()
     try {
       $healthy = $false
       for ($attempt = 1; $attempt -le 80; $attempt++) {
@@ -130,6 +131,9 @@ try {
       if (-not $healthy) {
         throw "Generated Component smoke daemon did not become healthy"
       }
+      $baseline = (($health -replace '(?s)^[^{]*', '') | ConvertFrom-Json)
+      $actionsBefore = [uint64]$baseline.bones.actionsDispatched
+      $capabilitiesBefore = [uint64]$baseline.bones.capabilityCompleted
 
       $trigger = (& $copperPath daemon trigger generated-sample --action run --bind-addr $bindAddr 2>&1 | Out-String)
       if ($trigger -notmatch "trigger prepared") {
@@ -139,9 +143,10 @@ try {
       $completed = $false
       for ($attempt = 1; $attempt -le 80; $attempt++) {
         $health = (& $copperPath daemon health --bind-addr $bindAddr 2>&1 | Out-String)
+        $current = (($health -replace '(?s)^[^{]*', '') | ConvertFrom-Json)
         if (
-          $health -match '"actionsDispatched":\s*1' -and
-          $health -match '"capabilityCompleted":\s*1'
+          [uint64]$current.bones.actionsDispatched -ge ($actionsBefore + 1) -and
+          [uint64]$current.bones.capabilityCompleted -ge ($capabilitiesBefore + 1)
         ) {
           $completed = $true
           break
@@ -160,10 +165,14 @@ try {
     } finally {
       $env:COPPERD_DISABLE_TRAY = $previousTraySetting
       if (-not $daemon.HasExited) {
-        Stop-Process -Id $daemon.Id -Force
+        $daemon.Kill($true)
       }
       $daemon.WaitForExit(5000) | Out-Null
+      $daemonOutText = $daemonOutTask.GetAwaiter().GetResult()
+      $daemonErrText = $daemonErrTask.GetAwaiter().GetResult()
       $daemon.Dispose()
+      [IO.File]::WriteAllText($daemonOut, $daemonOutText)
+      [IO.File]::WriteAllText($daemonErr, $daemonErrText)
     }
   } else {
     Write-Host "Host smoke skipped: build target/debug/$copperName first."
