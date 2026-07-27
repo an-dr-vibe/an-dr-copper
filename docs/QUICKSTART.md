@@ -83,7 +83,18 @@ cargo run -p copperd -- daemon trigger windows-display-manager --action set-reso
 
 `windows-display-manager` is a Windows-only host extension. On non-Windows hosts, trigger execution returns a platform support error.
 
-## 6. Generate main.ts from manifest
+## 6. Create a WASM Component
+
+```powershell
+./scripts/new-wasm-extension.ps1 -Id my-extension -Name "My Extension"
+./scripts/build-wasm-extension.ps1 -ExtensionDir ./extensions/my-extension -Package
+```
+
+This creates generated Rust bindings for the Bones guest world, builds a
+locked `wasm32-wasip2` Component, validates the manifest/artifact pair, and
+writes a deterministic publishable archive.
+
+## 7. Generate legacy main.ts from manifest
 
 ```powershell
 cargo run -p copperd -- generate-main ./extensions/sort-downloads/manifest.json

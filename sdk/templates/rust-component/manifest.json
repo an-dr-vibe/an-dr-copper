@@ -1,0 +1,22 @@
+{
+  "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
+  "id": "copper-component-template",
+  "name": "Copper Component Template",
+  "version": "0.1.0",
+  "trigger": "copper-component-template",
+  "runtime": {
+    "kind": "wasm-component",
+    "abi": "copper.component/1",
+    "artifact": "copper-component-template.wasm"
+  },
+  "permissions": [
+    "store"
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "script": "run"
+    }
+  ]
+}

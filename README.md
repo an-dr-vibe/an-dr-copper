@@ -3,16 +3,16 @@
 Copper is a cross-platform, manifest-first automation host focused on
 AI-generated extensions.
 
-Current status: the daemon, authenticated control plane, settings UI, extension
-discovery, TypeScript execution, native host capabilities, tray integration,
-and extension generation are implemented. Copper executes `main.ts` through a
-Deno subprocess and a host JSON-RPC bridge while the
-[Bones migration](docs/BONES_MIGRATION_PLAN.md) replaces that runtime with WASM
-Components.
+Current status: the daemon, authenticated control plane, Bones/Wry settings UI,
+manifest discovery, native host capabilities, tray integration, and the
+versioned Rust WASM Component SDK are implemented. Shipped extensions still
+execute `main.ts` through the temporary Deno bridge while the
+[Bones migration](docs/BONES_MIGRATION_PLAN.md) ports them to Components.
 
 ## Requirements
 
 - Rust toolchain (rustup, cargo, rustc)
+- PowerShell 7+ (`pwsh`)
 - Deno (required to execute current `main.ts` extension actions)
 
 ## Quick Start (Cross-Platform PowerShell)
@@ -34,6 +34,13 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/coverage.ps1
 ./scripts/build-debug.ps1
 ./scripts/build-release.ps1
+```
+
+Create, build, validate, and package a new Component:
+
+```powershell
+./scripts/new-wasm-extension.ps1 -Id my-extension -Name "My Extension"
+./scripts/build-wasm-extension.ps1 -ExtensionDir ./extensions/my-extension -Package
 ```
 
 ## Install Copper (Cross-Platform PowerShell)
@@ -98,7 +105,8 @@ cargo run -p copperd -- daemon shutdown --bind-addr 127.0.0.1:4765
 
 - `daemon/` Rust host implementation
 - `schemas/` descriptor schema contract
-- `sdk/` TypeScript API type definitions
+- `sdk/` TypeScript compatibility types plus the Rust Component SDK, generated
+  WIT bindings, and authoring template
 - `extensions/` sample extension pack (`sort-downloads`, `session-counter`, `desktop-torrent-organizer`, `windows-display-manager`)
 - `scripts/` cross-platform build and verification scripts
 - `docs/` architecture and usage docs

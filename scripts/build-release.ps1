@@ -39,10 +39,13 @@ function Publish-ExtensionArchives {
     }
 
     $archivePath = Join-Path $PublishRoot "$id-$version.zip"
-    if (Test-Path $archivePath) {
-      Remove-Item $archivePath -Force
+    & (Join-Path $PSScriptRoot "package-extension.ps1") `
+      -ExtensionDir $extensionDir `
+      -OutputPath $archivePath `
+      -SkipValidation
+    if ($LASTEXITCODE -ne 0) {
+      throw "extension packaging failed with exit code $LASTEXITCODE"
     }
-    Compress-Archive -Path (Join-Path $extensionDir "*") -DestinationPath $archivePath -Force
   }
 }
 

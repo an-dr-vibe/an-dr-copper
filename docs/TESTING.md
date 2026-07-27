@@ -20,6 +20,9 @@ cargo test -p copperd --lib -- --nocapture      # show stdout/stderr (pipe throu
 
 # Stability (catches flaky tests)
 ./scripts/verify-loop.ps1 -Iterations 3
+
+# Rust guest SDK, generated Component template, and deterministic archives
+./scripts/test-wasm-sdk.ps1
 ```
 
 ## Test file locations

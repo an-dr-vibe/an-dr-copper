@@ -1,0 +1,52 @@
+package bones:core@0.1.0;
+
+interface host-api {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    enum send-error {
+        unknown-endpoint,
+        cycle,
+    }
+
+    record display-mode {
+        width: u32,
+        height: u32,
+    }
+
+    log: func(level: level, message: string);
+    subscribe: func(topic: string);
+    publish: func(topic: string, payload: list<u8>);
+    send: func(endpoint: string, payload: list<u8>) -> result<list<u8>, send-error>;
+    // A clean, one-way request to begin orderly application shutdown.
+    // The host obeys after this call returns; there is no confirmation.
+    request-exit: func();
+    // Every fullscreen-capable resolution the window's own display reports
+    // (SDL_GetFullscreenDisplayModes - genuinely cross-platform), queried
+    // once at startup before any window hand-off. Empty if the query
+    // itself failed (e.g. no display attached) rather than an error - a
+    // caller building a resolution picker can always fall back to its own
+    // known-good default.
+    list-display-modes: func() -> list<display-mode>;
+    // The desktop's own current resolution (SDL_GetDesktopDisplayMode),
+    // same one-time-query caveat as `list-display-modes`. `none` if the
+    // query failed.
+    native-display-mode: func() -> option<display-mode>;
+}
+
+world extension {
+    import host-api;
+
+    export init: func();
+    // Called once before a running extension is unloaded.
+    export shutdown: func();
+    export on-tick: func(dt: f32);
+    // Topic is empty for a direct send (ADR-010) - it has no topic, only a
+    // sender and payload. The returned payload is the reply; only read for
+    // direct sends, ignored for pub/sub deliveries.
+    export on-message: func(topic: string, sender: string, payload: list<u8>) -> option<list<u8>>;
+}

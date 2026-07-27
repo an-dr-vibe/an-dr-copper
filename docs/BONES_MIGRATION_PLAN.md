@@ -2,7 +2,7 @@
 
 Status: Implementation in progress
 Plan owner: Copper maintainers  
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 ## 1. Purpose
 
@@ -103,7 +103,7 @@ Statuses: `ACCEPTED`, `PROPOSED`, `BLOCKED`, `SUPERSEDED`.
 | D-005 | ACCEPTED | Blocking or long-running capabilities use asynchronous jobs and result events rather than synchronous Bones handlers. |
 | D-006 | ACCEPTED | Expose a small Copper integration facade while splitting control, capability, state, and platform responsibilities into focused modules or crates. |
 | D-007 | ACCEPTED | Use optional `runtime: { kind, abi, artifact }` metadata for WASM Components; absence retains schema 1.0 TypeScript compatibility. |
-| D-008 | PROPOSED | TypeScript remains an authoring option by compiling to a WASM Component; Deno is construction-only compatibility scaffolding. |
+| D-008 | ACCEPTED | Rust is the supported Component authoring path for this cutover. The July 2026 TypeScript prototype could not build on Windows ARM64 because ComponentizeJS' Wizer package had no binary for that platform; TypeScript Components remain a future option after the toolchain is cross-platform, while Deno remains construction-only compatibility scaffolding. |
 | D-009 | ACCEPTED | Use typed Bones messages for Bones-native lifecycle and extension control. Copper-owned action, capability, job, result, and error payloads use a versioned JSON envelope over the Bones byte-payload bus. |
 | D-010 | ACCEPTED | Run the daemon through an event-driven headless Bones driver rather than a fixed 60 Hz loop. |
 | D-011 | ACCEPTED | Migrate the Copper settings UI to the Bones web presentation module, currently backed by `wry`; Copper owns the frontend and message contract, while Bones owns native window/webview presentation. |
@@ -259,18 +259,28 @@ suite while driving a Bones-backed runtime.
 
 ### M5 — Extension SDK and packaging
 
-Status: **NOT STARTED**  
+Status: **DONE**
 Depends on: M3
 
-- [ ] Define the Copper guest SDK over the selected Bones message contract.
-- [ ] Generate bindings and authoring templates from the versioned contract.
-- [ ] Add deterministic Rust-to-Component build support.
-- [ ] Prototype TypeScript-to-Component compilation and measure artifact size,
+- [x] Define the Copper guest SDK over the selected Bones message contract.
+- [x] Generate bindings and authoring templates from the versioned contract.
+- [x] Add deterministic Rust-to-Component build support.
+- [x] Prototype TypeScript-to-Component compilation and measure artifact size,
   startup time, supported language features, clocks, randomness, and debugging.
-- [ ] Decide D-008 from the prototype evidence.
-- [ ] Validate manifests and runtime artifacts together.
-- [ ] Package `manifest.json` plus the selected runtime artifact.
-- [ ] Keep cross-platform PowerShell build and verification entry points.
+- [x] Decide D-008 from the prototype evidence.
+- [x] Validate manifests and runtime artifacts together.
+- [x] Package `manifest.json` plus the selected runtime artifact.
+- [x] Keep cross-platform PowerShell build and verification entry points.
+
+Prototype evidence: `jco 1.26.0` with `componentize-js 0.21.0` generated guest
+types for the complete Bones world and exposed feature gates for clocks,
+randomness, stdio, HTTP, and all ambient WASI.
+Compilation with every optional WASI feature disabled failed before producing
+an artifact on Windows ARM64 because `@bytecodealliance/wizer` has no
+precompiled `win32 arm64` binary. Artifact size, startup, and guest debugging
+therefore could not be measured on the required platform. The Rust template
+builds directly to `wasm32-wasip2`, is covered by the repository gate, and
+remains deny-by-default in the Bones host.
 
 Exit criterion: an AI author can generate, build, validate, package, and run a
 new Copper WASM extension without knowledge of Copper host internals.
@@ -369,7 +379,7 @@ are the stable memory of existing behavior when implementation context changes.
 | Blocking host calls stall the Bones loop | Daemon freeze or missed watchdog guarantees | Asynchronous jobs; never block module handlers | OPEN |
 | Permission metadata is descriptive rather than enforced | Host compromise through an extension | Sender-based checks at every capability endpoint; negative tests | OPEN |
 | Manifest and WASM artifact update separately | Wrong code executes under trusted metadata | Transactional package validation and reload | OPEN |
-| TypeScript component tooling cannot preserve SDK ergonomics | Extension rewrite or large artifacts | M5 prototype before committing; Rust remains supported | OPEN |
+| TypeScript component tooling cannot preserve SDK ergonomics | Extension rewrite or large artifacts | Rust is the supported M5 authoring path; revisit ComponentizeJS only after Windows ARM64 and cross-platform reproducibility pass | MITIGATED |
 | State format changes lose user configuration or secrets | User-visible data loss | Golden state fixtures and upgrade tests | OPEN |
 | SDL/window requirements leak into daemon builds | Headless CI and servers break | Custom headless composition root and no mandatory presentation features | OPEN |
 | Bones web presentation requires a window or main-thread event loop at daemon startup | Idle Copper is no longer headless or on-demand | Add lazy presentation lifecycle support and test tray/CLI open-close behavior | OPEN |
@@ -448,3 +458,4 @@ When updating this plan:
 | 2026-07-26 | Started M4: CLI/HTTP component triggers now use targeted `copper.bus/1` action messages, and optional manifest schedules dispatch background actions at one-second resolution without polling the Bones frame loop. |
 | 2026-07-27 | Accepted D-012 after upstreaming detachable native-module registration and a wry presentation that can repeatedly attach to the live headless Bones bus and fully close without restarting the engine. |
 | 2026-07-27 | Completed the M4 settings cutover: the default UI now uses correlated `copper.settings/1` messages through Bones web/Wry, tray requests attach on the daemon main thread, the temporary browser fallback remains explicit, and Tauri was removed. |
+| 2026-07-27 | Completed M5 with generated Rust guest bindings, a tested scaffold/build flow, and deterministic manifest-plus-runtime archives. Accepted D-008 after ComponentizeJS 0.21.0 failed its Windows ARM64 Wizer prerequisite; TypeScript Components are deferred and Rust is the cutover authoring path. |

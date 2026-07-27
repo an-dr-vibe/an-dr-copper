@@ -43,6 +43,9 @@ Current implementation status:
   server without making UI HTTP part of the daemon lifecycle.
 - Implemented: action execution through an external Deno subprocess and the
   host JSON-RPC bridge in `sdk/bridge.ts`.
+- Implemented: a Rust `copper.component/1` guest SDK with generated Bones WIT
+  bindings, sender validation, asynchronous capability helpers, a scaffold,
+  locked `wasm32-wasip2` builds, and deterministic extension archives.
 - Planned: completion of the shipped WASM Component ports and richer
   cross-platform tray/hotkey integration.
 
@@ -157,7 +160,8 @@ Runtime gating:
 
 Type contract for AI generation:
 
-- `sdk/api.d.ts`
+- Components: `sdk/COMPONENT_API.md`, `sdk/rust`, and `sdk/wit/core.wit`
+- Temporary TypeScript compatibility: `sdk/api.d.ts`
 
 ## 5. Repository Layout
 
@@ -188,6 +192,9 @@ Type contract for AI generation:
 |  |  `- ...
 |- schemas/
 |- sdk/
+|  |- rust/             # copper.component/1 guest SDK
+|  |- wit/              # pinned generated Bones guest contract
+|  `- templates/        # Rust Component scaffold
 |- extensions/
 |- scripts/
 `- docs/

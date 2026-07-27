@@ -121,14 +121,30 @@ Verify: `cargo test -p copperd --lib api::<name>` must pass.
 
 ## Recipe: add a new extension
 
+The supported Component path is generated and built through PowerShell:
+
+```powershell
+./scripts/new-wasm-extension.ps1 -Id my-ext -Name "My Extension"
+./scripts/build-wasm-extension.ps1 -ExtensionDir ./extensions/my-ext -Package
+```
+
 ```
 extensions/<id>/
   manifest.json
-  main.ts         ← compatibility runtime; scaffold with generate-main
-  <id>.wasm       ← component runtime alternative declared by manifest.runtime
+  <id>.wasm
+  component/
+    Cargo.toml
+    Cargo.lock
+    src/lib.rs
 ```
 
-Minimal manifest:
+The scaffold declares `copper.component/1`, uses the Rust SDK in `sdk/rust`,
+and generates Bones guest bindings from `sdk/wit/core.wit`. The build targets
+`wasm32-wasip2` with locked dependencies and incremental compilation disabled,
+copies `<id>.wasm` beside the manifest, validates the pair, and optionally
+creates a deterministic two-file archive. See `sdk/COMPONENT_API.md`.
+
+Minimal compatibility manifest:
 ```json
 {
   "$schema": "https://Copper.dev/schemas/extension/1.0.0/descriptor.schema.json",
@@ -146,6 +162,10 @@ For a WASM Component package, add
 `runtime: { "kind": "wasm-component", "abi": "copper.component/1",
 "artifact": "<id>.wasm" }`. The registry rejects missing, renamed, traversing,
 or package-external artifacts.
+
+Omit `runtime` only while maintaining a construction-time `main.ts`
+compatibility extension. `cargo run -p copperd -- generate-main` remains the
+legacy scaffolder until the final cutover removes Deno.
 
 To schedule one component action in the background, add the optional runtime
 metadata below. Both config-key fields refer to the extension's scoped

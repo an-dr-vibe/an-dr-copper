@@ -29,6 +29,13 @@ artifact. Existing schema 1.0 TypeScript packages remain valid during
 construction. The released architecture uses a WASM Component implementing the
 versioned Copper guest contract.
 
+Rust is the supported authoring language for the cutover. The SDK generates
+the Bones WIT bindings, wraps `copper.bus/1`, validates host-stamped senders,
+and exposes asynchronous capability requests. A July 2026 ComponentizeJS
+prototype could not produce a component on Windows ARM64 because its Wizer
+dependency had no platform binary, so TypeScript-to-Component compilation is
+deferred rather than becoming a release dependency.
+
 The manifest remains authoritative for:
 
 - identity and version;
