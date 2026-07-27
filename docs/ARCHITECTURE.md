@@ -18,7 +18,7 @@ runtime-less compatibility packages are rejected by the registry. See
 
 On-demand presentation model:
 
-1. Rust daemon (`copperd run`) - always-on background process.
+1. Rust daemon (`copper run`) - always-on background process.
 2. Detachable Bones web/Wry presentation - attached only while settings are open.
 
 Current implementation status:
@@ -99,8 +99,8 @@ Daemon capabilities:
   `config_ui_bones.rs`; `config_ui_http.rs` remains only for the explicit
   temporary browser fallback.
 - Splits oversized daemon/config UI/tray source files into multi-file modules and extracted test files so implementation details stay reviewable without mixing transport, rendering, platform code, and tests in one file.
-- Runs host-native background tasks through `HostExtensionRegistry` capability specs instead of daemon-local extension ID branching.
-- Executes host-native actions for built-in extensions through `HostExtensionRegistry` capability handlers with declared state contracts.
+- Uses `HostExtensionRegistry` for native dynamic settings options, apply
+  actions, and state-contract metadata that remain outside portable Components.
 - Exposes manifest-driven additional tray icon API in daemon (`tray_extension`) so extensions can declare dedicated tray icons through descriptor metadata.
 - Current implementation includes a `tray.provider = "windows-display"` host tray provider used by `windows-display-manager` for left-click toggle and right-click action menu behavior.
 - Handles IPC operations:
@@ -163,8 +163,6 @@ Type contract for AI generation:
 |  |- src/
 |  |  |- api/        # host-side API modules (fs/shell/ui/notify/store/keyboard/secure_store)
 |  |  |- bones_integration/ # external native modules registered with Bones
-|  |  |- runtime/    # runtime adapter abstraction
-|  |  |- execution.rs        # shared trigger preparation and execution orchestration
 |  |  |- daemon_scheduler.rs # reload/background scheduling policy
 |  |  |- daemon_service.rs   # daemon control-plane service layer
 |  |  |- daemon_transport.rs # daemon HTTP transport parsing/response mapping
@@ -177,7 +175,7 @@ Type contract for AI generation:
 |  |  |- host_extensions.rs  # built-in host capability + state contract registry
 |  |  |- control_plane.rs    # control-plane auth token lifecycle
 |  |  |- state_store.rs      # shared config/status persistence service
-|  |  |- tray.rs     # tray controller placeholder
+|  |  |- tray.rs     # main tray controller
 |  |  |- tray_extension.rs # additional tray provider module root
 |  |  |- daemon.rs   # long-running daemon lifecycle root
 |  |  |- cli.rs      # CLI and daemon control commands
@@ -247,7 +245,6 @@ Daemon control commands:
 
 - Rust host binaries for Windows/macOS/Linux.
 - PowerShell scripts as the default cross-platform scripting path (`pwsh`).
-- Bash variants retained for shell-native environments.
 
 ## 10. Verification
 
@@ -283,7 +280,7 @@ These must not be broken without a deliberate versioning decision:
 | Schema URL pinned in every manifest | Version drift breaks existing extensions silently |
 | All state flows through `state_store` | No extension writes config/status files directly |
 | HTTP control plane is loopback-only with per-session auth token | No remote attack surface |
-| Legacy trigger preparation runs in a subprocess; component triggers use targeted Bones messages | Failures stay outside the daemon and one extension cannot receive another extension's action |
+| Every action is dispatched as a targeted Bones message to an active Component | One extension cannot receive or impersonate another extension's action |
 | Cross-platform build must pass on Windows, macOS, and Linux | Platform-specific code goes behind `#[cfg]` or target sections in Cargo.toml |
 | No mandatory GUI dependency in headless build path | CI must build without a display server |
 | Bones sender identity is the capability principal | Guest payloads cannot select or impersonate an extension identity |

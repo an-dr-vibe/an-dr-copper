@@ -33,7 +33,7 @@ pub enum CliError {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "copperd", version, about = "Copper extension host MVP")]
+#[command(name = "copper", version, about = "Copper automation host")]
 pub struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -65,7 +65,7 @@ enum Commands {
         #[arg(long, value_name = "DIR", default_value_os_t = default_extensions_dir())]
         extensions_dir: PathBuf,
     },
-    /// Trigger an extension in dry-run mode (prints selected action + permissions)
+    /// Execute an extension action through a local Bones runtime
     Trigger {
         #[arg(value_name = "EXTENSION_ID")]
         id: String,

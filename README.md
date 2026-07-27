@@ -9,8 +9,8 @@ versioned Rust WASM Component SDK are implemented. All five shipped extensions
 run as Components; sensitive keyboard, keychain, hotkey, tray, and Windows
 display work remains in permission-checked native Copper modules. The temporary
 runtime bridge has been removed; every installable extension declares a
-`copper.component/1` artifact. See the completed
-[Bones migration](docs/BONES_MIGRATION_PLAN.md).
+`copper.component/1` artifact. See the
+[Bones migration plan and cutover status](docs/BONES_MIGRATION_PLAN.md).
 
 ## Requirements
 
@@ -93,7 +93,6 @@ cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents
 cargo run -p copperd -- trigger safe-input-key --action setup --input "text=your text" --extensions-dir ./extensions
 cargo run -p copperd -- daemon trigger windows-display-manager --action status --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- daemon trigger windows-display-manager --action toggle-taskbar-autohide --bind-addr 127.0.0.1:4765
-cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
 # opens a native Bones/Wry settings window by default:
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
 # browser fallback:
@@ -127,7 +126,8 @@ Runtime extension roots:
 - User extensions: `~/.Copper/extensions` (user-installed/custom)
 - Runtime activation respects optional manifest `platforms` restrictions (`windows`, `macos`, `linux`).
 - Core settings can disable specific extensions through `~/.Copper/extensions/copper-core/config.json` via `disabledExtensions`.
-- Legacy `~/.Copper/extensions/copper-core/data.json` is still read as a fallback during migration.
+- Legacy `~/.Copper/extensions/copper-core/data.json` remains a compatibility
+  fallback for existing installs.
 
 Windows host extension note:
 - On Windows, left click the main Copper tray icon to open the daemon-hosted UI. Right click opens the main tray menu.

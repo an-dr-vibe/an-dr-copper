@@ -145,7 +145,7 @@ pub(super) fn handle_request(
             Some(state.control_service().list_payload()),
         ),
         IpcRequest::Trigger { id, action } => match state.trigger_payload(&id, action.as_deref()) {
-            Ok(data) => IpcResponse::ok("trigger prepared", Some(data)),
+            Ok(data) => IpcResponse::ok("trigger dispatched", Some(data)),
             Err(message) => IpcResponse::err(message),
         },
         IpcRequest::Reload => match state.reload() {

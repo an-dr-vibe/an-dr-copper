@@ -82,7 +82,8 @@ cargo run -p copperd -- daemon trigger windows-display-manager --action status -
 cargo run -p copperd -- daemon trigger windows-display-manager --action set-resolution --bind-addr 127.0.0.1:4765
 ```
 
-`windows-display-manager` is a Windows-only host extension. On non-Windows hosts, trigger execution returns a platform support error.
+`windows-display-manager` is visible in settings on every host but activates
+and accepts runtime triggers only on Windows.
 
 ## 6. Create a WASM Component
 

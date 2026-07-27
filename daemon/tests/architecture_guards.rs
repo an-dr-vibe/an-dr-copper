@@ -60,11 +60,33 @@ fn release_tree_has_no_legacy_typescript_runtime() {
     }
 
     let cli = production_source("cli.rs");
-    for removed_command in ["GenerateMain", "RuntimeTrigger", "generate-main", "deno"] {
+    for removed_command in [
+        "GenerateMain",
+        "RuntimeTrigger",
+        "generate-main",
+        "deno",
+        "dry-run mode",
+    ] {
         assert!(
             !cli.contains(removed_command),
             "legacy CLI surface must be removed at cutover: {removed_command}"
         );
+    }
+
+    for document in ["docs/ARCHITECTURE.md", "docs/DEVELOPMENT.md"] {
+        let source =
+            fs::read_to_string(root.join(document)).expect("read current architecture doc");
+        for removed_runtime in [
+            "daemon/src/runtime",
+            "runtime adapter abstraction",
+            "execution.rs",
+            "subprocess execution adapter",
+        ] {
+            assert!(
+                !source.contains(removed_runtime),
+                "{document} must not describe the removed runtime: {removed_runtime}"
+            );
+        }
     }
 
     for script in [

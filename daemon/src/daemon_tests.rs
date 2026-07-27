@@ -321,6 +321,7 @@ mod tests {
             &running,
         );
         assert!(response.ok);
+        assert_eq!(response.message, "trigger dispatched");
         let data = response.data.expect("payload");
         assert_eq!(data.get("actionId").and_then(|v| v.as_str()), Some("run"));
     }

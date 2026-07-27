@@ -11,8 +11,8 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "bfa9cca7d66e46a3a9cc8ceb4a9a3b0b",
-  "commitBaseline": "7767123372c20cda1666717245d0a26f970c753e",
+  "currentIncrementId": "ff61e8de5b7549bf91a5092d1b0818c8",
+  "commitBaseline": "a79c2232e86893f33f1da6bdc0fc6ad5ed5cdc0c",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
@@ -136,9 +136,16 @@
     {
       "id": "bfa9cca7d66e46a3a9cc8ceb4a9a3b0b",
       "number": 18,
-      "status": "verified",
+      "status": "completed",
       "scope": "Cutover cleanup release and full verification",
       "description": "~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates."
+    },
+    {
+      "id": "ff61e8de5b7549bf91a5092d1b0818c8",
+      "number": 19,
+      "status": "verified",
+      "scope": "Final contract and documentation reconciliation",
+      "description": "~80 lines: correct the mutating trigger help/response contract, remove stale dual-runtime documentation, and rerun focused guards before final review."
     }
   ],
   "approvals": [],
@@ -522,8 +529,38 @@
       "at": "2026-07-27T04:26:53.2010084Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-27T04:27:49.5869022Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to SUMMARY."
+    },
+    {
+      "at": "2026-07-27T04:30:33.9313296Z",
+      "action": "add-increment",
+      "detail": "Inserted increment 19: Final contract and documentation reconciliation"
+    },
+    {
+      "at": "2026-07-27T04:30:56.1089346Z",
+      "action": "advance",
+      "detail": "Advanced from SPLIT to BRANCH."
+    },
+    {
+      "at": "2026-07-27T04:31:15.9022508Z",
+      "action": "advance",
+      "detail": "Advanced from BRANCH to BUILD."
+    },
+    {
+      "at": "2026-07-27T04:35:27.073529Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-27T04:36:07.4475480Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-27T04:26:53.2093297Z"
+  "updatedAt": "2026-07-27T04:36:07.4528083Z"
 }

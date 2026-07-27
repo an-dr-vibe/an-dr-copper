@@ -136,7 +136,7 @@ try {
       $capabilitiesBefore = [uint64]$baseline.bones.capabilityCompleted
 
       $trigger = (& $copperPath daemon trigger generated-sample --action run --bind-addr $bindAddr 2>&1 | Out-String)
-      if ($trigger -notmatch "trigger prepared") {
+      if ($trigger -notmatch "trigger dispatched") {
         throw "Generated Component action was not accepted: $trigger"
       }
 

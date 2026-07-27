@@ -52,8 +52,8 @@ left to Bones' transactional component supervisor.
 CLI and authenticated HTTP triggers select the declared action before sending
 a targeted `copper.bus/1` `action-request` to the component from
 `copper-actions`. An empty response means accepted; a component may instead
-return `job-accepted` or `job-result`. Legacy manifests without `runtime`
-continue through the subprocess execution adapter during migration.
+return `job-accepted` or `job-result`. Runtime-less manifests are rejected by
+the runtime registry with a Component migration error.
 
 WASM guests request native work with a direct Bones `send` to
 `copper-capabilities`. The payload is a `copper.bus/1` `capability-request`;
@@ -84,7 +84,8 @@ Native operation names and argument objects are:
 - `notify`: `show {message}`. Notifications retain the permissionless legacy
   contract, but the sender must still be an active WASM extension.
 - `ui`: `show {markup}` and `update {state}`. Both require `ui`; the current
-  host sink preserves legacy no-op behavior until Bones presentation lands.
+  host sink preserves the existing no-op extension API behavior. The settings
+  frontend uses the separate `copper.settings/1` Bones web bridge.
 - `keyboard`: `type-text {text}`, `send-key {key}`, `send-combo {combo}`, and
   `normalize-combo {combo}`.
 - `secure-store`: `get {service,key}`, `set {service,key,value}`, and

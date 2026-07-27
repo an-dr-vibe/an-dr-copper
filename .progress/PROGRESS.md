@@ -26,6 +26,7 @@
 - [x] **Session counter and sort downloads WASM ports** (completed) — ~280 lines: write UTR tests first, port both extensions to WASM Components, and remove their legacy execution paths after parity.
 - [x] **Desktop torrent organizer WASM port** (completed) — ~300 lines: test then port actions, background monitoring, scoped file moves, settings, and status behavior.
 - [x] **Safe Input Key and Windows display WASM ports** (completed) — ~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities.
-- [ ] **Cutover cleanup release and full verification** (verified) — ~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates.
+- [x] **Cutover cleanup release and full verification** (completed) — ~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates.
+- [ ] **Final contract and documentation reconciliation** (verified) — ~80 lines: correct the mutating trigger help/response contract, remove stale dual-runtime documentation, and rerun focused guards before final review.
 
-_Last updated: 2026-07-27T04:26:53.2093297Z_
+_Last updated: 2026-07-27T04:36:07.4528083Z_
