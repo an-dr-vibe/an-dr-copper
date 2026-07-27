@@ -17,6 +17,58 @@
         accent: '#ffb000', accentSoft: 'rgba(255,176,0,.2)', accentText: '#1f1f1f'
       },
     };
+    let nextSettingsRequestId = 0;
+    const pendingSettingsRequests = new Map();
+
+    window.addEventListener('bones-message', event => {
+      let response = event.detail;
+      if (typeof response === 'string') {
+        try {
+          response = JSON.parse(response);
+        } catch (_) {
+          return;
+        }
+      }
+      if (!response || response.protocol !== model.settingsProtocol) return;
+      const pending = pendingSettingsRequests.get(response.requestId);
+      if (!pending) return;
+      pendingSettingsRequests.delete(response.requestId);
+      pending(response);
+    });
+
+    function copperFetch(path, options = {}) {
+      if (model.transport !== 'bones') {
+        return fetch(path, options);
+      }
+      const requestId = `settings-${++nextSettingsRequestId}`;
+      let body;
+      if (options.body) {
+        body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+      }
+      const request = {
+        protocol: model.settingsProtocol,
+        requestId,
+        method: options.method || 'GET',
+        path,
+        body
+      };
+      return new Promise((resolve, reject) => {
+        pendingSettingsRequests.set(requestId, response => {
+          resolve({
+            ok: response.ok,
+            status: response.status,
+            json: async () => response.data,
+            text: async () => response.error || JSON.stringify(response.data || {})
+          });
+        });
+        try {
+          window.ipc.postMessage(JSON.stringify(request));
+        } catch (error) {
+          pendingSettingsRequests.delete(requestId);
+          reject(error);
+        }
+      });
+    }
 
     function normalizeThemeId(themeId) {
       const normalized = String(themeId || 'light').trim().toLowerCase();
@@ -235,7 +287,7 @@
     }
 
     async function loadJson(url) {
-      const res = await fetch(url, {
+      const res = await copperFetch(url, {
         headers: { 'x-copper-token': model.authToken }
       });
       if (!res.ok) {

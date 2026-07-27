@@ -1,8 +1,9 @@
     use super::{
         build_ui_state, core_data_path_for, extension_config_path_for, extension_status_path_for,
-        load_config, parse_json_object, parse_request, render_html, start_daemon_ui_server,
-        store_config, visible_descriptors, write_response, HttpMethod, HttpResponse, UiConfigError,
-        UiOpenOptions,
+        dispatch_bones_request, load_config, parse_json_object, parse_request, refresh_ui_state,
+        render_html, start_daemon_ui_server, store_config, visible_descriptors, write_response,
+        HttpMethod, HttpResponse, UiConfigError, UiOpenOptions, UiTransport,
+        COPPER_SETTINGS_PROTOCOL_V1,
     };
     use crate::config_ui_http::read_chunked_body;
     use crate::config_ui_service::{build_core_info, build_extension_info};
@@ -91,6 +92,117 @@
         }
     }
 
+    #[test]
+    fn bones_transport_is_versioned_correlated_and_uses_shared_settings_routes() {
+        let temp = tempdir().expect("tempdir");
+        let descriptor = sample_descriptor();
+        write_extension(temp.path(), &descriptor);
+        let mut state = build_ui_state(
+            temp.path(),
+            Some("desktop-torrent-organizer"),
+            true,
+            ControlPlaneAuth::ephemeral(),
+            "bones://settings".to_string(),
+        )
+        .expect("settings state");
+        state.transport = UiTransport::Bones;
+
+        let response: serde_json::Value = serde_json::from_str(&dispatch_bones_request(
+            &state,
+            r#"{
+                "protocol":"copper.settings/1",
+                "requestId":"settings-7",
+                "method":"POST",
+                "path":"/config/extension/desktop-torrent-organizer",
+                "body":{"desktopFolder":"D:/Incoming"}
+            }"#,
+        ))
+        .expect("response json");
+
+        assert_eq!(response["protocol"], COPPER_SETTINGS_PROTOCOL_V1);
+        assert_eq!(response["requestId"], "settings-7");
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["status"], 200);
+        assert_eq!(
+            state
+                .state_store
+                .inspect_config("desktop-torrent-organizer")
+                .expect("saved config")
+                .value["desktopFolder"],
+            "D:/Incoming"
+        );
+
+        let wrong_protocol: serde_json::Value = serde_json::from_str(&dispatch_bones_request(
+            &state,
+            r#"{
+                "protocol":"copper.settings/2",
+                "requestId":"settings-8",
+                "method":"GET",
+                "path":"/config/core"
+            }"#,
+        ))
+        .expect("error json");
+        assert_eq!(wrong_protocol["requestId"], "settings-8");
+        assert_eq!(wrong_protocol["ok"], false);
+        assert_eq!(wrong_protocol["status"], 400);
+        assert!(wrong_protocol["error"]
+            .as_str()
+            .expect("error")
+            .contains("unsupported settings protocol"));
+    }
+
+    #[test]
+    fn bones_html_selects_ipc_transport_without_exposing_http_credentials() {
+        let temp = tempdir().expect("tempdir");
+        write_extension(temp.path(), &sample_descriptor());
+        let mut state = build_ui_state(
+            temp.path(),
+            None,
+            true,
+            ControlPlaneAuth::ephemeral(),
+            "bones://settings".to_string(),
+        )
+        .expect("settings state");
+        state.transport = UiTransport::Bones;
+
+        let html = render_html(&state);
+
+        assert!(html.contains(r#""transport":"bones""#));
+        assert!(html.contains(COPPER_SETTINGS_PROTOCOL_V1));
+        assert!(html.contains("window.ipc.postMessage"));
+        assert!(!html.contains(state.auth_token.as_str()));
+    }
+
+    #[test]
+    fn settings_catalog_refreshes_after_core_enablement_changes_without_reopening() {
+        let temp = tempdir().expect("tempdir");
+        write_extension(temp.path(), &sample_descriptor());
+        let mut state = build_ui_state(
+            temp.path(),
+            None,
+            true,
+            ControlPlaneAuth::ephemeral(),
+            "bones://settings".to_string(),
+        )
+        .expect("settings state");
+        state.state_store = ExtensionStateStore::new(temp.path().join("state"));
+        refresh_ui_state(&mut state).expect("initial refresh");
+        assert_eq!(state.descriptors.len(), 1);
+
+        store_config(
+            &state.state_store.core_config_path(),
+            &serde_json::json!({
+                "disabledExtensions": ["desktop-torrent-organizer"]
+            }),
+        )
+        .expect("disable extension");
+        refresh_ui_state(&mut state).expect("refresh after disable");
+
+        assert!(state.descriptors.is_empty());
+        assert!(state.extension_ids.is_empty());
+        assert_eq!(state.discoverable_descriptors.len(), 1);
+    }
+
     fn sample_state() -> super::UiServerState {
         let descriptor = sample_descriptor();
         super::UiServerState {
@@ -112,6 +224,7 @@
             auth_token: "test-auth-token".to_string(),
             origin: "http://127.0.0.1:4766".to_string(),
             allow_close: true,
+            transport: UiTransport::Http,
         }
     }
 
@@ -274,6 +387,7 @@
             auth_token: "test-auth-token".to_string(),
             origin: "http://127.0.0.1:4766".to_string(),
             allow_close: true,
+            transport: UiTransport::Http,
         };
 
         let descriptor =
@@ -340,6 +454,7 @@
             auth_token: "test-auth-token".to_string(),
             origin: "http://127.0.0.1:4766".to_string(),
             allow_close: true,
+            transport: UiTransport::Http,
         };
 
         let info = build_extension_info(&state, &hidden).expect("hidden extension info");
@@ -568,6 +683,7 @@
             auth_token: "test-auth-token".to_string(),
             origin: "http://127.0.0.1:4766".to_string(),
             allow_close: true,
+            transport: UiTransport::Http,
         };
 
         let info = super::build_extension_info(&state, &descriptor).expect("info");

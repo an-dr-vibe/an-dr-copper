@@ -8,10 +8,13 @@ use crate::host_extensions::HostExtensionRegistry;
 use crate::state_store::ExtensionStateStore;
 use std::collections::HashSet;
 use std::path::PathBuf;
+#[cfg(test)]
 use std::thread::JoinHandle;
 use std::time::Duration;
 use thiserror::Error;
 
+#[path = "config_ui_bones.rs"]
+mod bones;
 #[path = "config_ui_browser.rs"]
 mod browser;
 #[path = "config_ui_render.rs"]
@@ -21,16 +24,21 @@ mod server;
 #[cfg(test)]
 #[path = "config_ui_test_support.rs"]
 mod test_support;
-#[path = "config_ui_window.rs"]
-mod window;
 
 #[cfg(test)]
+pub(crate) use bones::dispatch_bones_request;
+#[cfg(feature = "native-ui")]
+pub(crate) use bones::NativeSettingsPresentation;
+pub use bones::{open_in_native_window, SettingsUiHandle};
+pub(crate) use bones::{settings_ui_channel, COPPER_SETTINGS_PROTOCOL_V1};
+pub(crate) use server::open_extension_config;
+#[cfg(test)]
+pub(crate) use server::start_daemon_ui_server;
+#[cfg(test)]
 use server::{
-    build_ui_state, find_discoverable_descriptor, parse_json_object, visible_descriptors,
+    build_ui_state, find_discoverable_descriptor, parse_json_object, refresh_ui_state,
+    visible_descriptors,
 };
-pub(crate) use server::{open_extension_config, start_daemon_ui_server};
-pub use window::open_in_native_window;
-pub(crate) use window::open_url_in_native_window_detached;
 
 #[cfg(test)]
 use render::render_html;
@@ -41,7 +49,12 @@ use test_support::{
 };
 
 const DEFAULT_UI_BIND: &str = "127.0.0.1:0";
-pub const DEFAULT_DAEMON_UI_BIND: &str = "127.0.0.1:4766";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UiTransport {
+    Http,
+    Bones,
+}
 
 #[derive(Debug, Clone)]
 pub struct UiOpenOptions {
@@ -97,8 +110,10 @@ pub(crate) struct UiServerState {
     pub(crate) auth_token: String,
     pub(crate) origin: String,
     pub(crate) allow_close: bool,
+    pub(crate) transport: UiTransport,
 }
 
+#[cfg(test)]
 pub struct PersistentUiServer {
     pub url: String,
     _thread: JoinHandle<()>,

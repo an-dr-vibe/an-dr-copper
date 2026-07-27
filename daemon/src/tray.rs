@@ -1,4 +1,4 @@
-use crate::config_ui::open_url_in_native_window_detached;
+use crate::config_ui::SettingsUiHandle;
 use crate::logging;
 use std::path::PathBuf;
 use std::sync::{
@@ -55,22 +55,16 @@ impl TrayOps for RealTray {
 }
 
 #[cfg(not(windows))]
-fn configure_tray<T, F>(
-    tray: &mut T,
-    running: Arc<AtomicBool>,
-    ui_url: String,
-    open_browser: F,
-) -> Result<(), TrayError>
+fn configure_tray<T, F>(tray: &mut T, running: Arc<AtomicBool>, open_ui: F) -> Result<(), TrayError>
 where
     T: TrayOps,
-    F: Fn(&str) -> Result<(), crate::config_ui::UiConfigError> + Send + Sync + 'static,
+    F: Fn() -> Result<(), crate::config_ui::UiConfigError> + Send + Sync + 'static,
 {
     tray.add_label("Daemon is running")
         .map_err(TrayError::Init)?;
 
-    let ui_url_for_menu = ui_url;
     tray.add_menu_item("Open Copper UI", move || {
-        if let Err(err) = open_browser(&ui_url_for_menu) {
+        if let Err(err) = open_ui() {
             logging::error(format!("failed to open config UI in native window: {err}"));
         }
     })
@@ -90,17 +84,12 @@ impl TrayController {
     pub fn initialize(
         running: Arc<AtomicBool>,
         _extensions_dir: PathBuf,
-        ui_url: String,
+        settings_ui: SettingsUiHandle,
     ) -> Result<Self, TrayError> {
         let inner = TrayItem::new("Copperd (Running)", default_icon())
             .map_err(|e| TrayError::Init(e.to_string()))?;
         let mut tray = RealTray { inner };
-        configure_tray(
-            &mut tray,
-            running,
-            ui_url,
-            open_url_in_native_window_detached,
-        )?;
+        configure_tray(&mut tray, running, move || settings_ui.open(None))?;
         Ok(Self { _inner: tray.inner })
     }
 }
@@ -110,10 +99,10 @@ impl TrayController {
     pub fn initialize(
         running: Arc<AtomicBool>,
         _extensions_dir: PathBuf,
-        ui_url: String,
+        settings_ui: SettingsUiHandle,
     ) -> Result<Self, TrayError> {
         Ok(Self {
-            _inner: WindowsTrayHandle::start(running, ui_url).map_err(TrayError::Init)?,
+            _inner: WindowsTrayHandle::start(running, settings_ui).map_err(TrayError::Init)?,
         })
     }
 }
@@ -153,11 +142,11 @@ struct WindowsTrayHandle {
 
 #[cfg(windows)]
 impl WindowsTrayHandle {
-    fn start(running: Arc<AtomicBool>, ui_url: String) -> Result<Self, String> {
+    fn start(running: Arc<AtomicBool>, settings_ui: SettingsUiHandle) -> Result<Self, String> {
         let thread = std::thread::Builder::new()
             .name("tray-main".to_string())
             .spawn(move || {
-                if let Err(err) = run_windows_tray(running, ui_url) {
+                if let Err(err) = run_windows_tray(running, settings_ui) {
                     logging::error(format!("main tray error: {err}"));
                 }
             })
@@ -208,11 +197,14 @@ mod windows_impl {
     struct WindowsTrayState {
         hwnd: HWND,
         running: Arc<AtomicBool>,
-        ui_url: String,
+        settings_ui: SettingsUiHandle,
         icon: HICON,
     }
 
-    pub(super) fn run_windows_tray(running: Arc<AtomicBool>, ui_url: String) -> Result<(), String> {
+    pub(super) fn run_windows_tray(
+        running: Arc<AtomicBool>,
+        settings_ui: SettingsUiHandle,
+    ) -> Result<(), String> {
         let class_name = wide("CopperDaemonTray");
         let hmodule = unsafe { GetModuleHandleW(ptr::null()) };
         if hmodule.is_null() {
@@ -249,7 +241,7 @@ mod windows_impl {
         let mut state = WindowsTrayState {
             hwnd,
             running,
-            ui_url,
+            settings_ui,
             icon: load_tray_icon(),
         };
         unsafe {
@@ -330,7 +322,7 @@ mod windows_impl {
     }
 
     fn open_ui(state: &WindowsTrayState) {
-        if let Err(err) = open_url_in_native_window_detached(&state.ui_url) {
+        if let Err(err) = state.settings_ui.open(None) {
             logging::error(format!("failed to open Copper UI in native window: {err}"));
         }
     }
@@ -499,15 +491,10 @@ mod tests {
         let opened = Arc::new(AtomicBool::new(false));
         let opened_signal = Arc::clone(&opened);
 
-        configure_tray(
-            &mut tray,
-            Arc::clone(&running),
-            "http://127.0.0.1:4766".to_string(),
-            move |_url| {
-                opened_signal.store(true, Ordering::Relaxed);
-                Ok(())
-            },
-        )
+        configure_tray(&mut tray, Arc::clone(&running), move || {
+            opened_signal.store(true, Ordering::Relaxed);
+            Ok(())
+        })
         .expect("configure tray");
 
         assert_eq!(tray.labels, vec!["Daemon is running".to_string()]);
@@ -538,26 +525,16 @@ mod tests {
             fail_label: true,
             ..FakeTray::default()
         };
-        let err = configure_tray(
-            &mut label_fail,
-            Arc::clone(&running),
-            "http://127.0.0.1:4766".to_string(),
-            |_url| Ok(()),
-        )
-        .expect_err("label failure");
+        let err = configure_tray(&mut label_fail, Arc::clone(&running), || Ok(()))
+            .expect_err("label failure");
         assert!(err.to_string().contains("label failed"));
 
         let mut menu_fail = FakeTray {
             fail_menu: true,
             ..FakeTray::default()
         };
-        let err = configure_tray(
-            &mut menu_fail,
-            Arc::clone(&running),
-            "http://127.0.0.1:4766".to_string(),
-            |_url| Ok(()),
-        )
-        .expect_err("menu failure");
+        let err = configure_tray(&mut menu_fail, Arc::clone(&running), || Ok(()))
+            .expect_err("menu failure");
         assert!(err.to_string().contains("menu failed"));
     }
 
@@ -565,10 +542,7 @@ mod tests {
     #[test]
     fn initialize_returns_result() {
         let running = Arc::new(AtomicBool::new(true));
-        let _ = TrayController::initialize(
-            running,
-            std::path::PathBuf::from("."),
-            "http://127.0.0.1:4766".to_string(),
-        );
+        let (settings_ui, _requests) = crate::config_ui::settings_ui_channel();
+        let _ = TrayController::initialize(running, std::path::PathBuf::from("."), settings_ui);
     }
 }

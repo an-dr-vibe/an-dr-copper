@@ -209,7 +209,7 @@ catalog and lifecycle without executing Copper actions.
 
 ### M3 — Permissioned capability broker
 
-Status: **IN PROGRESS**
+Status: **DONE**
 Depends on: M2
 
 - [x] Define versioned action request, job, result, and error envelopes.
@@ -230,28 +230,29 @@ remains responsive.
 
 ### M4 — Control plane, settings UI, and background behavior
 
-Status: **IN PROGRESS**
+Status: **DONE**
 Depends on: M2, M3
 
 - [x] Route CLI and HTTP triggers to versioned action messages.
 - [x] Preserve authentication, loopback binding, health, list, reload, verify,
   trigger, and shutdown operations.
-- [ ] Preserve manifest-driven settings UI and state diagnostics.
-- [ ] Preserve dynamic options and apply-actions workflows.
-- [ ] Port the existing settings frontend to the Bones `web/*` bridge and
+- [x] Preserve manifest-driven settings UI and state diagnostics.
+- [x] Preserve dynamic options and apply-actions workflows.
+- [x] Port the existing settings frontend to the Bones `web/*` bridge and
   `wry`-backed presentation module.
-- [ ] Replace UI-specific HTTP fetches with versioned Bones bus/web messages;
-  retain the authenticated HTTP server only for Copper control-plane operations
-  that still require it.
-- [ ] Open and close the native settings window on demand without restarting or
+- [x] Replace native UI-specific HTTP fetches with versioned
+  `copper.settings/1` Bones bus/web messages. The explicit browser fallback
+  uses an ephemeral authenticated server; no settings server remains in the
+  daemon lifecycle.
+- [x] Open and close the native settings window on demand without restarting or
   stopping the daemon.
-- [ ] Remove the Tauri settings-window dependency after Bones presentation
+- [x] Remove the Tauri settings-window dependency after Bones presentation
   reaches parity.
 - [x] Decide D-012, retaining the explicit external-browser fallback during
   migration.
 - [x] Map background polling onto timers/jobs without a busy 60 Hz daemon loop.
-- [ ] Preserve main tray, additional extension trays, and UI launch behavior.
-- [ ] Preserve Safe Input Key hotkey behavior on Windows.
+- [x] Preserve main tray, additional extension trays, and UI launch behavior.
+- [x] Preserve Safe Input Key hotkey behavior on Windows.
 
 Exit criterion: Copper's daemon and management surfaces pass the M0 parity
 suite while driving a Bones-backed runtime.
@@ -328,7 +329,7 @@ Depends on: may proceed alongside M1–M7; must not block Copper unless required
 Candidate improvements:
 
 - [ ] Event-driven headless driver and explicit wake-up/timer integration.
-- [ ] On-demand creation and teardown of the window plus `wry` web presentation
+- [x] On-demand creation and teardown of the window plus `wry` web presentation
   stack for an otherwise headless engine.
 - [ ] Module logging and error-reporting improvements.
 - [ ] Generic tray, notification, and global-hotkey platform primitives.
@@ -446,3 +447,4 @@ When updating this plan:
 | 2026-07-26 | Completed the M3 native handler set with keyboard and keychain operations plus a Windows-gated display family protected by the new additive `windows-display` permission. |
 | 2026-07-26 | Started M4: CLI/HTTP component triggers now use targeted `copper.bus/1` action messages, and optional manifest schedules dispatch background actions at one-second resolution without polling the Bones frame loop. |
 | 2026-07-27 | Accepted D-012 after upstreaming detachable native-module registration and a wry presentation that can repeatedly attach to the live headless Bones bus and fully close without restarting the engine. |
+| 2026-07-27 | Completed the M4 settings cutover: the default UI now uses correlated `copper.settings/1` messages through Bones web/Wry, tray requests attach on the daemon main thread, the temporary browser fallback remains explicit, and Tauri was removed. |

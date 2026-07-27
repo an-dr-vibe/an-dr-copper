@@ -176,10 +176,6 @@ enum UiCommands {
 #[derive(Subcommand, Debug)]
 enum InternalCommands {
     RuntimeTrigger,
-    NativeWindow {
-        #[arg(long, value_name = "URL")]
-        url: String,
-    },
 }
 
 pub fn run() -> Result<(), CliError> {
@@ -315,9 +311,6 @@ fn cmd_internal(command: InternalCommands) -> Result<(), CliError> {
         InternalCommands::RuntimeTrigger => {
             run_protocol_worker(io::stdin(), io::stdout())
                 .map_err(|err| CliError::Message(err.to_string()))?;
-        }
-        InternalCommands::NativeWindow { url } => {
-            config_ui::open_in_native_window(&url)?;
         }
     }
     Ok(())

@@ -102,7 +102,7 @@
         const target = currentSection === 'core'
           ? '/config/core'
           : '/config/extension/' + encodeURIComponent(currentSection.slice(4));
-        const res = await fetch(target, {
+        const res = await copperFetch(target, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -114,7 +114,7 @@
           throw new Error(await res.text());
         }
         if (descriptor && applyActions.length > 0) {
-          const applyRes = await fetch(
+          const applyRes = await copperFetch(
             '/apply/extension/' + encodeURIComponent(descriptor.id),
             {
               method: 'POST',
@@ -156,11 +156,11 @@
     if (closeBtn) {
       closeBtn.addEventListener('click', async () => {
         try {
-          await fetch('/close', {
+          await copperFetch('/close', {
             method: 'POST',
             headers: { 'x-copper-token': model.authToken }
           });
-          setStatus('UI server closed. You can close this tab.');
+          setStatus(model.transport === 'bones' ? 'Window closing.' : 'UI server closed. You can close this tab.');
         } catch (err) {
           setStatus('Close failed: ' + err);
         }

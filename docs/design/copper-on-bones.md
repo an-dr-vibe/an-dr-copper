@@ -60,15 +60,13 @@ configuration, status contracts, diagnostics, or migration behavior.
 
 ## Presentation
 
-Copper owns the settings HTML, styling, behavior, and message contract. The
-Bones web module owns the native window and `wry` webview. UI-specific fetch
-traffic moves to versioned `web/*` and Copper bus messages; authenticated HTTP
-remains available for daemon control operations.
+Copper owns the settings HTML, styling, behavior, and `copper.settings/1`
+message contract. The Bones web module owns the native window and `wry`
+webview. Native requests and correlated responses travel through owner-stamped
+`web/*` messages. Authenticated HTTP remains for daemon control operations and
+the explicit temporary browser fallback.
 
 ## Current gaps
 
-- TODO: add an event-driven headless Bones driver and on-demand presentation.
-- TODO: define the versioned Copper guest and capability message contracts.
-- TODO: add manifest runtime-artifact metadata without breaking schema 1.0.
 - TODO: port the shipped extensions to WASM Components.
-- TODO: remove the Deno and Tauri compatibility paths after parity.
+- TODO: remove the Deno compatibility path after extension parity.

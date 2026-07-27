@@ -1,7 +1,6 @@
 #[cfg(windows)]
 use crate::api::windows_display;
-#[cfg(windows)]
-use crate::config_ui::open_url_in_native_window_detached;
+use crate::config_ui::SettingsUiHandle;
 use crate::extension::Registry;
 #[cfg(windows)]
 use crate::logging;
@@ -45,7 +44,7 @@ trait TrayProviderFactory {
     fn start(
         &self,
         running: Arc<AtomicBool>,
-        daemon_ui_url: String,
+        settings_ui: SettingsUiHandle,
         spec: AdditionalTrayIconSpec,
     ) -> Result<WindowsDisplayTrayHandle, String>;
 }
@@ -53,11 +52,11 @@ trait TrayProviderFactory {
 impl AdditionalTrayController {
     pub fn initialize(
         running: Arc<AtomicBool>,
-        daemon_ui_url: String,
+        settings_ui: SettingsUiHandle,
         registry: &Registry,
     ) -> Result<Self, AdditionalTrayError> {
         #[cfg(not(windows))]
-        let _ = (&running, &daemon_ui_url);
+        let _ = (&running, &settings_ui);
         let specs = collect_specs(registry);
         #[cfg(windows)]
         let mut handles = Vec::new();
@@ -72,7 +71,7 @@ impl AdditionalTrayController {
             })?;
             handles.push(
                 provider
-                    .start(Arc::clone(&running), daemon_ui_url.clone(), spec.clone())
+                    .start(Arc::clone(&running), settings_ui.clone(), spec.clone())
                     .map_err(AdditionalTrayError::Init)?,
             );
         }
@@ -97,10 +96,10 @@ impl TrayProviderFactory for WindowsDisplayTrayProvider {
     fn start(
         &self,
         running: Arc<AtomicBool>,
-        daemon_ui_url: String,
+        settings_ui: SettingsUiHandle,
         spec: AdditionalTrayIconSpec,
     ) -> Result<WindowsDisplayTrayHandle, String> {
-        WindowsDisplayTrayHandle::start(running, daemon_ui_url, spec)
+        WindowsDisplayTrayHandle::start(running, settings_ui, spec)
     }
 }
 
@@ -142,13 +141,13 @@ struct WindowsDisplayTrayHandle {
 impl WindowsDisplayTrayHandle {
     fn start(
         running: Arc<AtomicBool>,
-        daemon_ui_url: String,
+        settings_ui: SettingsUiHandle,
         spec: AdditionalTrayIconSpec,
     ) -> Result<Self, String> {
         let thread = std::thread::Builder::new()
             .name(format!("tray-{}", spec.extension_id))
             .spawn(move || {
-                if let Err(err) = run_windows_display_tray(running, daemon_ui_url, spec) {
+                if let Err(err) = run_windows_display_tray(running, settings_ui, spec) {
                     logging::error(format!("windows display tray error: {err}"));
                 }
             })
@@ -238,7 +237,7 @@ mod windows_impl {
         hwnd: HWND,
         extension_id: String,
         running: Arc<AtomicBool>,
-        daemon_ui_url: String,
+        settings_ui: SettingsUiHandle,
         config_path: PathBuf,
         status_path: PathBuf,
         legacy_path: PathBuf,
@@ -273,7 +272,7 @@ mod windows_impl {
 
     pub(super) fn run_windows_display_tray(
         running: Arc<AtomicBool>,
-        daemon_ui_url: String,
+        settings_ui: SettingsUiHandle,
         spec: AdditionalTrayIconSpec,
     ) -> Result<(), String> {
         let config_path = extension_config_path(&spec.extension_id)?;
@@ -284,7 +283,7 @@ mod windows_impl {
             hwnd: ptr::null_mut(),
             extension_id: spec.extension_id.clone(),
             running: Arc::clone(&running),
-            daemon_ui_url,
+            settings_ui,
             config_path,
             status_path,
             legacy_path,
@@ -546,9 +545,7 @@ mod windows_impl {
             return;
         }
         if command_id == CMD_SETTINGS {
-            let settings_url =
-                format!("{}?section=ext:{}", state.daemon_ui_url, state.extension_id);
-            if let Err(err) = open_url_in_native_window_detached(&settings_url) {
+            if let Err(err) = state.settings_ui.open(Some(&state.extension_id)) {
                 logging::error(format!("failed to open windows-display settings: {err}"));
             }
             return;
@@ -979,6 +976,7 @@ mod windows_impl {
             parse_resolution_preset, parse_status, tray_visual_changed, DisplayStatus,
             WindowsDisplayTrayState,
         };
+        use crate::config_ui::settings_ui_channel;
         use crate::state_store::ExtensionStateStore;
         use std::path::PathBuf;
         use std::sync::{atomic::AtomicBool, Arc};
@@ -1060,11 +1058,12 @@ mod windows_impl {
         #[test]
         fn tray_visual_changed_detects_icon_or_tooltip_updates() {
             let state_store = ExtensionStateStore::for_current_user().expect("state store");
+            let (settings_ui, _requests) = settings_ui_channel();
             let mut state = WindowsDisplayTrayState {
                 hwnd: std::ptr::null_mut(),
                 extension_id: "windows-display-manager".to_string(),
                 running: Arc::new(AtomicBool::new(true)),
-                daemon_ui_url: "http://127.0.0.1:4766".to_string(),
+                settings_ui,
                 config_path: PathBuf::from("config.json"),
                 status_path: PathBuf::from("status.json"),
                 legacy_path: PathBuf::from("data.json"),

@@ -48,7 +48,7 @@
     }
 
     async function runAction(extensionId, actionId) {
-      const res = await fetch(
+      const res = await copperFetch(
         '/trigger/extension/' + encodeURIComponent(extensionId) + '/' + encodeURIComponent(actionId),
         { method: 'POST', headers: { 'x-copper-token': model.authToken } }
       );

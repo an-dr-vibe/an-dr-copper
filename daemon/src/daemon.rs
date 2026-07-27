@@ -1,6 +1,8 @@
 use crate::autostart;
 use crate::bones_integration::BonesDaemonDriver;
-use crate::config_ui::{start_daemon_ui_server, DEFAULT_DAEMON_UI_BIND};
+use crate::config_ui::settings_ui_channel;
+#[cfg(feature = "native-ui")]
+use crate::config_ui::NativeSettingsPresentation;
 use crate::control_plane::ControlPlaneAuth;
 use crate::core_config::{load_core_config, CoreConfig};
 use crate::daemon_scheduler::DaemonScheduler;
@@ -255,15 +257,9 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     }
     let auth = ControlPlaneAuth::ensure_persisted()?;
     state.auth_token = Some(auth.token().to_string());
-    let daemon_ui_bind = std::env::var("COPPERD_DAEMON_UI_BIND")
-        .unwrap_or_else(|_| DEFAULT_DAEMON_UI_BIND.to_string());
-    let daemon_ui = start_daemon_ui_server(
-        config.extensions_dir.clone(),
-        daemon_ui_bind,
-        Arc::clone(&running),
-        auth.clone(),
-    )
-    .map_err(|err| DaemonError::Protocol(format!("failed to start daemon UI server: {err}")))?;
+    let (settings_ui, settings_requests) = settings_ui_channel();
+    #[cfg(not(feature = "native-ui"))]
+    let _ = settings_requests;
     let disable_tray = std::env::var("COPPERD_DISABLE_TRAY")
         .map(|value| value == "1")
         .unwrap_or(false);
@@ -274,7 +270,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             TrayController::initialize(
                 Arc::clone(&running),
                 config.extensions_dir.clone(),
-                daemon_ui.url.clone(),
+                settings_ui.clone(),
             )
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
         )
@@ -285,7 +281,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
         Some(
             AdditionalTrayController::initialize(
                 Arc::clone(&running),
-                daemon_ui.url.clone(),
+                settings_ui,
                 &state.registry,
             )
             .map_err(|err| DaemonError::Tray(err.to_string()))?,
@@ -303,7 +299,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     .map_err(DaemonError::Tray)?;
 
     logging::info(format!(
-        "Daemon started on {} (user extensions: {}, core extensions: {}, config UI: {}, additional tray icons: {})",
+        "Daemon started on {} (user extensions: {}, core extensions: {}, config UI: Bones/wry on demand, additional tray icons: {})",
         config.bind_addr,
         config.extensions_dir.display(),
         state
@@ -311,12 +307,15 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "<not found>".to_string()),
-        daemon_ui.url,
         additional_tray_count
     ));
 
     let mut scheduler = DaemonScheduler::new(config.reload_interval);
     let mut last_bones_step = Instant::now();
+    #[cfg(feature = "native-ui")]
+    let mut settings_presentation: Option<NativeSettingsPresentation> = None;
+    #[cfg(feature = "native-ui")]
+    let mut settings_selection: Option<Option<String>> = None;
     while running.load(Ordering::Relaxed) {
         match server.recv_timeout(Duration::from_millis(50)) {
             Ok(Some(request)) => handle_http_request(request, &mut state, &running)?,
@@ -363,12 +362,69 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
             )),
         }
         let now = Instant::now();
+        #[cfg(feature = "native-ui")]
+        {
+            for selected_extension_id in settings_requests.try_iter() {
+                settings_selection = Some(selected_extension_id.clone());
+                if let Some(mut presentation) = settings_presentation.take() {
+                    presentation.close();
+                }
+                match NativeSettingsPresentation::open(
+                    state.bones.presentation_bus(),
+                    state.bones.presentation_registry(),
+                    &config.extensions_dir,
+                    selected_extension_id.as_deref(),
+                ) {
+                    Ok(presentation) => settings_presentation = Some(presentation),
+                    Err(error) => {
+                        logging::error(format!("failed to open Bones settings UI: {error}"))
+                    }
+                }
+            }
+            let presentation_lost_during_reload = settings_presentation.is_some()
+                && !state
+                    .bones
+                    .presentation_registry()
+                    .contains(bones_messages::web::ENDPOINT);
+            if presentation_lost_during_reload {
+                if let Some(mut presentation) = settings_presentation.take() {
+                    presentation.close();
+                }
+                if let Some(selected_extension_id) = settings_selection.as_ref() {
+                    match NativeSettingsPresentation::open(
+                        state.bones.presentation_bus(),
+                        state.bones.presentation_registry(),
+                        &config.extensions_dir,
+                        selected_extension_id.as_deref(),
+                    ) {
+                        Ok(presentation) => settings_presentation = Some(presentation),
+                        Err(error) => logging::error(format!(
+                            "failed to restore Bones settings UI after reload: {error}"
+                        )),
+                    }
+                }
+            }
+            let should_close = settings_presentation
+                .as_mut()
+                .map(NativeSettingsPresentation::update)
+                .unwrap_or(false);
+            if should_close {
+                settings_selection = None;
+                if let Some(mut presentation) = settings_presentation.take() {
+                    presentation.close();
+                }
+            }
+        }
         state
             .bones
             .step(now.saturating_duration_since(last_bones_step));
         last_bones_step = now;
     }
 
+    #[cfg(feature = "native-ui")]
+    if let Some(mut presentation) = settings_presentation {
+        presentation.close();
+    }
     state.bones.shutdown();
     logging::info("Daemon stopped");
     Ok(())

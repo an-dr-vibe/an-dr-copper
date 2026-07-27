@@ -38,12 +38,14 @@ Recommended config actions in UI:
 2. `show-config`
    - Shows the saved monitor configuration and last run summary
 
-## Current State (2026-03-15)
+## Current State (2026-07-27)
 
-- Daemon-hosted config UI is always on while daemon runs:
-  - `http://127.0.0.1:4766`
-- Implemented command: `copperd ui open --extension <id>` (standalone temporary UI server mode).
-- Native window mode is the default for `copperd ui open --extension <id>` and tray settings actions; `--browser` keeps the old browser fallback available.
+- The daemon stays headless until a tray action requests the detachable
+  Bones web/Wry settings presentation.
+- Implemented command: `copperd ui open --extension <id>`.
+- Native UI requests use correlated `copper.settings/1` messages over the
+  owner-stamped Bones web bridge. No HTTP token is embedded in native pages.
+- `--browser` explicitly starts the temporary authenticated loopback fallback.
 - Tray shortcut implemented for `desktop-torrent-organizer`:
   - `Configure Desktop Torrent Organizer`
 - Extension config is stored at:

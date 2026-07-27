@@ -8,7 +8,7 @@ For architecture and constraints read `docs/ARCHITECTURE.md` first.
 ```powershell
 cargo build -p copperd                  # debug
 cargo build -p copperd --release        # release
-cargo tree -p copperd -e normal         # headless graph must not include Bones platform/renderer/ui
+cargo tree -p copperd --no-default-features -e normal # headless graph excludes Bones web/platform
 ./scripts/build-release.ps1             # full dist packaging → dist/release/
 
 ./scripts/daemon.ps1 -Action run        # start daemon  (terminal A)
@@ -21,7 +21,11 @@ cargo run -p copperd -- ui open --extension desktop-torrent-organizer
 actions reuse that binary so Cargo does not hold a build lock for the daemon's
 lifetime and Windows never attempts to replace a running executable.
 
-The settings window is Tauri-backed and enabled by default. Use `ui open --browser` for browser fallback, or build with `--no-default-features` only when intentionally checking a headless/no-native-ui path.
+The settings window uses the detachable Bones web/Wry presentation and is
+enabled by default. Native requests use the versioned `copper.settings/1`
+message protocol on the Bones bus. Use `ui open --browser` for the temporary
+authenticated browser fallback, or build with `--no-default-features` only
+when intentionally checking a headless/no-native-ui path.
 
 Run `cargo fmt -p copperd --check` for Copper's formatting gate. The pinned
 `bones/` checkout is an external workspace with its own formatting policy and
@@ -30,6 +34,12 @@ must not be rewritten by Copper's validation scripts.
 Copper consumes `bones/core/runner` with default features disabled. Do not
 enable Bones' `presentation` feature in the daemon; the settings window will
 use the separate on-demand presentation composition.
+
+The daemon constructs SDL/Wry resources only after a settings request and on
+the daemon main thread. Closing the window detaches both `web` and
+`copper-settings` endpoints. A catalog rebuild reattaches an open settings
+presentation to the candidate engine; a stable catalog reload leaves it
+untouched.
 
 The daemon supplies each validated WASM Component to Bones with
 `catalog_extension(manifest.id, artifact_path)` and adds only the already

@@ -16,10 +16,10 @@ Bones and runs product extensions as WASM Components; see
 
 ## 2. Process Model
 
-Two-process target model (same intent as original architecture):
+On-demand presentation model:
 
 1. Rust daemon (`copperd run`) - always-on background process.
-2. UI window (planned) - spawned on demand for extension UI rendering.
+2. Detachable Bones web/Wry presentation - attached only while settings are open.
 
 Current implementation status:
 
@@ -32,20 +32,26 @@ Current implementation status:
   control plane, runtime-selected trigger dispatch, scheduled
   reload/background actions, descriptor validation, skeleton generation, local
   config UI (`ui open`), and main tray icon UI launch on Windows.
-- Implemented: daemon-hosted always-on settings UI (`http://127.0.0.1:4766`) with manifest-driven extension pages, optional manifest-defined tabs, and a core-managed extensions tab for enable/disable and command discovery.
-- Implemented: Tauri-backed native window launcher for the settings UI; `ui open` and tray settings actions open native windows by default, with browser opening retained as an explicit fallback.
+- Implemented: an on-demand Bones web/Wry settings presentation with
+  manifest-driven extension pages, optional manifest-defined tabs, and a
+  core-managed extensions tab for enable/disable and command discovery.
+- Implemented: native UI requests and correlated responses use the versioned
+  `copper.settings/1` protocol over owner-stamped Bones `web/*` messages. Main
+  and extension tray actions attach the presentation to the live daemon bus;
+  `ui open` uses the same presentation composition. An explicit
+  `ui open --browser` fallback retains a temporary, authenticated loopback
+  server without making UI HTTP part of the daemon lifecycle.
 - Implemented: action execution through an external Deno subprocess and the
   host JSON-RPC bridge in `sdk/bridge.ts`.
-- Planned: Bones-hosted WASM Components, richer cross-platform tray/hotkey
-  integration, and on-demand settings presentation through the Bones web
-  module.
+- Planned: completion of the shipped WASM Component ports and richer
+  cross-platform tray/hotkey integration.
 
 ## 3. Implemented Daemon Core
 
 Daemon capabilities:
 
 - Binds to loopback HTTP control-plane endpoint (default `127.0.0.1:4765`).
-- Requires a daemon-generated control-plane token for daemon IPC requests and daemon-hosted UI routes other than the initial HTML shell.
+- Requires a daemon-generated control-plane token for daemon IPC requests.
 - Loads extensions from merged roots:
   - executable-adjacent `extensions/`, parent `extensions/`, and workspace `extensions/` when present during local source runs (legacy `core-extensions/` still supported)
   - user directory `~/.Copper/extensions`
@@ -83,8 +89,12 @@ Daemon capabilities:
   permissions before dispatching protected host API methods. The replacement
   Bones capability boundary retains and strengthens this policy.
 - Routes daemon IPC request policy through a dedicated `DaemonControlService` so transport handling stays separate from registry/runtime/state orchestration.
-- Routes config UI information and apply workflows through a dedicated `config_ui_service` layer so the HTTP/UI server stays thinner.
-- Routes config UI HTTP parsing/serialization through `config_ui_http.rs` so UI transport concerns are separated from route/business logic.
+- Routes config UI information and apply workflows through a dedicated
+  `config_ui_service` layer shared by native Bones messages and browser
+  fallback routes.
+- Adapts the same settings routes to `copper.settings/1` in
+  `config_ui_bones.rs`; `config_ui_http.rs` remains only for the explicit
+  temporary browser fallback.
 - Splits oversized daemon/config UI/tray source files into multi-file modules and extracted test files so implementation details stay reviewable without mixing transport, rendering, platform code, and tests in one file.
 - Runs host-native background tasks through `HostExtensionRegistry` capability specs instead of daemon-local extension ID branching.
 - Executes host-native actions for built-in extensions through `HostExtensionRegistry` capability handlers with declared state contracts.
@@ -163,6 +173,7 @@ Type contract for AI generation:
 |  |  |- daemon_service.rs   # daemon control-plane service layer
 |  |  |- daemon_transport.rs # daemon HTTP transport parsing/response mapping
 |  |  |- config_ui_http.rs   # config UI HTTP parsing/serialization
+|  |  |- config_ui_bones.rs  # versioned Bones transport + Wry lifecycle
 |  |  |- config_ui_service.rs # config UI info/apply service layer
 |  |  |- config_ui.rs        # config UI module root and shared state types
 |  |  |- config_ui_server.rs # config UI request handling
@@ -175,7 +186,6 @@ Type contract for AI generation:
 |  |  |- daemon.rs   # long-running daemon lifecycle root
 |  |  |- cli.rs      # CLI and daemon control commands
 |  |  `- ...
-|- daemon/tauri.conf.json # optional native settings window config
 |- schemas/
 |- sdk/
 |- extensions/
@@ -284,8 +294,8 @@ These must not be broken without a deliberate versioning decision:
 
 - Legacy TypeScript execution remains as compatibility scaffolding until the
   shipped extension ports are complete.
-- Bones now exposes detachable `wry` presentation over the live headless
-  engine bus; Copper's settings frontend still needs to adopt that boundary.
+- The explicit browser fallback still uses the temporary authenticated UI
+  server; the default native path uses only Bones messages.
 - Safe Input Key registers its saved hotkey through the daemon on Windows; richer cross-platform global hotkey behavior is still roadmap work.
 - Some shipped extensions are still intentionally host-native or hybrid rather than purely TypeScript-executed; that ownership is now centralized in `host_extensions.rs` as explicit host capabilities.
 

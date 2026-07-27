@@ -47,12 +47,13 @@ On Windows, installed bundles also include `copper.exe` as the no-terminal doubl
 # in another terminal:
 ./scripts/daemon.ps1 -Action health
 ./scripts/daemon.ps1 -Action list
-# config UI is always available while daemon runs:
-# http://127.0.0.1:4766
-# Windows-only: left click the main Copper tray icon to open the UI.
+# The native settings UI is created on demand.
+# Windows-only: left click the main Copper tray icon to open the Bones/Wry UI.
 # Windows-only: `windows-display-manager` registers an additional tray icon.
 # Left click toggles taskbar auto-hide. Right click opens resolution/scale/settings/exit menu.
 ./target/release/copperd.exe ui open --extension desktop-torrent-organizer
+# Explicit temporary browser fallback:
+./target/release/copperd.exe ui open --extension desktop-torrent-organizer --browser
 ./scripts/daemon.ps1 -Action shutdown
 ```
 

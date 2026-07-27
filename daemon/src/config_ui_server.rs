@@ -1,14 +1,17 @@
+use super::bones::open_in_native_window;
 use super::browser::open_in_browser;
 use super::render::render_html;
-use super::window::open_in_native_window;
-use super::{PersistentUiServer, UiConfigError, UiOpenOptions, UiServerState};
+#[cfg(test)]
+use super::PersistentUiServer;
+use super::{UiConfigError, UiOpenOptions, UiServerState, UiTransport};
 use crate::config_ui_http::{parse_request, write_response, HttpMethod, HttpRequest, HttpResponse};
 use crate::config_ui_service::{apply_extension_settings, build_core_info, build_extension_info};
 use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
-use crate::core_config::{load_core_config, CoreConfig};
+use crate::core_config::{load_core_config_from, CoreConfig};
 use crate::descriptor::Descriptor;
 use crate::extension::{core_extensions_dir, load_discoverable_registry, runtime_extension_roots};
 use crate::host_extensions::HostExtensionRegistry;
+#[cfg(test)]
 use crate::logging;
 use crate::state_store::{merge_json_object, ExtensionStateStore};
 use serde_json::Value;
@@ -16,12 +19,14 @@ use std::collections::HashSet;
 use std::fs;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
 pub(crate) fn start_daemon_ui_server(
     extensions_dir: std::path::PathBuf,
     bind_addr: String,
@@ -84,16 +89,45 @@ pub(super) fn build_ui_state(
     auth: ControlPlaneAuth,
     origin: String,
 ) -> Result<UiServerState, UiConfigError> {
-    let registry = load_discoverable_registry(extensions_dir)?;
+    let state_store = ExtensionStateStore::for_current_user()?;
+    state_store.ensure_root()?;
+    let mut state = UiServerState {
+        selected_extension_id: String::new(),
+        descriptors: Vec::new(),
+        discoverable_descriptors: Vec::new(),
+        core_extension_ids: HashSet::new(),
+        extension_ids: HashSet::new(),
+        user_extensions_dir: extensions_dir.to_path_buf(),
+        core_extensions_dir: None,
+        runtime_extension_roots: Vec::new(),
+        state_store,
+        host_extensions: HostExtensionRegistry::new(),
+        auth_token: auth.token().to_string(),
+        origin,
+        allow_close,
+        transport: UiTransport::Http,
+    };
+    refresh_ui_state(&mut state)?;
+    if let Some(selected) = selected_extension_id {
+        if !state.extension_ids.contains(selected) {
+            return Err(UiConfigError::ExtensionNotFound(selected.to_string()));
+        }
+        state.selected_extension_id = selected.to_string();
+    }
+    Ok(state)
+}
+
+pub(super) fn refresh_ui_state(state: &mut UiServerState) -> Result<(), UiConfigError> {
+    let registry = load_discoverable_registry(&state.user_extensions_dir)?;
     let mut discoverable_descriptors = registry
         .list()
         .map(|extension| extension.descriptor.clone())
         .collect::<Vec<_>>();
     discoverable_descriptors.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let core_config = load_core_config()?;
+    let core_config = load_core_config_from(state.state_store.data_root())?;
     let descriptors = visible_descriptors(&discoverable_descriptors, &core_config);
-    let user_extensions_root = normalize_path(extensions_dir);
+    let user_extensions_root = normalize_path(&state.user_extensions_dir);
     let core_extension_ids = registry
         .list()
         .filter(|extension| {
@@ -106,39 +140,23 @@ pub(super) fn build_ui_state(
         })
         .map(|extension| extension.descriptor.id.clone())
         .collect::<HashSet<_>>();
-
     let extension_ids = descriptors
         .iter()
         .map(|descriptor| descriptor.id.clone())
         .collect::<HashSet<_>>();
 
-    let selected_extension_id = if let Some(selected) = selected_extension_id {
-        if !extension_ids.contains(selected) {
-            return Err(UiConfigError::ExtensionNotFound(selected.to_string()));
-        }
-        selected.to_string()
-    } else {
-        String::new()
-    };
-
-    let state_store = ExtensionStateStore::for_current_user()?;
-    state_store.ensure_root()?;
-
-    Ok(UiServerState {
-        selected_extension_id,
-        descriptors,
-        discoverable_descriptors,
-        core_extension_ids,
-        extension_ids,
-        user_extensions_dir: extensions_dir.to_path_buf(),
-        core_extensions_dir: core_extensions_dir(),
-        runtime_extension_roots: runtime_extension_roots(extensions_dir),
-        state_store,
-        host_extensions: HostExtensionRegistry::new(),
-        auth_token: auth.token().to_string(),
-        origin,
-        allow_close,
-    })
+    if !state.selected_extension_id.is_empty()
+        && !extension_ids.contains(&state.selected_extension_id)
+    {
+        state.selected_extension_id.clear();
+    }
+    state.descriptors = descriptors;
+    state.discoverable_descriptors = discoverable_descriptors;
+    state.core_extension_ids = core_extension_ids;
+    state.extension_ids = extension_ids;
+    state.core_extensions_dir = core_extensions_dir();
+    state.runtime_extension_roots = runtime_extension_roots(&state.user_extensions_dir);
+    Ok(())
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -171,6 +189,11 @@ pub(crate) fn open_extension_config(
     extension_id: &str,
     options: UiOpenOptions,
 ) -> Result<String, UiConfigError> {
+    if options.open_window {
+        open_in_native_window(extensions_dir, Some(extension_id))?;
+        return Ok(format!("bones://settings?section=ext:{extension_id}"));
+    }
+
     let auth = ControlPlaneAuth::ephemeral();
 
     let listener = TcpListener::bind(&options.bind_addr)?;
@@ -181,16 +204,6 @@ pub(crate) fn open_extension_config(
 
     if options.open_browser {
         open_in_browser(&url)?;
-    }
-
-    if options.open_window {
-        std::thread::spawn(move || {
-            if let Err(err) = serve_ui_listener(listener, state, options.idle_timeout) {
-                logging::error(format!("config UI server error: {err}"));
-            }
-        });
-        open_in_native_window(&url)?;
-        return Ok(url);
     }
 
     serve_ui_listener(listener, state, options.idle_timeout)?;
@@ -244,6 +257,15 @@ pub(super) fn handle_connection(
         return Ok(false);
     }
 
+    let (response, stop_after) = route_request(state, &request)?;
+    write_response(&mut stream, response)?;
+    Ok(stop_after)
+}
+
+pub(super) fn route_request(
+    state: &UiServerState,
+    request: &HttpRequest,
+) -> Result<(HttpResponse, bool), UiConfigError> {
     let mut stop_after = false;
     let response = if request.method == HttpMethod::Get && request.path == "/" {
         HttpResponse::ok_html(render_html(state))
@@ -341,8 +363,7 @@ pub(super) fn handle_connection(
         HttpResponse::not_found()
     };
 
-    write_response(&mut stream, response)?;
-    Ok(stop_after)
+    Ok((response, stop_after))
 }
 
 fn handle_trigger_extension(

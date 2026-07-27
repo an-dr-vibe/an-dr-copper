@@ -24,9 +24,8 @@ All `.ps1` scripts are written for PowerShell 7+ (`pwsh`) and run on Windows/mac
 ./scripts/daemon.ps1 -Action run
 ./scripts/daemon.ps1 -Action health
 ./scripts/daemon.ps1 -Action list
-# daemon also hosts config UI at:
-# http://127.0.0.1:4766
-# Windows: left click the main Copper tray icon to open the UI.
+# Windows: left click the main Copper tray icon to attach the on-demand
+# Bones/Wry settings UI.
 # extension settings: ~/.Copper/extensions/<extension-id>/config.json
 # extension status:   ~/.Copper/extensions/<extension-id>/status.json
 ./scripts/daemon.ps1 -Action shutdown
@@ -84,15 +83,14 @@ cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents
 cargo run -p copperd -- daemon trigger windows-display-manager --action status --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- daemon trigger windows-display-manager --action toggle-taskbar-autohide --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
-# opens a native Tauri settings window by default:
+# opens a native Bones/Wry settings window by default:
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
 # browser fallback:
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions --browser
 cargo run -p copperd -- generate-main extensions/sort-downloads/manifest.json
 cargo run -p copperd -- run
 cargo run -p copperd -- daemon health --bind-addr 127.0.0.1:4765
-# daemon-hosted settings UI:
-# http://127.0.0.1:4766
+# daemon health reports the on-demand settings endpoint as bones://settings
 cargo run -p copperd -- daemon shutdown --bind-addr 127.0.0.1:4765
 ```
 

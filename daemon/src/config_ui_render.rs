@@ -60,7 +60,17 @@ pub(super) fn render_html(state: &UiServerState) -> String {
         "discoverableDescriptors": state.discoverable_descriptors,
         "coreExtensionIds": state.core_extension_ids,
         "allowClose": state.allow_close,
-        "authToken": state.auth_token,
+        "authToken": if state.transport == super::UiTransport::Http {
+            state.auth_token.as_str()
+        } else {
+            ""
+        },
+        "transport": if state.transport == super::UiTransport::Bones {
+            "bones"
+        } else {
+            "http"
+        },
+        "settingsProtocol": super::COPPER_SETTINGS_PROTOCOL_V1,
         "coreUiTheme": initial_ui_theme(state),
     });
     let model_inline = serde_json::to_string(&model).unwrap_or_else(|_| "{}".to_string());
@@ -96,7 +106,7 @@ pub(super) fn render_html(state: &UiServerState) -> String {
       <div class="btn-row">
         <button class="primary" id="saveBtn">Save settings</button>
         <button id="reloadExtensionsBtn">Reload extensions</button>
-        <button id="closeBtn">Close UI Server</button>
+        <button id="closeBtn">Close</button>
       </div>
       <div class="status-msg" id="statusMsg"></div>
     </main>

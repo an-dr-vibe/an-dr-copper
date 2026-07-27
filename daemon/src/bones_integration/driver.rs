@@ -171,6 +171,16 @@ impl BonesDaemonDriver {
         }
     }
 
+    #[cfg(feature = "native-ui")]
+    pub(crate) fn presentation_bus(&self) -> bones_bus::Bus {
+        self.engine.runner.bus().clone()
+    }
+
+    #[cfg(feature = "native-ui")]
+    pub(crate) fn presentation_registry(&self) -> bones_bus::Registry {
+        self.engine.supervisor.registry.clone()
+    }
+
     pub fn dispatch_action(
         &mut self,
         extension_id: &str,

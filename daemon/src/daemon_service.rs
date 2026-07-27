@@ -1,5 +1,4 @@
 use crate::bones_integration::BonesRuntimeStatus;
-use crate::config_ui::DEFAULT_DAEMON_UI_BIND;
 use crate::execution::{permissions_as_strings, ExecutionEngine};
 use crate::extension::Registry;
 use crate::host_extensions::HostExtensionRegistry;
@@ -48,11 +47,12 @@ impl<'a> DaemonControlService<'a> {
                 .map(|path| path.display().to_string()),
             "extensionsLoaded": self.registry.list().count(),
             "bones": self.bones_status,
-            "configUiUrl": format!(
-                "http://{}",
-                std::env::var("COPPERD_DAEMON_UI_BIND")
-                    .unwrap_or_else(|_| DEFAULT_DAEMON_UI_BIND.to_string())
-            ),
+            "configUiUrl": "bones://settings",
+            "configUi": {
+                "transport": "bones-web",
+                "presentation": "wry",
+                "onDemand": true,
+            },
             "stateWarnings": state_warnings,
         }))
     }

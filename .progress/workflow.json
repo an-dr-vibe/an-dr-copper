@@ -11,8 +11,8 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "9f04ca6a83004adaafc38c4625de64bb",
-  "commitBaseline": "1cb849cda87d5c5f78ef55c2a4da6d585004da9b",
+  "currentIncrementId": "92b973d1924f4213890ed5ed4fa0f3e6",
+  "commitBaseline": "00f3657342d66836248fcbf50e8ce652ad3d486b",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
@@ -94,14 +94,14 @@
     {
       "id": "9f04ca6a83004adaafc38c4625de64bb",
       "number": 12,
-      "status": "verified",
+      "status": "completed",
       "scope": "On-demand Bones wry presentation",
       "description": "~300 lines: upstream generic lazy web/window lifecycle support to Bones and verify a headless engine can repeatedly open and close wry presentation."
     },
     {
       "id": "92b973d1924f4213890ed5ed4fa0f3e6",
       "number": 13,
-      "status": "planned",
+      "status": "verified",
       "scope": "Copper settings UI on Bones web",
       "description": "~300 lines: port settings frontend transport to Bones web messages, preserve settings behavior, and remove Tauri window use."
     },
@@ -432,8 +432,23 @@
       "at": "2026-07-26T23:34:15.3417028Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-26T23:36:29.4389641Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to BUILD."
+    },
+    {
+      "at": "2026-07-27T00:00:05.0753494Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-27T00:37:10.5071418Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-26T23:34:15.3488104Z"
+  "updatedAt": "2026-07-27T00:37:10.5149152Z"
 }

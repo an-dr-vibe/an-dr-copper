@@ -16,9 +16,10 @@ mod tests {
     fn initialize_without_enabled_extensions_creates_empty_controller() {
         let temp = tempdir().expect("tempdir");
         let registry = Registry::load_from_dir(temp.path()).expect("registry");
+        let (settings_ui, _requests) = crate::config_ui::settings_ui_channel();
         let controller = AdditionalTrayController::initialize(
             Arc::new(AtomicBool::new(true)),
-            "http://127.0.0.1:4766".to_string(),
+            settings_ui,
             &registry,
         )
         .expect("controller");
