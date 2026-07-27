@@ -10,9 +10,10 @@ AI-authored extensions.
 
 The current runtime is a long-running Rust daemon with an embedded Bones
 engine. Extensions are manifest-first (`manifest.json`) with a minimal API
-contract and schema validation. Ported extensions run as WASM Components;
-remaining compatibility extensions still use Deno-backed TypeScript during
-the migration. See `docs/BONES_MIGRATION_PLAN.md`.
+contract and schema validation. Every shipped extension runs as a WASM
+Component; Deno-backed TypeScript remains available only for external
+compatibility packages during the migration. See
+`docs/BONES_MIGRATION_PLAN.md`.
 
 ## 2. Process Model
 
@@ -47,11 +48,12 @@ Current implementation status:
 - Implemented: a Rust `copper.component/1` guest SDK with generated Bones WIT
   bindings, sender validation, asynchronous capability helpers, a scaffold,
   locked `wasm32-wasip2` builds, and deterministic extension archives.
-- Implemented: `session-counter`, `sort-downloads`, and
-  `desktop-torrent-organizer` Component ports with live Bones-driver parity
-  tests, committed reproducible artifacts, and no legacy entrypoints.
-- Planned: completion of the shipped WASM Component ports and richer
-  cross-platform tray/hotkey integration.
+- Implemented: all five shipped Component ports with live Bones-driver parity
+  tests, committed reproducible artifacts, and no legacy entrypoints. Safe
+  Input Key delegates keychain and keyboard work to native capabilities;
+  Windows Display Manager delegates platform work while retaining native
+  dynamic options, settings apply, and tray integration.
+- Planned: richer cross-platform tray/hotkey integration.
 
 ## 3. Implemented Daemon Core
 
@@ -81,8 +83,8 @@ Daemon capabilities:
   limits keep one extension from consuming the shared worker boundary.
 - Dispatches CLI and authenticated HTTP triggers for WASM extensions as direct,
   versioned `copper.bus/1` `action-request` messages from the fixed
-  `copper-actions` endpoint. Legacy TypeScript extensions continue through the
-  isolated subprocess adapter until their component ports are complete.
+  `copper-actions` endpoint. External legacy TypeScript extensions continue
+  through the isolated subprocess adapter until the final cutover removes it.
 - Schedules WASM background actions from optional manifest runtime metadata.
   Copper inspects each extension's scoped config at most once per second,
   applies the declared enable/interval keys, and records a run only after Bones

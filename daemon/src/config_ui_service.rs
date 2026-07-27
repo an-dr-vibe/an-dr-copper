@@ -120,7 +120,12 @@ fn build_user_command_info(
         usage.push("Update the saved settings above, then click Save and apply.".to_string());
     }
 
-    if state
+    if descriptor.runtime.is_some() {
+        usage.push(format!(
+            "Run `copperd trigger {} --action {}`.",
+            descriptor.id, action.id
+        ));
+    } else if state
         .host_extensions
         .supports_cli_trigger(&descriptor.id, &action.id)
     {

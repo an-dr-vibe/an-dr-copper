@@ -11,8 +11,8 @@
     "done": "The Definition of Done and validation gates in docs/BONES_MIGRATION_PLAN.md pass, all shipped extensions run through Bones as WASM Components, the settings UI uses Bones web/wry presentation, and temporary Deno/Tauri runtime paths are removed from the released architecture.",
     "outOfScope": "Unrelated Bones game, renderer, audio, or game-core work; replacing Copper manifests with bones.toml; broad ambient WASI access; permanent dual runtimes; pushing or merging without final approval."
   },
-  "currentIncrementId": "f7f9373ae4e14d7e8742326a18b7d1dc",
-  "commitBaseline": "7558782e714a76f259121da18a4ddf50cac24b0e",
+  "currentIncrementId": "49361c1ec0c64d44a02731336047c108",
+  "commitBaseline": "ee6537d5bf3c6720d3933a9e645c2cebb7555dca",
   "increments": [
     {
       "id": "45917f16e9d949d0928910a43b9810fc",
@@ -122,14 +122,14 @@
     {
       "id": "f7f9373ae4e14d7e8742326a18b7d1dc",
       "number": 16,
-      "status": "verified",
+      "status": "completed",
       "scope": "Desktop torrent organizer WASM port",
       "description": "~300 lines: test then port actions, background monitoring, scoped file moves, settings, and status behavior."
     },
     {
       "id": "49361c1ec0c64d44a02731336047c108",
       "number": 17,
-      "status": "planned",
+      "status": "verified",
       "scope": "Safe Input Key and Windows display WASM ports",
       "description": "~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities."
     },
@@ -492,8 +492,23 @@
       "at": "2026-07-27T02:16:46.1829957Z",
       "action": "advance",
       "detail": "Advanced from VERIFY to COMMIT."
+    },
+    {
+      "at": "2026-07-27T02:17:16.3349277Z",
+      "action": "advance",
+      "detail": "Advanced from COMMIT to BUILD."
+    },
+    {
+      "at": "2026-07-27T02:31:48.2624366Z",
+      "action": "advance",
+      "detail": "Advanced from BUILD to VERIFY."
+    },
+    {
+      "at": "2026-07-27T02:36:02.6243600Z",
+      "action": "advance",
+      "detail": "Advanced from VERIFY to COMMIT."
     }
   ],
   "createdAt": "2026-07-26T20:01:12.6841587Z",
-  "updatedAt": "2026-07-27T02:16:46.1942134Z"
+  "updatedAt": "2026-07-27T02:36:02.6303141Z"
 }

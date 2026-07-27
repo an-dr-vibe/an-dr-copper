@@ -28,11 +28,6 @@ fn read_descriptor(extension_id: &str) -> Descriptor {
     parse_and_validate(&raw).expect("descriptor should be valid")
 }
 
-fn read_main_ts(extension_id: &str) -> String {
-    let path = extension_dir(extension_id).join("main.ts");
-    fs::read_to_string(path).expect("read main.ts")
-}
-
 fn read_component_source(extension_id: &str) -> String {
     let path = extension_dir(extension_id).join("component/src/lib.rs");
     fs::read_to_string(path).expect("read Component source")
@@ -107,13 +102,8 @@ fn shipped_extension_contract_matrix_is_stable() {
 
     for (id, trigger, permissions, action_ids) in expected {
         let descriptor = read_descriptor(id);
-        let component_ported = matches!(
-            id,
-            "desktop-torrent-organizer" | "session-counter" | "sort-downloads"
-        );
-        assert_eq!(
+        assert!(
             descriptor.runtime.is_some(),
-            component_ported,
             "{id} runtime selection changed without updating the parity matrix"
         );
         assert_eq!(descriptor.trigger, trigger, "{id} trigger changed");
@@ -233,23 +223,20 @@ fn wasm_component_manifest_rejects_a_directory_as_its_artifact() {
 }
 
 #[test]
-fn legacy_typescript_entrypoints_expose_trigger_handlers() {
+fn all_shipped_extensions_use_components_without_legacy_entrypoints() {
     for extension in extension_folders(&extensions_root()) {
         let id = extension
             .file_name()
             .expect("extension folder name")
             .to_string_lossy();
-        if read_descriptor(&id).runtime.is_some() {
-            continue;
-        }
-        let source = read_main_ts(&id);
+        let descriptor = read_descriptor(&id);
         assert!(
-            source.contains("export default function"),
-            "{id} should export the Copper TypeScript factory"
+            descriptor.runtime.is_some(),
+            "{id} should declare its Component runtime"
         );
         assert!(
-            source.contains("onTrigger"),
-            "{id} should expose the legacy trigger handler"
+            !extension.join("main.ts").exists(),
+            "{id} should not retain the legacy Deno entrypoint"
         );
     }
 }
@@ -340,6 +327,56 @@ fn torrent_organizer_component_contract_preserves_monitoring_and_move_only_scope
         !source.contains("\"delete\""),
         "torrent organizer must never request file deletion"
     );
+}
+
+#[test]
+fn sensitive_component_ports_keep_secrets_and_platform_work_in_native_capabilities() {
+    for id in ["safe-input-key", "windows-display-manager"] {
+        let descriptor = read_descriptor(id);
+        let runtime = descriptor.runtime.expect("WASM Component runtime");
+        assert_eq!(runtime.kind, RuntimeKind::WasmComponent);
+        assert_eq!(runtime.abi, COMPONENT_ABI_V1);
+        assert_eq!(runtime.artifact, format!("{id}.wasm"));
+        assert!(extension_dir(id).join(&runtime.artifact).is_file());
+        assert!(!extension_dir(id).join("main.ts").exists());
+    }
+
+    let safe_input = read_component_source("safe-input-key");
+    for contract in [
+        "Capability::SecureStore",
+        "\"get\"",
+        "\"set\"",
+        "\"delete\"",
+        "Capability::Keyboard",
+        "\"type-text\"",
+        "Capability::Store",
+        "\"config.get\"",
+        "SafeInputKey",
+        "stored_text",
+    ] {
+        assert!(
+            safe_input.contains(contract),
+            "safe-input-key Component lost contract {contract}"
+        );
+    }
+
+    let display = read_component_source("windows-display-manager");
+    for contract in [
+        "Capability::WindowsDisplay",
+        "\"status\"",
+        "\"toggle-taskbar-autohide\"",
+        "\"set-taskbar-autohide\"",
+        "\"set-resolution\"",
+        "\"set-scale\"",
+        "\"config.get\"",
+        "\"status.merge\"",
+        "lastActionUnix",
+    ] {
+        assert!(
+            display.contains(contract),
+            "windows-display-manager Component lost contract {contract}"
+        );
+    }
 }
 
 #[test]
@@ -456,8 +493,45 @@ fn torrent_organizer_component_moves_only_torrents_and_persists_status() {
     assert_eq!(driver.status().capability_failed, 0);
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_display_component_reads_native_status_and_persists_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = ExtensionStateStore::new(temp.path().join("state"));
+    let registry = Registry::load_from_dir(&extensions_root()).expect("shipped registry");
+    let mut driver = BonesDaemonDriver::new(&registry, store.clone()).expect("Bones driver");
+
+    driver
+        .dispatch_action("windows-display-manager", "status", Default::default())
+        .expect("status action");
+    drive_until_completed_with_limit(&mut driver, 4, 5_000);
+
+    let status = store
+        .load_status("windows-display-manager")
+        .expect("display status");
+    assert_eq!(status["lastActionId"], serde_json::json!("status"));
+    assert_eq!(status["lastActionOk"], serde_json::json!(true));
+    assert!(status["lastActionUnix"]
+        .as_u64()
+        .is_some_and(|value| value > 0));
+    assert!(status["lastResult"].is_object());
+    assert_eq!(
+        status["_stateContract"]["capabilityId"],
+        serde_json::json!("host.windows-display")
+    );
+    assert_eq!(driver.status().capability_failed, 0);
+}
+
 fn drive_until_completed(driver: &mut BonesDaemonDriver, expected: u64) {
-    for _ in 0..200 {
+    drive_until_completed_with_limit(driver, expected, 200);
+}
+
+fn drive_until_completed_with_limit(
+    driver: &mut BonesDaemonDriver,
+    expected: u64,
+    attempts: usize,
+) {
+    for _ in 0..attempts {
         driver.step(Duration::from_millis(1));
         if driver.status().capability_completed >= expected {
             return;
@@ -768,27 +842,27 @@ fn windows_display_manager_descriptor_matches_required_contract() {
 }
 
 #[test]
-fn windows_display_manager_main_documents_host_api_contract() {
-    let main_ts = read_main_ts("windows-display-manager");
+fn windows_display_manager_component_documents_native_capability_contract() {
+    let component = read_component_source("windows-display-manager");
     assert!(
-        main_ts.contains("windows-display-manager"),
+        component.contains("Windows Display Manager"),
         "extension should identify itself"
     );
     assert!(
-        main_ts.contains("toggle-taskbar-autohide"),
+        component.contains("toggle-taskbar-autohide"),
         "extension should expose taskbar toggle action"
     );
     assert!(
-        main_ts.contains("set-resolution"),
+        component.contains("set-resolution"),
         "extension should expose resolution action"
     );
     assert!(
-        main_ts.contains("set-scale"),
+        component.contains("set-scale"),
         "extension should expose scale action"
     );
     assert!(
-        main_ts.contains("daemon trigger"),
-        "extension should document trigger entrypoint"
+        component.contains("Capability::WindowsDisplay"),
+        "extension should delegate sensitive work to the native capability"
     );
 }
 

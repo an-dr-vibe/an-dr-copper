@@ -5,6 +5,11 @@
   "version": "1.0.0",
   "trigger": "windows-display",
   "platforms": ["windows"],
+  "runtime": {
+    "kind": "wasm-component",
+    "abi": "copper.component/1",
+    "artifact": "windows-display-manager.wasm"
+  },
   "permissions": ["ui", "store", "windows-display"],
   "inputs": [
     {
@@ -44,31 +49,31 @@
       "id": "status",
       "label": "Read taskbar and display status",
       "description": "Query the current taskbar, resolution, and scaling values from the host.",
-      "script": "Query taskbar auto-hide, current resolution, and current scale from daemon host API."
+      "script": "status"
     },
     {
       "id": "toggle-taskbar-autohide",
       "label": "Toggle taskbar auto-hide",
       "description": "Flip the taskbar between pinned and auto-hide states.",
-      "script": "Toggle Windows taskbar auto-hide state and return updated status."
+      "script": "toggle-taskbar-autohide"
     },
     {
       "id": "set-taskbar-autohide",
       "label": "Set taskbar auto-hide",
       "description": "Apply the saved taskbar auto-hide setting.",
-      "script": "Apply taskbarAutoHide from settings and return updated status."
+      "script": "set-taskbar-autohide"
     },
     {
       "id": "set-resolution",
       "label": "Set display resolution",
       "description": "Apply the saved resolution and refresh rate values.",
-      "script": "Apply resolutionWidth, resolutionHeight, and refreshRate through daemon host API."
+      "script": "set-resolution"
     },
     {
       "id": "set-scale",
       "label": "Set display scale",
       "description": "Apply the saved display scale percentage.",
-      "script": "Apply scalePercent via daemon host API and return updated status."
+      "script": "set-scale"
     }
   ],
   "settings": {

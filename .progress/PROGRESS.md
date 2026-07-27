@@ -24,8 +24,8 @@
 - [x] **Copper settings UI on Bones web** (completed) — ~300 lines: port settings frontend transport to Bones web messages, preserve settings behavior, and remove Tauri window use.
 - [x] **WASM guest SDK and packaging** (completed) — ~300 lines: add the versioned Copper guest contract, generated Rust bindings/templates, deterministic component builds, and manifest-plus-WASM packaging.
 - [x] **Session counter and sort downloads WASM ports** (completed) — ~280 lines: write UTR tests first, port both extensions to WASM Components, and remove their legacy execution paths after parity.
-- [ ] **Desktop torrent organizer WASM port** (verified) — ~300 lines: test then port actions, background monitoring, scoped file moves, settings, and status behavior.
-- [ ] **Safe Input Key and Windows display WASM ports** (planned) — ~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities.
+- [x] **Desktop torrent organizer WASM port** (completed) — ~300 lines: test then port actions, background monitoring, scoped file moves, settings, and status behavior.
+- [ ] **Safe Input Key and Windows display WASM ports** (verified) — ~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities.
 - [ ] **Cutover cleanup release and full verification** (planned) — ~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates.
 
-_Last updated: 2026-07-27T02:16:46.1942134Z_
+_Last updated: 2026-07-27T02:36:02.6303141Z_

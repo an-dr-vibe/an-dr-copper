@@ -4,7 +4,7 @@ use crate::daemon::{
 };
 use crate::descriptor::Descriptor;
 use crate::execution::ExecutionEngine;
-use crate::extension::{default_extensions_dir, load_runtime_registry};
+use crate::extension::{default_extensions_dir, load_runtime_registry, Registry};
 use crate::host_extensions::HostExtensionRegistry;
 use crate::runtime::{default_runtime_adapter, run_protocol_worker};
 use crate::schema::parse_and_validate;
@@ -14,7 +14,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[cfg(test)]
@@ -391,14 +391,12 @@ fn cmd_trigger(
         .prepare_trigger(ext, action)
         .map_err(CliError::Message)?;
 
-    // Parse --input key=value pairs into a JSON object.
     let mut inputs_map = serde_json::Map::new();
     for raw in raw_inputs {
         if let Some((key, val)) = raw.split_once('=') {
             inputs_map.insert(key.to_string(), serde_json::Value::String(val.to_string()));
         }
     }
-    let inputs = serde_json::Value::Object(inputs_map);
 
     println!(
         "Trigger: extension='{}' action='{}' permissions={}",
@@ -411,12 +409,65 @@ fn cmd_trigger(
         }
     );
 
-    engine
-        .execute_trigger(&prepared, &inputs)
+    if ext.wasm_component_path().is_some() {
+        execute_wasm_trigger(
+            &registry,
+            &store,
+            &prepared.extension_id,
+            &prepared.action_id,
+            inputs_map,
+        )
         .map_err(CliError::Message)?;
+    } else {
+        engine
+            .execute_trigger(&prepared, &serde_json::Value::Object(inputs_map))
+            .map_err(CliError::Message)?;
+    }
 
     println!("Done: '{}'", prepared.extension_id);
     Ok(())
+}
+
+/// Runs one Component action until its asynchronous native work becomes quiescent.
+fn execute_wasm_trigger(
+    registry: &Registry,
+    store: &ExtensionStateStore,
+    extension_id: &str,
+    action_id: &str,
+    input: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let mut driver = crate::bones_integration::BonesDaemonDriver::new(registry, store.clone())?;
+    driver.dispatch_action(extension_id, action_id, input)?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+
+    loop {
+        driver.step(Duration::from_millis(1));
+        let status = driver.status();
+        if status.capability_rejected > 0
+            || status.capability_delivery_failures > 0
+            || status.action_dispatch_failures > 0
+        {
+            return Err(format!(
+                "Component action failed capability authorization or delivery: {status:?}"
+            ));
+        }
+        if status.capability_accepted > 0
+            && status.capability_pending == 0
+            && status.capability_completed + status.capability_failed >= status.capability_accepted
+        {
+            return if status.capability_failed == 0 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Component action reported a native failure: {status:?}"
+                ))
+            };
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("Component action timed out: {status:?}"));
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 fn cmd_generate_main(descriptor_path: &Path, output: Option<PathBuf>) -> Result<(), CliError> {
@@ -551,11 +602,13 @@ fn indent_script(script: &str) -> String {
 mod tests {
     use super::{
         binary_available, cmd_daemon, cmd_doctor_with, cmd_generate_main, cmd_list, cmd_trigger,
-        default_run_command, format_permissions, print_ipc_response, render_main_ts, run_command,
-        Args, Commands, DaemonCommands,
+        default_run_command, execute_wasm_trigger, format_permissions, print_ipc_response,
+        render_main_ts, run_command, Args, Commands, DaemonCommands,
     };
     use crate::daemon::IpcResponse;
     use crate::descriptor::{Action, Descriptor, Permission};
+    use crate::extension::Registry;
+    use crate::state_store::ExtensionStateStore;
     use clap::Parser;
     use std::fs;
     use std::net::TcpListener;
@@ -830,6 +883,30 @@ mod tests {
         write_extension(temp.path(), "alpha-ext");
         cmd_trigger(temp.path(), "alpha-ext", None, &[])
             .expect("trigger should select default action");
+    }
+
+    #[test]
+    fn wasm_trigger_executes_to_capability_quiescence() {
+        let extensions = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join("extensions");
+        let registry = Registry::load_from_dir(&extensions).expect("shipped registry");
+        let temp = tempdir().expect("tempdir");
+        let store = ExtensionStateStore::new(temp.path().join("state"));
+
+        execute_wasm_trigger(
+            &registry,
+            &store,
+            "session-counter",
+            "increment",
+            Default::default(),
+        )
+        .expect("component trigger");
+        assert_eq!(
+            store.load_store("session-counter").expect("state")["session-counter/runs"],
+            serde_json::json!(1)
+        );
     }
 
     #[test]

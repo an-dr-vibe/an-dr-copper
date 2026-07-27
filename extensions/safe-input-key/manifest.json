@@ -4,6 +4,11 @@
   "name": "Safe Input Key",
   "version": "1.0.0",
   "trigger": "safe-input-key",
+  "runtime": {
+    "kind": "wasm-component",
+    "abi": "copper.component/1",
+    "artifact": "safe-input-key.wasm"
+  },
   "permissions": ["keyboard", "secure-store", "store", "ui"],
   "inputs": [
     {
@@ -26,7 +31,7 @@
       "id": "type-text",
       "label": "Type saved text",
       "description": "Type the securely stored text at the current cursor position.",
-      "script": "typeText"
+      "script": "type-text"
     },
     {
       "id": "setup",
@@ -38,7 +43,7 @@
       "id": "clear",
       "label": "Clear saved text",
       "description": "Delete the stored text from the OS keychain.",
-      "script": "clearText"
+      "script": "clear"
     }
   ],
   "settings": {

@@ -10,8 +10,9 @@
     use crate::control_plane::{ControlPlaneAuth, UI_AUTH_HEADER};
     use crate::core_config::CoreConfig;
     use crate::descriptor::{
-        Action, Descriptor, InputField, InputType, Platform, SettingsDescriptor, SettingsSection,
-        StatusDescriptor, StatusField, StatusFieldFormat, UiDescriptor,
+        Action, Descriptor, InputField, InputType, Platform, RuntimeDescriptor, RuntimeKind,
+        SettingsDescriptor, SettingsSection, StatusDescriptor, StatusField, StatusFieldFormat,
+        UiDescriptor, COMPONENT_ABI_V1,
     };
     use crate::host_extensions::HostExtensionRegistry;
     use crate::state_store::ExtensionStateStore;
@@ -624,6 +625,25 @@
             .and_then(|value| value.as_array())
             .expect("commands array");
         assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn build_extension_info_exposes_component_actions_through_the_local_cli() {
+        let mut state = sample_state();
+        state.descriptors[0].runtime = Some(RuntimeDescriptor {
+            kind: RuntimeKind::WasmComponent,
+            abi: COMPONENT_ABI_V1.to_string(),
+            artifact: "desktop-torrent-organizer.wasm".to_string(),
+            background: None,
+        });
+        let descriptor = state.descriptors[0].clone();
+        let info = super::build_extension_info(&state, &descriptor).expect("info");
+        let commands = info["commands"].as_array().expect("commands");
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0]["usage"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("copperd trigger desktop-torrent-organizer --action move-torrents"));
     }
 
     #[test]

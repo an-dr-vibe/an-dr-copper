@@ -5,16 +5,17 @@ AI-generated extensions.
 
 Current status: the daemon, authenticated control plane, Bones/Wry settings UI,
 manifest discovery, native host capabilities, tray integration, and the
-versioned Rust WASM Component SDK are implemented. `session-counter`,
-`sort-downloads`, and `desktop-torrent-organizer` run as Components; the
-remaining shipped extensions still use the temporary Deno bridge while the
-[Bones migration](docs/BONES_MIGRATION_PLAN.md) ports them.
+versioned Rust WASM Component SDK are implemented. All five shipped extensions
+run as Components; sensitive keyboard, keychain, hotkey, tray, and Windows
+display work remains in permission-checked native Copper modules. The temporary
+Deno bridge remains only for external compatibility packages until the
+[Bones migration](docs/BONES_MIGRATION_PLAN.md) removes it.
 
 ## Requirements
 
 - Rust toolchain (rustup, cargo, rustc)
 - PowerShell 7+ (`pwsh`)
-- Deno (required only for the remaining `main.ts` compatibility extensions)
+- Deno (optional, required only for external `main.ts` compatibility extensions)
 
 ## Quick Start (Cross-Platform PowerShell)
 
@@ -88,6 +89,7 @@ cargo run -p copperd -- verify --extensions-dir ./extensions
 cargo run -p copperd -- trigger sort-downloads --extensions-dir ./extensions
 cargo run -p copperd -- trigger session-counter --extensions-dir ./extensions
 cargo run -p copperd -- trigger desktop-torrent-organizer --action move-torrents --extensions-dir ./extensions
+cargo run -p copperd -- trigger safe-input-key --action setup --input "text=your text" --extensions-dir ./extensions
 cargo run -p copperd -- daemon trigger windows-display-manager --action status --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- daemon trigger windows-display-manager --action toggle-taskbar-autohide --bind-addr 127.0.0.1:4765
 cargo run -p copperd -- ui open --extension desktop-torrent-organizer --extensions-dir ./extensions
@@ -108,7 +110,7 @@ cargo run -p copperd -- daemon shutdown --bind-addr 127.0.0.1:4765
 - `schemas/` descriptor schema contract
 - `sdk/` TypeScript compatibility types plus the Rust Component SDK, generated
   WIT bindings, and authoring template
-- `extensions/` sample extension pack (`sort-downloads`, `session-counter`, `desktop-torrent-organizer`, `windows-display-manager`)
+- `extensions/` Component extension pack (`sort-downloads`, `session-counter`, `desktop-torrent-organizer`, `safe-input-key`, `windows-display-manager`)
 - `scripts/` cross-platform build and verification scripts
 - `docs/` architecture and usage docs
 
