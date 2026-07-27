@@ -49,6 +49,48 @@ function Publish-ExtensionArchives {
   }
 }
 
+function Publish-ExtensionRuntimeDirectories {
+  param(
+    [string]$ExtensionsRoot,
+    [string]$BundleRoot
+  )
+
+  New-Item -ItemType Directory -Path $BundleRoot -Force | Out-Null
+  Get-ChildItem -Path $ExtensionsRoot -Directory | ForEach-Object {
+    $extensionDir = $_.FullName
+    $manifestPath = Join-Path $extensionDir "manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+      return
+    }
+
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $id = [string]$manifest.id
+    if ($id -notmatch '^[a-z0-9-]+$') {
+      throw "invalid extension id in release manifest: $manifestPath"
+    }
+    $runtimeFile = if ($manifest.runtime -and $manifest.runtime.kind -eq "wasm-component") {
+      if (
+        $manifest.runtime.abi -ne "copper.component/1" -or
+        $manifest.runtime.artifact -ne "$id.wasm"
+      ) {
+        throw "invalid Component runtime in release manifest: $manifestPath"
+      }
+      [string]$manifest.runtime.artifact
+    } else {
+      "main.ts"
+    }
+    $runtimePath = Join-Path $extensionDir $runtimeFile
+    if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+      throw "release runtime artifact not found: $runtimePath"
+    }
+
+    $destination = Join-Path $BundleRoot $id
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    Copy-Item -LiteralPath $manifestPath -Destination $destination -Force
+    Copy-Item -LiteralPath $runtimePath -Destination $destination -Force
+  }
+}
+
 function Set-MsvcCrossEnv {
   param([string]$Arch)
   $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
@@ -114,7 +156,9 @@ Copy-Item -Path (Join-Path $repoRoot "README.md") -Destination (Join-Path $bundl
 Copy-Item -Path (Join-Path $repoRoot "docs/QUICKSTART.md") -Destination (Join-Path $bundlePath "QUICKSTART.md") -Force
 
 $bundleExtensions = Join-Path $bundlePath "extensions"
-Copy-Item -Path (Join-Path $repoRoot "extensions") -Destination $bundleExtensions -Recurse -Force
+Publish-ExtensionRuntimeDirectories `
+  -ExtensionsRoot (Join-Path $repoRoot "extensions") `
+  -BundleRoot $bundleExtensions
 
 $bundleUiDir = Join-Path $bundlePath "ui"
 Copy-Item -Path (Join-Path $repoRoot "daemon/ui") -Destination $bundleUiDir -Recurse -Force

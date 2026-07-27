@@ -26,5 +26,6 @@ Invoke-Step { cargo test -p copperd --test extension_utr } "extension UTR"
 Invoke-Step { cargo test --workspace } "cargo test"
 Invoke-Step { cargo run -p copperd -- verify --extensions-dir $ExtensionsDir } "copperd verify"
 Invoke-Step { ./scripts/test-wasm-sdk.ps1 } "WASM SDK and packaging"
+Invoke-Step { ./scripts/test-wasm-extensions.ps1 } "shipped WASM Components"
 
 Write-Host "Tests and extension verification passed."

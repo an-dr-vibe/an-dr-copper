@@ -29,7 +29,29 @@ function Invoke-Copper {
   if ($Rebuild -or -not (Test-Path -LiteralPath $binaryPath)) {
     Invoke-Step { cargo build -p copperd } "build copperd"
   }
-  Invoke-Step { & $binaryPath @Arguments } $Description
+  if ($IsWindows) {
+    # Windows GUI-subsystem binaries return control to PowerShell immediately
+    # when invoked with `&`, leaving $LASTEXITCODE unset. Use the process API so
+    # daemon control commands remain synchronous and preserve exact arguments.
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $binaryPath
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    foreach ($argument in $Arguments) {
+      $startInfo.ArgumentList.Add($argument)
+    }
+    $process = [Diagnostics.Process]::Start($startInfo)
+    try {
+      $process.WaitForExit()
+      if ($process.ExitCode -ne 0) {
+        throw "$Description failed with exit code $($process.ExitCode)"
+      }
+    } finally {
+      $process.Dispose()
+    }
+  } else {
+    Invoke-Step { & $binaryPath @Arguments } $Description
+  }
 }
 
 switch ($Action) {

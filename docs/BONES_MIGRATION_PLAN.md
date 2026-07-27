@@ -287,13 +287,13 @@ new Copper WASM extension without knowledge of Copper host internals.
 
 ### M6 — Migrate shipped extensions
 
-Status: **NOT STARTED**  
+Status: **IN PROGRESS**
 Depends on: M4, M5
 
 | Order | Extension | Target | Status | Acceptance focus |
 |---:|---|---|---|---|
-| 1 | `session-counter` | WASM | NOT STARTED | scoped persistence and toast |
-| 2 | `sort-downloads` | WASM | NOT STARTED | scoped filesystem read and notification |
+| 1 | `session-counter` | WASM | DONE | scoped persistence and toast |
+| 2 | `sort-downloads` | WASM | DONE | scoped filesystem read and notification |
 | 3 | `desktop-torrent-organizer` | WASM | NOT STARTED | background jobs, file moves, settings, status |
 | 4 | `safe-input-key` | WASM plus native capabilities | NOT STARTED | keychain, keyboard injection, hotkey |
 | 5 | `windows-display-manager` | WASM plus native capabilities | NOT STARTED | platform gating, dynamic options, apply, tray |
@@ -459,3 +459,4 @@ When updating this plan:
 | 2026-07-27 | Accepted D-012 after upstreaming detachable native-module registration and a wry presentation that can repeatedly attach to the live headless Bones bus and fully close without restarting the engine. |
 | 2026-07-27 | Completed the M4 settings cutover: the default UI now uses correlated `copper.settings/1` messages through Bones web/Wry, tray requests attach on the daemon main thread, the temporary browser fallback remains explicit, and Tauri was removed. |
 | 2026-07-27 | Completed M5 with generated Rust guest bindings, a tested scaffold/build flow, and deterministic manifest-plus-runtime archives. Accepted D-008 after ComponentizeJS 0.21.0 failed its Windows ARM64 Wizer prerequisite; TypeScript Components are deferred and Rust is the cutover authoring path. |
+| 2026-07-27 | Started M6 by porting `session-counter` and `sort-downloads` to Rust Components. Their UTR runs real artifacts through the Bones driver, verifies persistent counter state and both asynchronous capability chains, and the legacy `main.ts` entrypoints are removed. |

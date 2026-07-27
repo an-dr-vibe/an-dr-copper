@@ -1,18 +1,18 @@
 # Copper Architecture
 
 Version: 0.3.2  
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 ## 1. Overview
 
 Copper is a cross-platform desktop automation platform optimized for
 AI-authored extensions.
 
-The current runtime is a long-running Rust daemon with Deno-backed TypeScript
-execution. Extensions are manifest-first (`manifest.json`) with a minimal API
-contract and schema validation. The accepted replacement architecture embeds
-Bones and runs product extensions as WASM Components; see
-`docs/BONES_MIGRATION_PLAN.md`.
+The current runtime is a long-running Rust daemon with an embedded Bones
+engine. Extensions are manifest-first (`manifest.json`) with a minimal API
+contract and schema validation. Ported extensions run as WASM Components;
+remaining compatibility extensions still use Deno-backed TypeScript during
+the migration. See `docs/BONES_MIGRATION_PLAN.md`.
 
 ## 2. Process Model
 
@@ -41,11 +41,15 @@ Current implementation status:
   `ui open` uses the same presentation composition. An explicit
   `ui open --browser` fallback retains a temporary, authenticated loopback
   server without making UI HTTP part of the daemon lifecycle.
-- Implemented: action execution through an external Deno subprocess and the
-  host JSON-RPC bridge in `sdk/bridge.ts`.
+- Implemented: Component action execution through Bones plus temporary
+  TypeScript action execution through an external Deno subprocess and the host
+  JSON-RPC bridge in `sdk/bridge.ts`.
 - Implemented: a Rust `copper.component/1` guest SDK with generated Bones WIT
   bindings, sender validation, asynchronous capability helpers, a scaffold,
   locked `wasm32-wasip2` builds, and deterministic extension archives.
+- Implemented: `session-counter` and `sort-downloads` Component ports with live
+  Bones-driver parity tests, committed reproducible artifacts, and no legacy
+  entrypoints.
 - Planned: completion of the shipped WASM Component ports and richer
   cross-platform tray/hotkey integration.
 

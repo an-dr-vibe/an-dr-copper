@@ -4,6 +4,11 @@
   "name": "Sort Downloads",
   "version": "1.0.0",
   "trigger": "sort-dl",
+  "runtime": {
+    "kind": "wasm-component",
+    "abi": "copper.component/1",
+    "artifact": "sort-downloads.wasm"
+  },
   "permissions": ["fs", "ui"],
   "inputs": [
     {
@@ -17,7 +22,7 @@
     {
       "id": "sort",
       "label": "Sort by extension",
-      "script": "const files = await api.fs.list(String(inputs.folder ?? '~/Downloads')); await api.notify(`Found ${files.length} files`);"
+      "script": "sort"
     }
   ],
   "ui": {

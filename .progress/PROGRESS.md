@@ -22,10 +22,10 @@
 - [x] **Bones-backed control plane and scheduling** (completed) — ~300 lines: route Copper trigger/background workflows through Bones messages while preserving authenticated CLI/HTTP behavior.
 - [x] **On-demand Bones wry presentation** (completed) — ~300 lines: upstream generic lazy web/window lifecycle support to Bones and verify a headless engine can repeatedly open and close wry presentation.
 - [x] **Copper settings UI on Bones web** (completed) — ~300 lines: port settings frontend transport to Bones web messages, preserve settings behavior, and remove Tauri window use.
-- [ ] **WASM guest SDK and packaging** (verified) — ~300 lines: add the versioned Copper guest contract, generated Rust bindings/templates, deterministic component builds, and manifest-plus-WASM packaging.
-- [ ] **Session counter and sort downloads WASM ports** (planned) — ~280 lines: write UTR tests first, port both extensions to WASM Components, and remove their legacy execution paths after parity.
+- [x] **WASM guest SDK and packaging** (completed) — ~300 lines: add the versioned Copper guest contract, generated Rust bindings/templates, deterministic component builds, and manifest-plus-WASM packaging.
+- [ ] **Session counter and sort downloads WASM ports** (verified) — ~280 lines: write UTR tests first, port both extensions to WASM Components, and remove their legacy execution paths after parity.
 - [ ] **Desktop torrent organizer WASM port** (planned) — ~300 lines: test then port actions, background monitoring, scoped file moves, settings, and status behavior.
 - [ ] **Safe Input Key and Windows display WASM ports** (planned) — ~300 lines: test then port orchestration while retaining sensitive hotkey, keychain, tray, and display work in native Copper capabilities.
 - [ ] **Cutover cleanup release and full verification** (planned) — ~300 lines: remove Deno/Tauri/temporary adapters, update installers and docs, close the migration tracker, and run all release, coverage, smoke, and stability gates.
 
-_Last updated: 2026-07-27T01:29:03.0899185Z_
+_Last updated: 2026-07-27T01:56:05.1779893Z_

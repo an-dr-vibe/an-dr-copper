@@ -5,15 +5,16 @@ AI-generated extensions.
 
 Current status: the daemon, authenticated control plane, Bones/Wry settings UI,
 manifest discovery, native host capabilities, tray integration, and the
-versioned Rust WASM Component SDK are implemented. Shipped extensions still
-execute `main.ts` through the temporary Deno bridge while the
-[Bones migration](docs/BONES_MIGRATION_PLAN.md) ports them to Components.
+versioned Rust WASM Component SDK are implemented. `session-counter` and
+`sort-downloads` run as Components; the remaining shipped extensions still use
+the temporary Deno bridge while the
+[Bones migration](docs/BONES_MIGRATION_PLAN.md) ports them.
 
 ## Requirements
 
 - Rust toolchain (rustup, cargo, rustc)
 - PowerShell 7+ (`pwsh`)
-- Deno (required to execute current `main.ts` extension actions)
+- Deno (required only for the remaining `main.ts` compatibility extensions)
 
 ## Quick Start (Cross-Platform PowerShell)
 

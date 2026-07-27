@@ -5,10 +5,14 @@ param(
   [switch]$Package,
   [string]$PackageOutput = "",
   [string]$TargetDir = "",
+  [switch]$Check,
   [switch]$SkipValidation
 )
 
 $ErrorActionPreference = "Stop"
+if ($Check -and $Package) {
+  throw "-Check cannot be combined with -Package"
+}
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $resolvedExtensionDir = (Resolve-Path -LiteralPath $ExtensionDir).Path
 $manifestPath = Join-Path $resolvedExtensionDir "manifest.json"
@@ -73,7 +77,18 @@ if (-not (Test-Path -LiteralPath $builtArtifact -PathType Leaf)) {
   throw "Built component not found: $builtArtifact"
 }
 $packageArtifact = Join-Path $resolvedExtensionDir $expectedArtifact
-Copy-Item -LiteralPath $builtArtifact -Destination $packageArtifact -Force
+if ($Check) {
+  if (-not (Test-Path -LiteralPath $packageArtifact -PathType Leaf)) {
+    throw "Committed component artifact not found: $packageArtifact"
+  }
+  $builtHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $builtArtifact).Hash
+  $packageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $packageArtifact).Hash
+  if ($builtHash -ne $packageHash) {
+    throw "Committed component artifact is stale: $packageArtifact"
+  }
+} else {
+  Copy-Item -LiteralPath $builtArtifact -Destination $packageArtifact -Force
+}
 
 if (-not $SkipValidation) {
   Push-Location $repoRoot
@@ -87,7 +102,11 @@ if (-not $SkipValidation) {
   }
 }
 
-Write-Host "Built component: $packageArtifact"
+if ($Check) {
+  Write-Host "Component artifact is current: $packageArtifact"
+} else {
+  Write-Host "Built component: $packageArtifact"
+}
 if ($Package) {
   $packageArgs = @{
     ExtensionDir = $resolvedExtensionDir

@@ -1,8 +1,11 @@
+use copperd::bones_integration::BonesDaemonDriver;
 use copperd::descriptor::{Descriptor, Permission, RuntimeKind, COMPONENT_ABI_V1};
 use copperd::extension::Registry;
 use copperd::schema::parse_and_validate;
+use copperd::state_store::ExtensionStateStore;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -28,6 +31,11 @@ fn read_descriptor(extension_id: &str) -> Descriptor {
 fn read_main_ts(extension_id: &str) -> String {
     let path = extension_dir(extension_id).join("main.ts");
     fs::read_to_string(path).expect("read main.ts")
+}
+
+fn read_component_source(extension_id: &str) -> String {
+    let path = extension_dir(extension_id).join("component/src/lib.rs");
+    fs::read_to_string(path).expect("read Component source")
 }
 
 fn extension_folders(root: &Path) -> Vec<PathBuf> {
@@ -104,9 +112,11 @@ fn shipped_extension_contract_matrix_is_stable() {
 
     for (id, trigger, permissions, action_ids) in expected {
         let descriptor = read_descriptor(id);
-        assert!(
-            descriptor.runtime.is_none(),
-            "{id} should stay on the compatibility runtime until its WASM port lands"
+        let component_ported = matches!(id, "session-counter" | "sort-downloads");
+        assert_eq!(
+            descriptor.runtime.is_some(),
+            component_ported,
+            "{id} runtime selection changed without updating the parity matrix"
         );
         assert_eq!(descriptor.trigger, trigger, "{id} trigger changed");
         assert_eq!(
@@ -231,6 +241,9 @@ fn legacy_typescript_entrypoints_expose_trigger_handlers() {
             .file_name()
             .expect("extension folder name")
             .to_string_lossy();
+        if read_descriptor(&id).runtime.is_some() {
+            continue;
+        }
         let source = read_main_ts(&id);
         assert!(
             source.contains("export default function"),
@@ -241,6 +254,117 @@ fn legacy_typescript_entrypoints_expose_trigger_handlers() {
             "{id} should expose the legacy trigger handler"
         );
     }
+}
+
+#[test]
+fn simple_extension_component_ports_preserve_their_capability_workflows() {
+    for id in ["session-counter", "sort-downloads"] {
+        let descriptor = read_descriptor(id);
+        let runtime = descriptor.runtime.expect("WASM Component runtime");
+        assert_eq!(runtime.kind, RuntimeKind::WasmComponent);
+        assert_eq!(runtime.abi, COMPONENT_ABI_V1);
+        assert_eq!(runtime.artifact, format!("{id}.wasm"));
+        assert!(
+            extension_dir(id).join(&runtime.artifact).is_file(),
+            "{id} should ship its built Component"
+        );
+        assert!(
+            !extension_dir(id).join("main.ts").exists(),
+            "{id} should remove its legacy execution path after parity"
+        );
+    }
+
+    let counter = read_component_source("session-counter");
+    for contract in [
+        "Capability::Store",
+        "\"get\"",
+        "\"set\"",
+        "Capability::Ui",
+        "Session count:",
+    ] {
+        assert!(
+            counter.contains(contract),
+            "session-counter Component lost contract {contract}"
+        );
+    }
+
+    let sorter = read_component_source("sort-downloads");
+    for contract in [
+        "Capability::Fs",
+        "\"list\"",
+        "Capability::Notify",
+        "Found",
+        "Capability::Ui",
+        "Sort Downloads completed",
+    ] {
+        assert!(
+            sorter.contains(contract),
+            "sort-downloads Component lost contract {contract}"
+        );
+    }
+}
+
+#[test]
+fn simple_components_execute_their_existing_workflows_on_bones() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = ExtensionStateStore::new(temp.path().join("state"));
+    let registry = Registry::load_from_dir(&extensions_root()).expect("shipped registry");
+    let mut driver = BonesDaemonDriver::new(&registry, store.clone()).expect("Bones driver");
+
+    driver
+        .dispatch_action("session-counter", "increment", Default::default())
+        .expect("first increment");
+    drive_until_completed(&mut driver, 3);
+    assert_eq!(
+        store.load_store("session-counter").expect("counter state")["session-counter/runs"],
+        serde_json::json!(1)
+    );
+
+    driver
+        .dispatch_action("session-counter", "increment", Default::default())
+        .expect("second increment");
+    drive_until_completed(&mut driver, 6);
+    assert_eq!(
+        store.load_store("session-counter").expect("counter state")["session-counter/runs"],
+        serde_json::json!(2)
+    );
+
+    let downloads = temp.path().join("downloads");
+    fs::create_dir(&downloads).expect("downloads");
+    fs::write(downloads.join("one.txt"), "one").expect("first file");
+    fs::write(downloads.join("two.zip"), "two").expect("second file");
+    driver
+        .dispatch_action(
+            "sort-downloads",
+            "sort",
+            serde_json::Map::from_iter([(
+                "folder".to_string(),
+                serde_json::json!(downloads.display().to_string()),
+            )]),
+        )
+        .expect("sort action");
+    drive_until_completed(&mut driver, 9);
+
+    let status = driver.status();
+    assert_eq!(status.actions_dispatched, 3);
+    assert_eq!(status.capability_accepted, 9);
+    assert_eq!(status.capability_completed, 9);
+    assert_eq!(status.capability_failed, 0);
+    assert_eq!(status.capability_delivery_failures, 0);
+}
+
+fn drive_until_completed(driver: &mut BonesDaemonDriver, expected: u64) {
+    for _ in 0..200 {
+        driver.step(Duration::from_millis(1));
+        if driver.status().capability_completed >= expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    panic!(
+        "timed out waiting for {expected} capability jobs: {:?}",
+        driver.status()
+    );
 }
 
 #[test]

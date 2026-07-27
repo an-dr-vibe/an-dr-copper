@@ -23,6 +23,9 @@ cargo test -p copperd --lib -- --nocapture      # show stdout/stderr (pipe throu
 
 # Rust guest SDK, generated Component template, and deterministic archives
 ./scripts/test-wasm-sdk.ps1
+
+# Shipped Component unit tests, Clippy, reproducible artifacts, and manifests
+./scripts/test-wasm-extensions.ps1
 ```
 
 ## Test file locations
